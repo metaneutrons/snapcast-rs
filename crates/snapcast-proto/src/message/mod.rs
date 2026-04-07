@@ -1,6 +1,14 @@
 //! Protocol message types.
 
 pub mod base;
+pub mod client_info;
+pub mod codec_header;
+pub mod error;
+pub mod hello;
+pub mod server_settings;
+pub mod time;
+pub mod wire;
+pub mod wire_chunk;
 
 /// Message type identifiers matching the C++ `message_type` enum.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

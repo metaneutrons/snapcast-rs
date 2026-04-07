@@ -1,12 +1,9 @@
 //! PulseAudio player backend (Linux).
-//!
-//! Uses libpulse-simple-binding for straightforward blocking PCM output.
-//! Feature-gated behind the `pulse` feature.
 
 use std::sync::{Arc, Mutex};
 use std::thread;
 
-use anyhow::{Context, Result};
+use anyhow::Result;
 use libpulse_binding::sample::{Format, Spec};
 use libpulse_binding::stream::Direction;
 use libpulse_simple_binding::Simple;
@@ -21,7 +18,7 @@ const BUFFER_TIME_MS: u64 = 100;
 pub struct PulsePlayer {
     stream: Arc<Mutex<Stream>>,
     time_provider: Arc<Mutex<TimeProvider>>,
-    volume: Volume,
+    volume: Arc<Mutex<Volume>>,
     sample_format: SampleFormat,
     server: Option<String>,
     active: Arc<std::sync::atomic::AtomicBool>,
@@ -38,7 +35,7 @@ impl PulsePlayer {
         Self {
             stream,
             time_provider,
-            volume: Volume::default(),
+            volume: Arc::new(Mutex::new(Volume::default())),
             sample_format,
             server,
             active: Arc::new(std::sync::atomic::AtomicBool::new(false)),
@@ -54,13 +51,13 @@ impl Player for PulsePlayer {
 
         let stream = Arc::clone(&self.stream);
         let time_provider = Arc::clone(&self.time_provider);
+        let volume = Arc::clone(&self.volume);
         let active = Arc::clone(&self.active);
         let format = self.sample_format;
-        let volume = self.volume;
         let server = self.server.clone();
 
         let handle = thread::spawn(move || {
-            if let Err(e) = pulse_worker(format, stream, time_provider, active, volume, server) {
+            if let Err(e) = pulse_worker(format, stream, time_provider, volume, active, server) {
                 tracing::error!("PulseAudio worker error: {e}");
             }
         });
@@ -80,12 +77,12 @@ impl Player for PulsePlayer {
         Ok(())
     }
 
-    fn set_volume(&mut self, volume: Volume) {
-        self.volume = volume;
+    fn set_volume(&mut self, vol: Volume) {
+        *self.volume.lock().unwrap() = vol;
     }
 
     fn volume(&self) -> Volume {
-        self.volume
+        *self.volume.lock().unwrap()
     }
 }
 
@@ -99,14 +96,14 @@ fn pulse_worker(
     format: SampleFormat,
     stream: Arc<Mutex<Stream>>,
     time_provider: Arc<Mutex<TimeProvider>>,
+    volume: Arc<Mutex<Volume>>,
     active: Arc<std::sync::atomic::AtomicBool>,
-    volume: Volume,
     server: Option<String>,
 ) -> Result<()> {
+    // 24-bit padded to 4 bytes → use S32 format
     let pulse_format = match format.bits() {
         16 => Format::S16le,
-        24 => Format::S24_32le,
-        32 => Format::S32le,
+        24 | 32 => Format::S32le,
         _ => Format::S16le,
     };
 
@@ -120,9 +117,8 @@ fn pulse_worker(
         anyhow::bail!("invalid PulseAudio sample spec: {:?}", spec);
     }
 
-    let server_str = server.as_deref();
     let simple = Simple::new(
-        server_str,
+        server.as_deref(),
         "snapclient-rs",
         Direction::Playback,
         None,
@@ -137,9 +133,7 @@ fn pulse_worker(
     let frame_size = format.frame_size() as usize;
     let buf_size = frames_per_chunk as usize * frame_size;
     let mut buf = vec![0u8; buf_size];
-
-    // Estimate buffer latency
-    let buffer_usec = BUFFER_TIME_MS * 1000;
+    let fallback_latency = (BUFFER_TIME_MS * 1000) as i64;
 
     tracing::info!(
         frames = frames_per_chunk,
@@ -151,7 +145,7 @@ fn pulse_worker(
         let latency_usec = simple
             .get_latency()
             .map(|l| l.as_micros() as i64)
-            .unwrap_or(buffer_usec as i64);
+            .unwrap_or(fallback_latency);
 
         let server_now = {
             let tp = time_provider.lock().unwrap();
@@ -167,7 +161,10 @@ fn pulse_worker(
             s.get_player_chunk_or_silence(server_now, latency_usec, &mut buf, frames_per_chunk);
         }
 
-        apply_volume(&mut buf, format.sample_size(), &volume);
+        {
+            let vol = volume.lock().unwrap();
+            apply_volume(&mut buf, format.sample_size(), &vol);
+        }
 
         if let Err(e) = simple.write(&buf) {
             tracing::warn!("PulseAudio write error: {e}");

@@ -1,5 +1,7 @@
 mod cli;
 mod config;
+#[allow(dead_code)]
+mod connection;
 
 use clap::Parser;
 use tracing_subscriber::EnvFilter;

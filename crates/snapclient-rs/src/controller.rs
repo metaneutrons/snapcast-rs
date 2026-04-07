@@ -185,17 +185,6 @@ impl Controller {
             }
             MessagePayload::Time(t) => {
                 let s2c = msg.base.received - msg.base.sent;
-                tracing::debug!(
-                    latency_sec = t.latency.sec,
-                    latency_usec = t.latency.usec,
-                    base_sent_sec = msg.base.sent.sec,
-                    base_sent_usec = msg.base.sent.usec,
-                    base_recv_sec = msg.base.received.sec,
-                    base_recv_usec = msg.base.received.usec,
-                    s2c_sec = s2c.sec,
-                    s2c_usec = s2c.usec,
-                    "Time response"
-                );
                 self.time_provider
                     .lock()
                     .unwrap()

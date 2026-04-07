@@ -3,6 +3,8 @@ mod config;
 #[allow(dead_code)]
 mod connection;
 #[allow(dead_code)]
+mod decoder;
+#[allow(dead_code)]
 mod double_buffer;
 #[allow(dead_code)]
 mod time_provider;

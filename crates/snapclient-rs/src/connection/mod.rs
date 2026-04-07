@@ -187,8 +187,34 @@ fn steady_time_of_day() -> Timeval {
 }
 
 /// Microseconds since boot (monotonic clock).
+/// Uses the same clock source as C++ std::chrono::steady_clock.
 fn monotonic_usec() -> i64 {
-    #[cfg(unix)]
+    #[cfg(target_os = "macos")]
+    {
+        // macOS: C++ steady_clock uses mach_continuous_time, not CLOCK_MONOTONIC.
+        // These differ by ~2s on macOS. We must match the server's clock exactly.
+        unsafe extern "C" {
+            fn mach_continuous_time() -> u64;
+            fn mach_timebase_info(info: *mut MachTimebaseInfo) -> i32;
+        }
+        #[repr(C)]
+        struct MachTimebaseInfo {
+            numer: u32,
+            denom: u32,
+        }
+        static TIMEBASE: std::sync::OnceLock<(u32, u32)> = std::sync::OnceLock::new();
+        let (numer, denom) = *TIMEBASE.get_or_init(|| {
+            let mut info = MachTimebaseInfo { numer: 0, denom: 0 };
+            unsafe {
+                mach_timebase_info(&mut info);
+            }
+            (info.numer, info.denom)
+        });
+        let ticks = unsafe { mach_continuous_time() };
+        let nanos = ticks as i128 * numer as i128 / denom as i128;
+        (nanos / 1_000) as i64
+    }
+    #[cfg(all(unix, not(target_os = "macos")))]
     {
         let mut ts = libc::timespec {
             tv_sec: 0,
@@ -202,7 +228,6 @@ fn monotonic_usec() -> i64 {
     }
     #[cfg(not(unix))]
     {
-        // Fallback: use system time (won't sync correctly with server)
         let now = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap_or_default();

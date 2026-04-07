@@ -1,5 +1,7 @@
 //! CLI argument parsing — maps command-line args to [`ClientSettings`].
 
+use std::path::PathBuf;
+
 use anyhow::{Context, Result, bail};
 use clap::Parser;
 
@@ -7,11 +9,17 @@ use crate::config::{self, Auth, ClientSettings, MixerMode, ServerSettings};
 
 /// Snapcast client — synchronized multiroom audio player.
 #[derive(Parser, Debug)]
-#[command(version, about)]
+#[command(
+    version,
+    about,
+    after_help = "\
+  With 'url' = <tcp|ws|wss>://<snapserver host or IP or mDNS service name>[:port]\n\
+  For example: 'tcp://192.168.1.1:1704', or 'ws://homeserver.local'\n\
+  If 'url' is not configured, snapclient defaults to 'tcp://_snapcast._tcp'"
+)]
 pub struct Cli {
     /// Snapserver URL: <tcp|ws|wss>://<host>[:port]
-    #[arg(default_value = "tcp://localhost:1704")]
-    pub url: String,
+    pub url: Option<String>,
 
     /// Instance id when running multiple instances on the same host
     #[arg(short, long, default_value_t = 1)]
@@ -21,9 +29,29 @@ pub struct Cli {
     #[arg(long = "hostID", default_value = "")]
     pub host_id: String,
 
-    /// Audio player backend and optional parameters: <name>[:<params>]
-    #[arg(long, default_value = "")]
-    pub player: String,
+    /// Client certificate file (PEM format)
+    #[arg(long = "cert")]
+    pub certificate: Option<PathBuf>,
+
+    /// Client private key file (PEM format)
+    #[arg(long = "cert-key")]
+    pub certificate_key: Option<PathBuf>,
+
+    /// Key password (for encrypted private key)
+    #[arg(long = "key-password")]
+    pub key_password: Option<String>,
+
+    /// Verify server with CA certificate (PEM format). Use without value for default certificates.
+    #[arg(long = "server-cert")]
+    pub server_certificate: Option<Option<PathBuf>>,
+
+    /// List PCM devices
+    #[arg(short, long)]
+    pub list: bool,
+
+    /// PCM device index or name
+    #[arg(short, long, default_value = "default")]
+    pub soundcard: String,
 
     /// Additional latency of the audio device [ms]
     #[arg(long, default_value_t = 0)]
@@ -33,13 +61,13 @@ pub struct Cli {
     #[arg(long)]
     pub sampleformat: Option<String>,
 
-    /// Mixer mode: software|hardware|script|none[:<params>]
+    /// Audio player backend and optional parameters: <name>[:<params>|?]
+    #[arg(long, default_value = "")]
+    pub player: String,
+
+    /// Mixer mode: software|hardware|script|none|?[:<params>]
     #[arg(long, default_value = "software")]
     pub mixer: String,
-
-    /// PCM device index or name
-    #[arg(short, long, default_value = "default")]
-    pub soundcard: String,
 
     /// Log sink: null|system|stdout|stderr|file:<path>
     #[arg(long, default_value = "stdout")]
@@ -53,7 +81,29 @@ pub struct Cli {
 impl Cli {
     /// Parse CLI args and build a [`ClientSettings`].
     pub fn into_settings(self) -> Result<ClientSettings> {
-        let server = parse_url(&self.url)?;
+        let default_url = if cfg!(feature = "mdns") {
+            "tcp://_snapcast._tcp"
+        } else {
+            "tcp://localhost:1704"
+        };
+        let url = self.url.as_deref().unwrap_or(default_url);
+        let mut server = parse_url(url)?;
+
+        // TLS certificate options
+        if let Some(cert) = self.certificate {
+            server.certificate = Some(cert);
+        }
+        if let Some(key) = self.certificate_key {
+            server.certificate_key = Some(key);
+        }
+        if let Some(pw) = self.key_password {
+            server.key_password = Some(pw);
+        }
+        if let Some(server_cert) = self.server_certificate {
+            // --server-cert without value → use default certs (empty path)
+            // --server-cert=path → use specific cert
+            server.server_certificate = Some(server_cert.unwrap_or_default());
+        }
 
         // Player
         let (player_name, player_param) = if self.player.is_empty() {
@@ -116,7 +166,6 @@ impl Cli {
 fn parse_url(url: &str) -> Result<ServerSettings> {
     let mut settings = ServerSettings::default();
 
-    // Extract scheme
     let (scheme, rest) = url
         .split_once("://")
         .with_context(|| format!("invalid URL, expected <scheme>://<host>[:port]: {url}"))?;
@@ -201,7 +250,6 @@ mod tests {
         assert_eq!(s.host, "myhost");
         let auth = s.auth.unwrap();
         assert_eq!(auth.scheme, "Basic");
-        // base64("user:pass") = "dXNlcjpwYXNz"
         assert_eq!(auth.param, "dXNlcjpwYXNz");
     }
 
@@ -216,19 +264,25 @@ mod tests {
     }
 
     #[test]
+    fn parse_mdns_service_name() {
+        let s = parse_url("tcp://_snapcast._tcp").unwrap();
+        assert_eq!(s.scheme, "tcp");
+        assert_eq!(s.host, "_snapcast._tcp");
+        assert_eq!(s.port, 1704);
+    }
+
+    #[test]
+    fn default_url_with_mdns() {
+        let cli = Cli::parse_from(["snapclient-rs"]);
+        assert!(cli.url.is_none());
+        let settings = cli.into_settings().unwrap();
+        // With mdns feature, default host is mDNS service name
+        assert!(settings.server.host == "_snapcast._tcp" || settings.server.host == "localhost");
+    }
+
+    #[test]
     fn cli_into_settings_mixer() {
-        let cli = Cli {
-            url: "tcp://localhost:1704".into(),
-            instance: 1,
-            host_id: String::new(),
-            player: String::new(),
-            latency: 0,
-            sampleformat: None,
-            mixer: "hardware:hw:0".into(),
-            soundcard: "default".into(),
-            logsink: "stdout".into(),
-            logfilter: "*:info".into(),
-        };
+        let cli = Cli::parse_from(["snapclient-rs", "--mixer", "hardware:hw:0"]);
         let s = cli.into_settings().unwrap();
         assert_eq!(s.player.mixer.mode, MixerMode::Hardware);
         assert_eq!(s.player.mixer.parameter, "hw:0");
@@ -236,18 +290,26 @@ mod tests {
 
     #[test]
     fn cli_into_settings_player_with_params() {
-        let cli = Cli {
-            url: "tcp://localhost:1704".into(),
-            instance: 2,
-            host_id: "my-id".into(),
-            player: "alsa:buffer_time=100".into(),
-            latency: 50,
-            sampleformat: Some("48000:16:*".into()),
-            mixer: "software".into(),
-            soundcard: "hw:1".into(),
-            logsink: "stderr".into(),
-            logfilter: "*:debug".into(),
-        };
+        let cli = Cli::parse_from([
+            "snapclient-rs",
+            "--instance",
+            "2",
+            "--hostID",
+            "my-id",
+            "--player",
+            "alsa:buffer_time=100",
+            "--latency",
+            "50",
+            "--sampleformat",
+            "48000:16:*",
+            "--soundcard",
+            "hw:1",
+            "--logsink",
+            "stderr",
+            "--logfilter",
+            "*:debug",
+            "tcp://localhost:1704",
+        ]);
         let s = cli.into_settings().unwrap();
         assert_eq!(s.instance, 2);
         assert_eq!(s.host_id, "my-id");
@@ -255,7 +317,37 @@ mod tests {
         assert_eq!(s.player.parameter, "buffer_time=100");
         assert_eq!(s.player.latency, 50);
         assert_eq!(s.player.sample_format.rate(), 48000);
-        assert_eq!(s.player.sample_format.channels(), 0); // wildcard
+        assert_eq!(s.player.sample_format.channels(), 0);
         assert_eq!(s.player.pcm_device.name, "hw:1");
+    }
+
+    #[test]
+    fn cli_cert_options() {
+        let cli = Cli::parse_from([
+            "snapclient-rs",
+            "--cert",
+            "/path/to/cert.pem",
+            "--cert-key",
+            "/path/to/key.pem",
+            "--key-password",
+            "secret",
+            "wss://server:1788",
+        ]);
+        let s = cli.into_settings().unwrap();
+        assert_eq!(
+            s.server.certificate.unwrap().to_str().unwrap(),
+            "/path/to/cert.pem"
+        );
+        assert_eq!(
+            s.server.certificate_key.unwrap().to_str().unwrap(),
+            "/path/to/key.pem"
+        );
+        assert_eq!(s.server.key_password.unwrap(), "secret");
+    }
+
+    #[test]
+    fn cli_list_flag() {
+        let cli = Cli::parse_from(["snapclient-rs", "--list"]);
+        assert!(cli.list);
     }
 }

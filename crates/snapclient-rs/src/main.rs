@@ -2,6 +2,10 @@ mod cli;
 mod config;
 #[allow(dead_code)]
 mod connection;
+#[allow(dead_code)]
+mod double_buffer;
+#[allow(dead_code)]
+mod time_provider;
 
 use clap::Parser;
 use tracing_subscriber::EnvFilter;

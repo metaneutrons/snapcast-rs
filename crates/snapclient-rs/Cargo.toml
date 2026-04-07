@@ -20,6 +20,7 @@ tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
 anyhow = { workspace = true }
 base64 = { workspace = true }
+hostname = { workspace = true }
 symphonia = { workspace = true }
 audiopus = { workspace = true }
 coreaudio-rs = { workspace = true, optional = true }

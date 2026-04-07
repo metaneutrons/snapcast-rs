@@ -1,5 +1,6 @@
 use clap::Parser;
 use snapclient_rs::cli;
+use snapclient_rs::controller::Controller;
 use tracing_subscriber::EnvFilter;
 
 fn main() -> anyhow::Result<()> {
@@ -16,6 +17,9 @@ fn main() -> anyhow::Result<()> {
         "snapclient-rs starting"
     );
 
-    // TODO: implement controller
-    Ok(())
+    let rt = tokio::runtime::Runtime::new()?;
+    rt.block_on(async {
+        let mut controller = Controller::new(settings);
+        controller.run().await
+    })
 }

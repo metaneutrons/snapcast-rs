@@ -38,6 +38,9 @@ byteorder = "1"
 # Auth
 base64 = "0.22"
 
+# Hostname
+hostname = "0.4"
+
 # Networking
 tokio-tungstenite = "0.26"
 tokio-rustls = "0.26"

@@ -29,14 +29,8 @@ async fn read_frame<R: AsyncReadExt + Unpin>(reader: &mut R) -> Result<TypedMess
     let mut base = BaseMessage::read_from(&mut &header_buf[..])
         .map_err(|e| anyhow::anyhow!("parsing header: {e}"))?;
 
-    // Stamp received time
-    let now = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap_or_default();
-    base.received = Timeval {
-        sec: now.as_secs() as i32,
-        usec: now.subsec_micros() as i32,
-    };
+    // Stamp received time using steady clock (matching C++ steadytimeofday)
+    base.received = steady_time_of_day();
 
     // Read payload
     let mut payload_buf = vec![0u8; base.size as usize];
@@ -173,13 +167,52 @@ impl TcpConnection {
 }
 
 fn stamp_sent(base: &mut BaseMessage) {
-    let now = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap_or_default();
-    base.sent = Timeval {
-        sec: now.as_secs() as i32,
-        usec: now.subsec_micros() as i32,
-    };
+    let tv = steady_time_of_day();
+    base.sent = tv;
+}
+
+/// Matches the C++ `chronos::steadytimeofday` — monotonic clock time.
+/// On macOS/Linux, `Instant` is based on `CLOCK_MONOTONIC` which counts
+/// seconds since boot, matching the C++ snapserver's clock domain.
+fn steady_time_of_day() -> Timeval {
+    // Instant::now().duration_since(EPOCH) gives time since first call.
+    // We need time since boot. On Unix, Instant uses CLOCK_MONOTONIC
+    // which starts at boot. We can get this via the elapsed time from
+    // a known-early Instant.
+    let usec = monotonic_usec();
+    Timeval {
+        sec: (usec / 1_000_000) as i32,
+        usec: (usec % 1_000_000) as i32,
+    }
+}
+
+/// Microseconds since boot (monotonic clock).
+fn monotonic_usec() -> i64 {
+    #[cfg(unix)]
+    {
+        let mut ts = libc::timespec {
+            tv_sec: 0,
+            tv_nsec: 0,
+        };
+        // SAFETY: clock_gettime with CLOCK_MONOTONIC is always safe
+        unsafe {
+            libc::clock_gettime(libc::CLOCK_MONOTONIC, &mut ts);
+        }
+        ts.tv_sec * 1_000_000 + ts.tv_nsec / 1_000
+    }
+    #[cfg(not(unix))]
+    {
+        // Fallback: use system time (won't sync correctly with server)
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default();
+        now.as_micros() as i64
+    }
+}
+
+/// Current time in microseconds using the steady clock.
+pub fn now_usec() -> i64 {
+    monotonic_usec()
 }
 
 #[cfg(test)]

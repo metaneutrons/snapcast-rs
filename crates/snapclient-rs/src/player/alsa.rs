@@ -158,10 +158,7 @@ fn alsa_worker(
 
         let server_now = {
             let tp = time_provider.lock().unwrap();
-            let now_usec = std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap_or_default()
-                .as_micros() as i64;
+            let now_usec = crate::connection::now_usec();
             now_usec + tp.diff_to_server_usec()
         };
 

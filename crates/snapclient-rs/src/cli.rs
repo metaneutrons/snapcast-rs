@@ -69,6 +69,16 @@ pub struct Cli {
     #[arg(long, default_value = "software")]
     pub mixer: String,
 
+    /// Daemonize, optional process priority [-20..19]
+    #[cfg(unix)]
+    #[arg(short, long)]
+    pub daemon: Option<Option<i32>>,
+
+    /// The user[:group] to run snapclient as when daemonized
+    #[cfg(unix)]
+    #[arg(long)]
+    pub user: Option<String>,
+
     /// Log sink: null|system|stdout|stderr|file:<path>
     #[arg(long, default_value = "stdout")]
     pub logsink: String,
@@ -158,6 +168,11 @@ impl Cli {
                 sink: self.logsink,
                 filter: self.logfilter,
             },
+            #[cfg(unix)]
+            daemon: self.daemon.map(|priority| config::DaemonSettings {
+                priority: priority.or(Some(-3)),
+                user: self.user,
+            }),
         })
     }
 }

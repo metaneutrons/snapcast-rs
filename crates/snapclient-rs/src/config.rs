@@ -94,6 +94,16 @@ impl Default for LoggingSettings {
     }
 }
 
+/// Daemon settings (Unix only).
+#[cfg(unix)]
+#[derive(Debug, Clone, Default)]
+pub struct DaemonSettings {
+    /// Process priority [-20..19], None if not daemonizing.
+    pub priority: Option<i32>,
+    /// User[:group] to run as.
+    pub user: Option<String>,
+}
+
 /// Top-level client settings.
 #[derive(Debug, Clone)]
 pub struct ClientSettings {
@@ -102,6 +112,8 @@ pub struct ClientSettings {
     pub server: ServerSettings,
     pub player: PlayerSettings,
     pub logging: LoggingSettings,
+    #[cfg(unix)]
+    pub daemon: Option<DaemonSettings>,
 }
 
 impl Default for ServerSettings {
@@ -127,6 +139,8 @@ impl Default for ClientSettings {
             server: ServerSettings::default(),
             player: PlayerSettings::default(),
             logging: LoggingSettings::default(),
+            #[cfg(unix)]
+            daemon: None,
         }
     }
 }

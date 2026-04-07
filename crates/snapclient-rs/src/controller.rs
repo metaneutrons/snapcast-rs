@@ -22,9 +22,6 @@ use crate::time_provider::TimeProvider;
 use crate::player::coreaudio::CoreAudioPlayer;
 
 const VERSION: &str = env!("CARGO_PKG_VERSION");
-const TIME_SYNC_INTERVAL: Duration = Duration::from_secs(1);
-const QUICK_SYNC_INTERVAL: Duration = Duration::from_millis(100);
-const QUICK_SYNC_COUNT: u32 = 50;
 
 pub struct Controller {
     settings: ClientSettings,
@@ -51,15 +48,13 @@ impl Controller {
         }
     }
 
-    /// Main run loop with automatic reconnection.
     pub async fn run(&mut self) -> Result<()> {
         loop {
             match self.session().await {
-                Ok(()) => tracing::info!("Session ended cleanly"),
+                Ok(()) => tracing::info!("Session ended"),
                 Err(e) => tracing::error!("Session error: {e}"),
             }
             self.cleanup();
-            tracing::info!("Reconnecting in 1s...");
             tokio::time::sleep(Duration::from_secs(1)).await;
         }
     }
@@ -103,15 +98,12 @@ impl Controller {
             auth,
         };
 
-        let response = self
-            .connection
-            .send_request(
-                MessageType::Hello,
-                &MessagePayload::Hello(hello),
-                Duration::from_secs(2),
-            )
+        self.connection
+            .send(MessageType::Hello, &MessagePayload::Hello(hello))
             .await?;
 
+        // Read response — may get ServerSettings or Error
+        let response = self.recv_timeout(Duration::from_secs(5)).await?;
         match response.payload {
             MessagePayload::ServerSettings(ss) => {
                 tracing::info!(
@@ -126,15 +118,18 @@ impl Controller {
             MessagePayload::Error(e) => {
                 bail!("Server rejected Hello: {} (code {})", e.error, e.code)
             }
-            _ => bail!("Unexpected response to Hello"),
+            _ => bail!("Unexpected response to Hello: {:?}", response.base.msg_type),
         }
     }
 
     async fn initial_time_sync(&mut self) -> Result<()> {
-        for i in 0..QUICK_SYNC_COUNT {
+        // Drain any pushed messages first (e.g. CodecHeader)
+        self.drain_pushed_messages().await?;
+
+        for i in 0..50 {
             self.do_time_sync().await?;
-            if i + 1 < QUICK_SYNC_COUNT {
-                tokio::time::sleep(QUICK_SYNC_INTERVAL).await;
+            if i < 49 {
+                tokio::time::sleep(Duration::from_millis(100)).await;
             }
         }
         let diff = self.time_provider.lock().unwrap().diff_to_server_usec();
@@ -143,83 +138,117 @@ impl Controller {
     }
 
     async fn do_time_sync(&mut self) -> Result<()> {
-        let time_msg = Time::new();
-        let response = self
-            .connection
-            .send_request(
-                MessageType::Time,
-                &MessagePayload::Time(time_msg),
-                Duration::from_secs(2),
-            )
+        self.connection
+            .send(MessageType::Time, &MessagePayload::Time(Time::new()))
             .await?;
 
-        if let MessagePayload::Time(t) = response.payload {
-            let s2c = response.base.received - response.base.sent;
-            self.time_provider
-                .lock()
-                .unwrap()
-                .set_diff(&t.latency, &s2c);
-        }
-        Ok(())
-    }
-
-    async fn receive_loop(&mut self) -> Result<()> {
-        let mut sync_interval = tokio::time::interval(TIME_SYNC_INTERVAL);
-
+        // Read messages until we get a Time response, handling others along the way
         loop {
-            tokio::select! {
-                msg = self.connection.recv() => {
-                    self.handle_message(msg?).await?;
-                }
-                _ = sync_interval.tick() => {
-                    self.do_time_sync().await.ok();
-                }
+            let msg = self.recv_timeout(Duration::from_secs(2)).await?;
+            if let MessagePayload::Time(t) = msg.payload {
+                let s2c = msg.base.received - msg.base.sent;
+                self.time_provider
+                    .lock()
+                    .unwrap()
+                    .set_diff(&t.latency, &s2c);
+                return Ok(());
+            }
+            // Handle pushed messages (CodecHeader, ServerSettings) during sync
+            self.handle_pushed(msg).await?;
+        }
+    }
+
+    /// Drain any messages the server pushes after Hello (CodecHeader, etc.)
+    async fn drain_pushed_messages(&mut self) -> Result<()> {
+        loop {
+            match tokio::time::timeout(Duration::from_millis(500), self.connection.recv()).await {
+                Ok(Ok(msg)) => self.handle_pushed(msg).await?,
+                _ => return Ok(()), // timeout or error — done draining
             }
         }
     }
 
-    async fn handle_message(&mut self, msg: TypedMessage) -> Result<()> {
+    async fn handle_pushed(&mut self, msg: TypedMessage) -> Result<()> {
         match msg.payload {
-            MessagePayload::WireChunk(wc) => {
-                if let Some(ref mut dec) = self.decoder {
-                    let mut data = wc.payload;
-                    if dec.decode(&mut data)? {
-                        let chunk = PcmChunk::new(wc.timestamp, data, self.sample_format);
-                        if let Some(ref stream) = self.stream {
-                            stream.lock().unwrap().add_chunk(chunk);
-                        }
-                    }
-                }
-            }
+            MessagePayload::CodecHeader(ch) => self.init_audio_pipeline(&ch)?,
             MessagePayload::ServerSettings(ss) => {
                 tracing::info!(
                     volume = ss.volume,
                     muted = ss.muted,
                     "ServerSettings update"
                 );
-                if let Some(ref mut p) = self.player {
-                    p.set_volume(Volume {
-                        volume: ss.volume as f64 / 100.0,
-                        muted: ss.muted,
-                    });
-                }
-                if let Some(ref stream) = self.stream {
-                    let buf_ms = (ss.buffer_ms - ss.latency - self.settings.player.latency).max(0);
-                    stream.lock().unwrap().set_buffer_ms(buf_ms as i64);
-                }
+                self.apply_server_settings(&ss);
                 self.server_settings = Some(ss);
-            }
-            MessagePayload::CodecHeader(ch) => {
-                self.init_audio_pipeline(&ch)?;
             }
             MessagePayload::Error(e) => {
                 tracing::error!(code = e.code, error = %e.error, message = %e.message, "Server error");
             }
             _ => {
-                tracing::warn!(msg_type = ?msg.base.msg_type, "Unexpected message");
+                tracing::debug!(msg_type = ?msg.base.msg_type, "Skipping message during sync");
             }
         }
         Ok(())
+    }
+
+    async fn receive_loop(&mut self) -> Result<()> {
+        let mut sync_timer = tokio::time::interval(Duration::from_secs(1));
+
+        loop {
+            tokio::select! {
+                msg = self.connection.recv() => {
+                    let msg = msg?;
+                    match msg.payload {
+                        MessagePayload::WireChunk(wc) => {
+                            if let Some(ref mut dec) = self.decoder {
+                                let mut data = wc.payload;
+                                if dec.decode(&mut data)? {
+                                    let chunk = PcmChunk::new(wc.timestamp, data, self.sample_format);
+                                    if let Some(ref stream) = self.stream {
+                                        stream.lock().unwrap().add_chunk(chunk);
+                                    }
+                                }
+                            }
+                        }
+                        MessagePayload::ServerSettings(ss) => {
+                            tracing::info!(volume = ss.volume, muted = ss.muted, "ServerSettings update");
+                            self.apply_server_settings(&ss);
+                            self.server_settings = Some(ss);
+                        }
+                        MessagePayload::CodecHeader(ch) => {
+                            self.init_audio_pipeline(&ch)?;
+                        }
+                        MessagePayload::Time(t) => {
+                            let s2c = msg.base.received - msg.base.sent;
+                            self.time_provider.lock().unwrap().set_diff(&t.latency, &s2c);
+                        }
+                        MessagePayload::Error(e) => {
+                            tracing::error!(code = e.code, error = %e.error, "Server error");
+                        }
+                        _ => {}
+                    }
+                }
+                _ = sync_timer.tick() => {
+                    // Send time sync — response will be handled in the recv branch
+                    self.connection
+                        .send(MessageType::Time, &MessagePayload::Time(Time::new()))
+                        .await
+                        .ok();
+                }
+            }
+        }
+    }
+
+    fn apply_server_settings(&mut self, ss: &ServerSettings) {
+        if let Some(ref mut p) = self.player {
+            p.set_volume(Volume {
+                volume: ss.volume as f64 / 100.0,
+                muted: ss.muted,
+            });
+        }
+        if let Some(ref stream) = self.stream {
+            let buf_ms = (ss.buffer_ms - ss.latency - self.settings.player.latency).max(0);
+            stream.lock().unwrap().set_buffer_ms(buf_ms as i64);
+        }
     }
 
     fn init_audio_pipeline(&mut self, header: &CodecHeader) -> Result<()> {
@@ -268,6 +297,12 @@ impl Controller {
         self.player = Some(player);
         self.decoder = Some(dec);
         Ok(())
+    }
+
+    async fn recv_timeout(&mut self, timeout: Duration) -> Result<TypedMessage> {
+        tokio::time::timeout(timeout, self.connection.recv())
+            .await
+            .map_err(|_| anyhow::anyhow!("receive timed out"))?
     }
 
     fn cleanup(&mut self) {

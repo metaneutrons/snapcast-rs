@@ -1,5 +1,4 @@
 //! Client configuration types mirroring the C++ `ClientSettings`.
-#![allow(dead_code)]
 
 use std::path::PathBuf;
 

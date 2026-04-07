@@ -18,6 +18,12 @@ pub struct TimeProvider {
     last_sync: Option<Instant>,
 }
 
+impl Default for TimeProvider {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl TimeProvider {
     pub fn new() -> Self {
         Self {

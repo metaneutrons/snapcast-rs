@@ -15,7 +15,7 @@ clippy:
 	cargo clippy --all-targets -- -D warnings
 
 test:
-	cargo test
+	cargo test --all
 
 build:
 	cargo build --release

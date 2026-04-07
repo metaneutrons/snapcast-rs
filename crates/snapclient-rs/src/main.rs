@@ -1,15 +1,5 @@
-mod cli;
-mod config;
-#[allow(dead_code)]
-mod connection;
-#[allow(dead_code)]
-mod decoder;
-#[allow(dead_code)]
-mod double_buffer;
-#[allow(dead_code)]
-mod time_provider;
-
 use clap::Parser;
+use snapclient_rs::cli;
 use tracing_subscriber::EnvFilter;
 
 fn main() -> anyhow::Result<()> {

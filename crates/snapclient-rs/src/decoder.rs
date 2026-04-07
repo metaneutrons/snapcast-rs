@@ -15,6 +15,7 @@ pub trait Decoder: Send {
 }
 
 /// PCM decoder — passthrough. Parses the RIFF/WAV header to extract sample format.
+#[derive(Default)]
 pub struct PcmDecoder;
 
 impl PcmDecoder {

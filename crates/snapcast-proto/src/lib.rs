@@ -13,6 +13,10 @@
 //! for the full specification.
 
 pub mod message;
+pub mod sample_format;
+pub mod types;
 
 pub use message::MessageType;
-pub use message::base::BaseMessage;
+pub use message::base::{BaseMessage, ProtoError};
+pub use sample_format::SampleFormat;
+pub use types::Timeval;

@@ -6,6 +6,7 @@ use byteorder::{LittleEndian, ReadBytesExt, WriteBytesExt};
 use thiserror::Error;
 
 use super::MessageType;
+use crate::types::Timeval;
 
 /// Errors that can occur during message parsing.
 #[derive(Debug, Error)]
@@ -14,13 +15,6 @@ pub enum ProtoError {
     Io(#[from] io::Error),
     #[error("unknown message type: {0}")]
     UnknownMessageType(u16),
-}
-
-/// Timestamp with second and microsecond components.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
-pub struct Timeval {
-    pub sec: i32,
-    pub usec: i32,
 }
 
 /// Base message header (26 bytes).
@@ -48,14 +42,8 @@ impl BaseMessage {
             MessageType::from_u16(raw_type).ok_or(ProtoError::UnknownMessageType(raw_type))?;
         let id = r.read_u16::<LittleEndian>()?;
         let refers_to = r.read_u16::<LittleEndian>()?;
-        let sent = Timeval {
-            sec: r.read_i32::<LittleEndian>()?,
-            usec: r.read_i32::<LittleEndian>()?,
-        };
-        let received = Timeval {
-            sec: r.read_i32::<LittleEndian>()?,
-            usec: r.read_i32::<LittleEndian>()?,
-        };
+        let sent = Timeval::read_from(r)?;
+        let received = Timeval::read_from(r)?;
         let size = r.read_u32::<LittleEndian>()?;
         Ok(Self {
             msg_type,
@@ -72,10 +60,8 @@ impl BaseMessage {
         w.write_u16::<LittleEndian>(self.msg_type.into())?;
         w.write_u16::<LittleEndian>(self.id)?;
         w.write_u16::<LittleEndian>(self.refers_to)?;
-        w.write_i32::<LittleEndian>(self.sent.sec)?;
-        w.write_i32::<LittleEndian>(self.sent.usec)?;
-        w.write_i32::<LittleEndian>(self.received.sec)?;
-        w.write_i32::<LittleEndian>(self.received.usec)?;
+        self.sent.write_to(w)?;
+        self.received.write_to(w)?;
         w.write_u32::<LittleEndian>(self.size)?;
         Ok(())
     }
@@ -157,7 +143,7 @@ mod tests {
     #[test]
     fn unknown_type_returns_error() {
         let mut bad_bytes = HELLO_HEADER_BYTES;
-        bad_bytes[0] = 0xFF; // invalid type
+        bad_bytes[0] = 0xFF;
         bad_bytes[1] = 0xFF;
         let mut cursor = io::Cursor::new(&bad_bytes);
         let err = BaseMessage::read_from(&mut cursor).unwrap_err();

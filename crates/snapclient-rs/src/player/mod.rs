@@ -1,7 +1,11 @@
 //! Audio player trait and software volume control.
 
+#[cfg(feature = "alsa")]
+pub mod alsa;
 #[cfg(feature = "coreaudio")]
 pub mod coreaudio;
+#[cfg(feature = "pulse")]
+pub mod pulse;
 
 use std::sync::Arc;
 

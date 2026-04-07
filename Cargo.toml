@@ -57,6 +57,9 @@ rubato = "0.16"
 
 # Audio backends
 coreaudio-rs = "0.14"
+alsa = "0.9"
+libpulse-binding = "2"
+libpulse-simple-binding = "2"
 
 # mDNS
 mdns-sd = "0.12"

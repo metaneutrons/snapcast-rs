@@ -154,7 +154,8 @@ impl Stream {
         }
 
         // Ensure we have a current chunk
-        if self.current.is_none() || self.current.as_ref().unwrap().is_end() {
+        let needs_new = self.current.as_ref().is_none_or(|c| c.is_end());
+        if needs_new {
             self.current = self.chunks.pop_front();
         }
         if self.current.is_none() {
@@ -254,7 +255,9 @@ impl Stream {
         output: &mut [u8],
         frames: u32,
     ) -> bool {
-        let chunk = self.current.as_ref().unwrap();
+        let Some(chunk) = self.current.as_ref() else {
+            return false;
+        };
         let frame_ns = 1_000_000_000.0 / self.format.rate() as f64;
         let req_duration_usec = (frames as f64 * frame_ns / 1000.0) as i64;
 
@@ -289,7 +292,9 @@ impl Stream {
         }
 
         // Play with partial silence if needed
-        let chunk = self.current.as_ref().unwrap();
+        let Some(chunk) = self.current.as_ref() else {
+            return false;
+        };
         let age_usec = server_now_usec - chunk.start_usec() - self.buffer_ms * 1000 + dac_time_usec;
 
         if age_usec <= 0 {

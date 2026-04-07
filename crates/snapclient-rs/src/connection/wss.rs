@@ -35,7 +35,9 @@ impl WssConnection {
         let url = format!("wss://{}:{}/jsonrpc", self.host, self.port);
 
         let mut root_store = rustls::RootCertStore::empty();
-        for cert in rustls_native_certs::load_native_certs().expect("load native certs") {
+        for cert in rustls_native_certs::load_native_certs()
+            .map_err(|e| anyhow::anyhow!("failed to load native certs: {e}"))?
+        {
             root_store.add(cert).ok();
         }
 

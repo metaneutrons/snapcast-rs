@@ -4,6 +4,7 @@ pub mod base;
 pub mod client_info;
 pub mod codec_header;
 pub mod error;
+pub mod factory;
 pub mod hello;
 pub mod server_settings;
 pub mod time;

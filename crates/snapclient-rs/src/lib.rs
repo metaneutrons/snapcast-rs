@@ -6,6 +6,7 @@ pub mod decoder;
 #[cfg(feature = "mdns")]
 pub mod discovery;
 pub mod double_buffer;
+pub mod logging;
 pub mod player;
 #[cfg(feature = "resampler")]
 pub mod resampler;

@@ -1,14 +1,12 @@
 use clap::Parser;
 use snapclient_rs::cli;
 use snapclient_rs::controller::Controller;
-use tracing_subscriber::EnvFilter;
 
 fn main() -> anyhow::Result<()> {
     let cli = cli::Cli::parse();
 
-    tracing_subscriber::fmt()
-        .with_env_filter(EnvFilter::from_default_env())
-        .init();
+    // Initialize logging from CLI options before anything else
+    snapclient_rs::logging::init(&cli.logsink, &cli.logfilter)?;
 
     let settings = cli.into_settings()?;
     tracing::info!(

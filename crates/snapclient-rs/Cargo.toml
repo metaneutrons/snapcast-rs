@@ -1,0 +1,21 @@
+[package]
+name = "snapclient-rs"
+description = "Snapcast client — synchronized multiroom audio player"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[[bin]]
+name = "snapclient-rs"
+path = "src/main.rs"
+
+[dependencies]
+snapcast-proto = { workspace = true }
+tokio = { workspace = true }
+clap = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+anyhow = { workspace = true }

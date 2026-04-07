@@ -7,5 +7,7 @@ pub mod decoder;
 pub mod discovery;
 pub mod double_buffer;
 pub mod player;
+#[cfg(feature = "resampler")]
+pub mod resampler;
 pub mod stream;
 pub mod time_provider;

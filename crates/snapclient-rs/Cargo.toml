@@ -29,6 +29,7 @@ rustls-native-certs = { workspace = true, optional = true }
 futures-util = { workspace = true, optional = true }
 symphonia = { workspace = true }
 audiopus = { workspace = true }
+rubato = { workspace = true, optional = true }
 coreaudio-rs = { workspace = true, optional = true }
 
 [features]
@@ -37,3 +38,4 @@ coreaudio = ["dep:coreaudio-rs"]
 mdns = ["dep:mdns-sd"]
 websocket = ["dep:tokio-tungstenite", "dep:futures-util"]
 tls = ["websocket", "dep:tokio-rustls", "dep:rustls", "dep:rustls-native-certs"]
+resampler = ["dep:rubato"]

@@ -1,5 +1,8 @@
 //! Audio player trait and software volume control.
 
+#[cfg(feature = "coreaudio")]
+pub mod coreaudio;
+
 use std::sync::Arc;
 
 use anyhow::Result;

@@ -22,3 +22,8 @@ anyhow = { workspace = true }
 base64 = { workspace = true }
 symphonia = { workspace = true }
 audiopus = { workspace = true }
+coreaudio-rs = { workspace = true, optional = true }
+
+[features]
+default = ["coreaudio"]
+coreaudio = ["dep:coreaudio-rs"]

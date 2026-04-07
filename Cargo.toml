@@ -50,6 +50,9 @@ audiopus = "0.2"
 # Audio resampling
 rubato = "0.16"
 
+# Audio backends
+coreaudio-rs = "0.14"
+
 # mDNS
 mdns-sd = "0.12"
 

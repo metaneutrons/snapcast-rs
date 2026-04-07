@@ -1,6 +1,7 @@
 //! Audio decoder trait and implementations.
 
 pub mod flac;
+pub mod vorbis;
 
 use anyhow::{Result, bail};
 use snapcast_proto::SampleFormat;

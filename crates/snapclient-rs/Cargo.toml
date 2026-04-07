@@ -21,3 +21,4 @@ tracing-subscriber = { workspace = true }
 anyhow = { workspace = true }
 base64 = { workspace = true }
 symphonia = { workspace = true }
+audiopus = { workspace = true }

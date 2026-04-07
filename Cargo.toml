@@ -45,7 +45,7 @@ rustls = "0.23"
 
 # Audio decoding
 symphonia = { version = "0.5", features = ["flac", "pcm", "ogg", "vorbis"] }
-audiopus = "0.3"
+audiopus = "0.2"
 
 # Audio resampling
 rubato = "0.16"

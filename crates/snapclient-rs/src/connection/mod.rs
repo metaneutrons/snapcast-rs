@@ -1,8 +1,9 @@
-//! Connection layer — trait and TCP implementation.
-//!
-//! Handles raw frame I/O: sending and receiving complete Snapcast protocol
-//! frames (BaseMessage header + payload). Request/response correlation
-//! (via `send_request`) uses oneshot channels with timeout.
+//! Connection layer — TCP, WebSocket, and WSS implementations.
+
+#[cfg(feature = "websocket")]
+pub mod ws;
+#[cfg(feature = "tls")]
+pub mod wss;
 
 use std::collections::HashMap;
 use std::time::Duration;

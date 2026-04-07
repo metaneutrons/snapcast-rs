@@ -3,6 +3,8 @@ pub mod config;
 pub mod connection;
 pub mod controller;
 pub mod decoder;
+#[cfg(feature = "mdns")]
+pub mod discovery;
 pub mod double_buffer;
 pub mod player;
 pub mod stream;

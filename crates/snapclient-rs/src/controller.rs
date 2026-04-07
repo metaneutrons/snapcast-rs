@@ -73,7 +73,7 @@ impl Controller {
     }
 
     async fn send_hello(&mut self) -> Result<()> {
-        let mac = "00:00:00:00:00:00".to_string();
+        let mac = get_mac_address();
         let host_id = if self.settings.host_id.is_empty() {
             mac.clone()
         } else {
@@ -320,4 +320,12 @@ fn hostname() -> String {
     hostname::get()
         .map(|h| h.to_string_lossy().into_owned())
         .unwrap_or_else(|_| "unknown".to_string())
+}
+
+fn get_mac_address() -> String {
+    mac_address::get_mac_address()
+        .ok()
+        .flatten()
+        .map(|mac| mac.to_string().to_lowercase())
+        .unwrap_or_else(|| "00:00:00:00:00:00".to_string())
 }

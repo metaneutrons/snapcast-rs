@@ -41,6 +41,7 @@ base64 = "0.22"
 
 # Hostname
 hostname = "0.4"
+mac_address = "1"
 
 # Networking
 tokio-tungstenite = { version = "0.26", features = ["connect", "__rustls-tls"] }

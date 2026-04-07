@@ -111,9 +111,9 @@ impl Decoder for VorbisDecoder {
         };
 
         let spec = *decoded.spec();
-        let duration = decoded.capacity() as u64;
+        let frames = decoded.frames() as u64;
 
-        let mut sample_buf = SampleBuffer::<i16>::new(duration, spec);
+        let mut sample_buf = SampleBuffer::<i16>::new(frames, spec);
         sample_buf.copy_interleaved_ref(decoded);
 
         let mut out = Vec::with_capacity(sample_buf.samples().len() * 2);

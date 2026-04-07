@@ -99,9 +99,9 @@ impl Decoder for FlacDecoder {
         };
 
         let spec = *decoded.spec();
-        let duration = decoded.capacity() as u64;
+        let frames = decoded.frames() as u64;
 
-        let mut sample_buf = SampleBuffer::<i32>::new(duration, spec);
+        let mut sample_buf = SampleBuffer::<i32>::new(frames, spec);
         sample_buf.copy_interleaved_ref(decoded);
         let samples = sample_buf.samples();
 

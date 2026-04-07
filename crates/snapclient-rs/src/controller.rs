@@ -136,7 +136,6 @@ impl Controller {
             tokio::select! {
                 msg = self.connection.recv() => {
                     let msg = msg?;
-                    tracing::debug!(msg_type = ?msg.base.msg_type, "Received message");
                     self.handle_message(msg)?;
                 }
                 _ = quick_sync_timer.tick(), if quick_syncs_remaining > 0 => {

@@ -68,7 +68,6 @@ impl Controller {
         );
 
         self.send_hello().await?;
-        self.initial_time_sync().await?;
         self.receive_loop().await
     }
 
@@ -122,55 +121,56 @@ impl Controller {
         }
     }
 
-    async fn initial_time_sync(&mut self) -> Result<()> {
-        // Drain any pushed messages first (e.g. CodecHeader)
-        self.drain_pushed_messages().await?;
+    async fn receive_loop(&mut self) -> Result<()> {
+        let mut sync_timer = tokio::time::interval(Duration::from_secs(1));
+        let mut quick_syncs_remaining: u32 = 50;
+        let mut quick_sync_timer = tokio::time::interval(Duration::from_millis(100));
 
-        for i in 0..50 {
-            self.do_time_sync().await?;
-            if i < 49 {
-                tokio::time::sleep(Duration::from_millis(100)).await;
-            }
-        }
-        let diff = self.time_provider.lock().unwrap().diff_to_server_usec();
-        tracing::info!(diff_ms = diff as f64 / 1000.0, "Time sync complete");
-        Ok(())
-    }
-
-    async fn do_time_sync(&mut self) -> Result<()> {
+        // Send first time sync immediately
         self.connection
             .send(MessageType::Time, &MessagePayload::Time(Time::new()))
-            .await?;
+            .await
+            .ok();
 
-        // Read messages until we get a Time response, handling others along the way
         loop {
-            let msg = self.recv_timeout(Duration::from_secs(2)).await?;
-            if let MessagePayload::Time(t) = msg.payload {
-                let s2c = msg.base.received - msg.base.sent;
-                self.time_provider
-                    .lock()
-                    .unwrap()
-                    .set_diff(&t.latency, &s2c);
-                return Ok(());
+            tokio::select! {
+                msg = self.connection.recv() => {
+                    self.handle_message(msg?)?;
+                }
+                _ = quick_sync_timer.tick(), if quick_syncs_remaining > 0 => {
+                    quick_syncs_remaining -= 1;
+                    self.connection
+                        .send(MessageType::Time, &MessagePayload::Time(Time::new()))
+                        .await
+                        .ok();
+                    if quick_syncs_remaining == 0 {
+                        let diff = self.time_provider.lock().unwrap().diff_to_server_usec();
+                        tracing::info!(diff_ms = diff as f64 / 1000.0, "Time sync complete");
+                    }
+                }
+                _ = sync_timer.tick(), if quick_syncs_remaining == 0 => {
+                    self.connection
+                        .send(MessageType::Time, &MessagePayload::Time(Time::new()))
+                        .await
+                        .ok();
+                }
             }
-            // Handle pushed messages (CodecHeader, ServerSettings) during sync
-            self.handle_pushed(msg).await?;
         }
     }
 
-    /// Drain any messages the server pushes after Hello (CodecHeader, etc.)
-    async fn drain_pushed_messages(&mut self) -> Result<()> {
-        loop {
-            match tokio::time::timeout(Duration::from_millis(500), self.connection.recv()).await {
-                Ok(Ok(msg)) => self.handle_pushed(msg).await?,
-                _ => return Ok(()), // timeout or error — done draining
-            }
-        }
-    }
-
-    async fn handle_pushed(&mut self, msg: TypedMessage) -> Result<()> {
+    fn handle_message(&mut self, msg: TypedMessage) -> Result<()> {
         match msg.payload {
-            MessagePayload::CodecHeader(ch) => self.init_audio_pipeline(&ch)?,
+            MessagePayload::WireChunk(wc) => {
+                if let Some(ref mut dec) = self.decoder {
+                    let mut data = wc.payload;
+                    if dec.decode(&mut data)? {
+                        let chunk = PcmChunk::new(wc.timestamp, data, self.sample_format);
+                        if let Some(ref stream) = self.stream {
+                            stream.lock().unwrap().add_chunk(chunk);
+                        }
+                    }
+                }
+            }
             MessagePayload::ServerSettings(ss) => {
                 tracing::info!(
                     volume = ss.volume,
@@ -180,62 +180,22 @@ impl Controller {
                 self.apply_server_settings(&ss);
                 self.server_settings = Some(ss);
             }
+            MessagePayload::CodecHeader(ch) => {
+                self.init_audio_pipeline(&ch)?;
+            }
+            MessagePayload::Time(t) => {
+                let s2c = msg.base.received - msg.base.sent;
+                self.time_provider
+                    .lock()
+                    .unwrap()
+                    .set_diff(&t.latency, &s2c);
+            }
             MessagePayload::Error(e) => {
-                tracing::error!(code = e.code, error = %e.error, message = %e.message, "Server error");
+                tracing::error!(code = e.code, error = %e.error, "Server error");
             }
-            _ => {
-                tracing::debug!(msg_type = ?msg.base.msg_type, "Skipping message during sync");
-            }
+            _ => {}
         }
         Ok(())
-    }
-
-    async fn receive_loop(&mut self) -> Result<()> {
-        let mut sync_timer = tokio::time::interval(Duration::from_secs(1));
-
-        loop {
-            tokio::select! {
-                msg = self.connection.recv() => {
-                    let msg = msg?;
-                    match msg.payload {
-                        MessagePayload::WireChunk(wc) => {
-                            if let Some(ref mut dec) = self.decoder {
-                                let mut data = wc.payload;
-                                if dec.decode(&mut data)? {
-                                    let chunk = PcmChunk::new(wc.timestamp, data, self.sample_format);
-                                    if let Some(ref stream) = self.stream {
-                                        stream.lock().unwrap().add_chunk(chunk);
-                                    }
-                                }
-                            }
-                        }
-                        MessagePayload::ServerSettings(ss) => {
-                            tracing::info!(volume = ss.volume, muted = ss.muted, "ServerSettings update");
-                            self.apply_server_settings(&ss);
-                            self.server_settings = Some(ss);
-                        }
-                        MessagePayload::CodecHeader(ch) => {
-                            self.init_audio_pipeline(&ch)?;
-                        }
-                        MessagePayload::Time(t) => {
-                            let s2c = msg.base.received - msg.base.sent;
-                            self.time_provider.lock().unwrap().set_diff(&t.latency, &s2c);
-                        }
-                        MessagePayload::Error(e) => {
-                            tracing::error!(code = e.code, error = %e.error, "Server error");
-                        }
-                        _ => {}
-                    }
-                }
-                _ = sync_timer.tick() => {
-                    // Send time sync — response will be handled in the recv branch
-                    self.connection
-                        .send(MessageType::Time, &MessagePayload::Time(Time::new()))
-                        .await
-                        .ok();
-                }
-            }
-        }
     }
 
     fn apply_server_settings(&mut self, ss: &ServerSettings) {

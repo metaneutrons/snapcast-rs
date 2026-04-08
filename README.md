@@ -2,7 +2,7 @@
 
 Rust implementation of [Snapcast](https://github.com/snapcast/snapcast) — synchronized multiroom audio.
 
-100% pure Rust by default. Cross-platform: macOS, Linux, Windows.
+100% pure Rust client. Cross-platform: macOS, Linux, Windows.
 
 ## Architecture
 
@@ -31,14 +31,10 @@ Both libraries use the same channel-based pattern:
 // Client
 let (mut client, mut events) = SnapClient::new(config);
 let cmd = client.command_sender();
-// events: ClientEvent::{Connected, VolumeChanged, JsonRpc, ...}
-// commands: ClientCommand::{SetVolume, SendJsonRpc, Stop}
 
 // Server
 let (mut server, mut events) = SnapServer::new(config);
 let cmd = server.command_sender();
-// events: ServerEvent::{ClientConnected, JsonRpc, ...}
-// commands: ServerCommand::{SendJsonRpc, Stop}
 ```
 
 The `JsonRpc` event + `SendJsonRpc` command enable custom extensions (e.g. EQ control)
@@ -76,12 +72,15 @@ Binaries: `target/release/snapclient-rs`, `target/release/snapserver-rs`
 
 ### Dependencies
 
-Zero C libraries by default. Optional:
+Client: zero C libraries. Server: libflac for FLAC encoding (default).
 
 | Feature  | C Library  | For                    |
 |----------|-----------|------------------------|
-| `opus`   | libopus   | Opus encoding (server) |
-| `vorbis` | libvorbis | Vorbis encoding (server) |
+| `flac`   | libFLAC   | FLAC encoding (server default) |
+| `opus`   | libopus   | Opus encoding (server optional) |
+| `vorbis` | libvorbis | Vorbis encoding (server optional) |
+
+Server without C deps: `cargo build -p snapserver-rs --no-default-features` (PCM only).
 
 ## Usage
 
@@ -126,16 +125,15 @@ snapclient-rs --help
 ### Feed Audio
 
 ```bash
-# From MPD (configure output to /tmp/snapfifo)
 # From ffmpeg
-ffmpeg -i music.mp3 -f s16le -ar 48000 -ac 2 - > /tmp/snapfifo
+ffmpeg -re -i music.mp3 -f s16le -ar 48000 -ac 2 pipe:1 > /tmp/snapfifo
 # Test with noise
 cat /dev/urandom > /tmp/snapfifo
 ```
 
 ## Server Config File
 
-`/etc/snapserver.conf` (INI format, same as C++ server):
+`/etc/snapserver.conf` (INI format, compatible with C++ server):
 
 ```ini
 [stream]
@@ -156,30 +154,58 @@ CLI flags override config file values.
 
 ## JSON-RPC Control API
 
-All 25 C++ methods implemented: `Client.{GetStatus,SetVolume,SetLatency,SetName}`,
-`Group.{GetStatus,SetMute,SetStream,SetClients,SetName}`,
-`Server.{GetRPCVersion,GetStatus,DeleteClient,GetToken,Authenticate}`,
-`Stream.{AddStream,RemoveStream,SetProperty,Control}`.
+All 25 C++ methods implemented. Three transports: HTTP POST `/jsonrpc`, WebSocket at `/jsonrpc`, raw TCP on port 1705. JWT authentication (optional, disabled by default).
 
-Three transports: HTTP POST `/jsonrpc`, WebSocket at `/jsonrpc`, raw TCP on port 1705.
+## Verified Working
 
-JWT authentication (optional, disabled by default).
+- ✅ Rust server → FLAC encoding → Rust client → CoreAudio (macOS) — clean audio, 40s+ stable
+- ✅ Rust client → C++ server — clean audio with drift correction
+- ✅ Time sync: -0.04ms precision
+- ✅ JSON-RPC via HTTP, TCP (tested with curl and nc)
+- ✅ Server builds and runs on Linux (Arch x86_64)
+- ✅ Client builds and runs on Linux with ALSA
+- ✅ Client + server compile on Windows (aarch64-msvc)
+- ✅ PCM codec end-to-end
+- ✅ FLAC codec end-to-end
+- ✅ mDNS service advertisement + client discovery
+- ✅ Config file parsing (/etc/snapserver.conf)
+- ✅ Ctrl-C graceful shutdown
+
+## Not Yet Tested
+
+- ⬜ Opus codec end-to-end (encoder + decoder exist, not integration tested)
+- ⬜ Vorbis codec end-to-end (encoder + decoder exist, not integration tested)
+- ⬜ WebSocket JSON-RPC transport (handler exists, not tested with a WS client)
+- ⬜ Snapweb static file serving (code exists, not tested with actual Snapweb files)
+- ⬜ ALSA playback quality on Linux (builds, not audio-tested)
+- ⬜ PulseAudio backend (builds, not tested)
+- ⬜ cpal/WASAPI backend on Windows (compiles, not runtime tested)
+- ⬜ librespot stream reader (code exists, needs librespot installed)
+- ⬜ airplay stream reader (code exists, needs shairport-sync installed)
+- ⬜ JWT authentication flow (token generation works, middleware not integration tested)
+- ⬜ Multiroom sync (two clients playing in sync)
+- ⬜ Client connecting to Rust server from a different machine (only localhost tested)
+- ⬜ State persistence (server.json save/load)
+- ⬜ Resampler (rubato, feature-gated, not tested)
+- ⬜ WebSocket/TLS client connection
+- ⬜ Group/stream management via JSON-RPC (methods exist, not tested with Snapweb)
 
 ## Testing
 
 ```bash
-cargo test --all           # 151 tests
+cargo test --all           # 154 tests
 cargo clippy -- -D warnings  # zero warnings
 ```
 
 ## Code Quality
 
 - `#![forbid(unsafe_code)]` on protocol crate
-- `#![deny(unsafe_code)]` on client/server (only monotonic clock FFI allowed)
+- `#![deny(unsafe_code)]` on client/server (only monotonic clock FFI + FLAC encoder FFI)
 - `#![warn(missing_docs)]` — 100% doc coverage
 - Zero `#[allow(dead_code)]`
 - Zero TODOs in codebase
 - Structured tracing logging at all levels
+- 10,469 lines · 154 tests · 100 commits
 
 ## License
 

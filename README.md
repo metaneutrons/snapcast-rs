@@ -1,91 +1,121 @@
 # snapcast-rs
 
-A Rust implementation of the [Snapcast](https://github.com/snapcast/snapcast) client, providing byte-level protocol compatibility with the C++ snapserver.
-
-## What is this?
-
-Snapcast is a multiroom client-server audio player where all clients play audio in perfect sync. This project rewrites the client (`snapclient`) in Rust, targeting the same binary protocol and achieving the same synchronized playback.
+Rust implementation of [Snapcast](https://github.com/snapcast/snapcast) — synchronized multiroom audio.
 
 ## Architecture
 
 ```
 snapcast-rs/
-├── crates/
-│   ├── snapcast-proto/    # Binary protocol: message types, serialization
-│   └── snapclient-rs/     # Client: connection, decoders, stream, player
+├── snapcast-proto      Protocol: binary message serialization (8 message types)
+├── snapcast-client     Client library: embeddable, channel-based API
+├── snapcast-server     Server library: embeddable, channel-based API
+├── snapclient-rs       Client binary: thin CLI wrapper
+└── snapserver-rs       Server binary: thin CLI wrapper
 ```
 
-The client pipeline:
+### Data Flow
 
 ```
-TCP/WS/WSS → Hello handshake → Time sync → CodecHeader → Decoder → Stream → Player
+Audio:    source → PipeStream → mpsc → Encoder → broadcast → SessionServer → snapclient
+Control:  control client → TCP JSON-RPC → dispatch → state mutation → notification broadcast
+Extension: unknown method → ServerEvent::JsonRpc → app → ServerCommand::SendJsonRpc → broadcast
 ```
 
-- **Connection**: TCP, WebSocket, WebSocket+TLS
-- **Decoders**: PCM (passthrough), FLAC (symphonia), Vorbis (symphonia), Opus (libopus)
-- **Stream**: Time-synchronized PCM buffer with drift correction (sample insertion/removal)
-- **Players**: CoreAudio (macOS), ALSA (Linux), PulseAudio (Linux)
-- **Discovery**: mDNS/ZeroConf via mdns-sd
+### Library API
+
+Both libraries use the same channel-based pattern:
+
+```rust
+// Client
+let (mut client, mut events) = SnapClient::new(config);
+let cmd = client.command_sender();
+// events: ClientEvent::{Connected, VolumeChanged, JsonRpc, ...}
+// commands: ClientCommand::{SetVolume, SendJsonRpc, Stop}
+
+// Server
+let (mut server, mut events) = SnapServer::new(config);
+let cmd = server.command_sender();
+// events: ServerEvent::{ClientConnected, JsonRpc, ...}
+// commands: ServerCommand::{SendJsonRpc, Stop}
+```
+
+The `JsonRpc` event + `SendJsonRpc` command enable custom extensions (e.g. EQ control)
+without modifying the library code.
 
 ## Building
 
 ```bash
-# macOS (default features: coreaudio + mdns)
 cargo build --release
-
-# With all features
-cargo build --release --features websocket,tls,resampler
-
-# Linux (when ALSA/Pulse backends are available)
-cargo build --release --no-default-features --features alsa,mdns
 ```
+
+Binaries: `target/release/snapclient-rs`, `target/release/snapserver-rs`
+
+### Dependencies
+
+- **libFLAC** — FLAC encoding/decoding (`brew install flac` / `apt install libflac-dev`)
+- **libopus** — Opus encoding/decoding (`brew install opus` / `apt install libopus-dev`)
+- **libvorbis** — Vorbis encoding (`brew install libvorbis` / `apt install libvorbis-dev`)
+
+### Features (client)
+
+| Feature | Default | Description |
+|---------|---------|-------------|
+| `coreaudio` | macOS | CoreAudio playback |
+| `alsa` | — | ALSA playback (Linux) |
+| `pulse` | — | PulseAudio playback (Linux) |
+| `mdns` | ✓ | mDNS server discovery |
+| `websocket` | — | WebSocket connection |
+| `tls` | — | WSS (WebSocket + TLS) |
+| `resampler` | — | Sample rate conversion (rubato) |
 
 ## Usage
 
+### Client
+
 ```bash
-# Connect to snapserver via TCP
-snapclient-rs tcp://192.168.1.100:1704
+# Connect to server
+snapclient-rs tcp://192.168.1.50:1704
 
-# Connect via WebSocket
-snapclient-rs ws://homeserver.local:1780
+# mDNS auto-discovery
+snapclient-rs
 
-# With authentication
-snapclient-rs tcp://user:password@myserver:1704
+# List audio devices
+snapclient-rs --list
 
-# Options
+# All options
 snapclient-rs --help
-snapclient-rs --instance 2 --latency 50 --mixer software tcp://server:1704
 ```
 
-## Feature Flags
+### Server
 
-| Feature | Default | Description |
-|---|---|---|
-| `coreaudio` | ✅ (macOS) | CoreAudio audio backend |
-| `mdns` | ✅ | mDNS/ZeroConf server discovery |
-| `websocket` | | WebSocket connection support |
-| `tls` | | WSS (WebSocket + TLS) support |
-| `resampler` | | Sample rate conversion (rubato) |
+```bash
+# Default: pipe source on /tmp/snapfifo
+snapserver-rs
 
-## CLI Options
+# Custom source
+snapserver-rs --source "pipe:///tmp/snapfifo?name=Music&sampleformat=48000:16:2"
 
-| Option | Description |
-|---|---|
-| `<url>` | Server URL: `tcp://`, `ws://`, or `wss://` |
-| `--instance <N>` | Instance ID for multiple clients on same host |
-| `--hostID <ID>` | Unique host identifier |
-| `--player <name[:params]>` | Audio backend |
-| `--latency <ms>` | Additional DAC latency |
-| `--sampleformat <rate:bits:channels>` | Resample format (`*` = same as source) |
-| `--mixer <mode[:params]>` | Volume control: software, hardware, script, none |
-| `--soundcard <name>` | PCM device name or index |
-| `--logsink <sink>` | Log output: stdout, stderr, null, file:path |
-| `--logfilter <filter>` | Log filter: `*:info`, `Stream:debug` |
+# Multiple sources
+snapserver-rs --source "pipe:///tmp/snapfifo?name=MPD" --source "tcp://0.0.0.0:4953?name=TCP"
 
-## Protocol Compatibility
+# All options
+snapserver-rs --help
+```
 
-The `snapcast-proto` crate implements the full Snapcast binary protocol with byte-level compatibility to the C++ implementation. All message types are tested with hardcoded byte vectors derived from the C++ serialization code.
+## Testing
+
+```bash
+# All tests (146)
+cargo test --all
+
+# Clippy (zero warnings)
+cargo clippy --all-targets -- -D warnings
+
+# Quick smoke test: server + client
+snapserver-rs --stream-port 11704 --codec pcm &
+snapclient-rs tcp://127.0.0.1:11704
+```
 
 ## License
 
-GPL-3.0 — same as the original Snapcast project.
+GPL-3.0-only — same as the original Snapcast.

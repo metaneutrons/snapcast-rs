@@ -1,0 +1,63 @@
+//! File stream reader — reads PCM/WAV from a file, loops on EOF.
+
+use anyhow::Result;
+use snapcast_proto::SampleFormat;
+use tokio::io::AsyncReadExt;
+use tokio::sync::mpsc;
+use tokio::task::JoinHandle;
+
+use super::PcmChunk;
+use super::uri::StreamUri;
+use crate::time::now_usec;
+
+/// Start reading PCM from a file, looping on EOF.
+pub fn start(
+    uri: StreamUri,
+    format: SampleFormat,
+    tx: mpsc::Sender<PcmChunk>,
+) -> Result<JoinHandle<()>> {
+    let path = uri.path.clone();
+    let chunk_ms: u64 = 20;
+    let chunk_bytes =
+        (format.rate() as usize * format.frame_size() as usize * chunk_ms as usize) / 1000;
+    let chunk_duration = std::time::Duration::from_millis(chunk_ms);
+
+    Ok(tokio::spawn(async move {
+        loop {
+            match tokio::fs::File::open(&path).await {
+                Ok(mut file) => {
+                    tracing::info!(path, "File stream opened");
+                    // Skip WAV header if present
+                    let mut header = [0u8; 4];
+                    if file.read_exact(&mut header).await.is_ok() && &header == b"RIFF" {
+                        // Skip remaining 40 bytes of WAV header
+                        let mut skip = [0u8; 40];
+                        let _ = file.read_exact(&mut skip).await;
+                    }
+
+                    let mut buf = vec![0u8; chunk_bytes];
+                    let mut interval = tokio::time::interval(chunk_duration);
+                    loop {
+                        interval.tick().await;
+                        match file.read_exact(&mut buf).await {
+                            Ok(_) => {
+                                let chunk = PcmChunk {
+                                    timestamp_usec: now_usec(),
+                                    data: buf.clone(),
+                                };
+                                if tx.send(chunk).await.is_err() {
+                                    return;
+                                }
+                            }
+                            Err(_) => break, // EOF → reopen and loop
+                        }
+                    }
+                }
+                Err(e) => {
+                    tracing::warn!(path, error = %e, "File not found, retrying");
+                }
+            }
+            tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+        }
+    }))
+}

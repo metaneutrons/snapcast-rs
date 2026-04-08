@@ -61,6 +61,8 @@
 use tokio::sync::mpsc;
 
 pub mod encoder;
+pub mod stream;
+pub mod time;
 
 /// Events emitted by the server to the consumer.
 #[derive(Debug, Clone)]

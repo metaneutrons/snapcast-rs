@@ -1337,6 +1337,8 @@ dependencies = [
  "anyhow",
  "audiopus",
  "flac-bound",
+ "hostname",
+ "mdns-sd",
  "ogg",
  "serde",
  "serde_json",

@@ -65,6 +65,7 @@ use tokio::sync::mpsc;
 pub mod control;
 pub mod encoder;
 pub mod jsonrpc;
+pub mod mdns;
 pub mod session;
 pub mod state;
 pub mod stream;
@@ -205,6 +206,11 @@ impl SnapServer {
             http_port = self.config.http_port,
             "Snapserver starting"
         );
+
+        // Advertise via mDNS
+        let _mdns = mdns::MdnsAdvertiser::new(self.config.stream_port)
+            .map_err(|e| tracing::warn!(error = %e, "mDNS advertisement failed"))
+            .ok();
 
         // Parse default sample format
         let default_format: snapcast_proto::SampleFormat = self

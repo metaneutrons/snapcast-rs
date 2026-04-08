@@ -144,16 +144,12 @@ impl Stream {
     /// Returns `true` if audio data was written, `false` if silence should be played.
     pub fn get_player_chunk(
         &mut self,
-        server_now_usec: i64,
-        output_buffer_dac_time_usec: i64,
+        _server_now_usec: i64,
+        _output_buffer_dac_time_usec: i64,
         output: &mut [u8],
         frames: u32,
     ) -> bool {
-        if output_buffer_dac_time_usec > self.buffer_ms * 1000 {
-            return false;
-        }
-
-        // Ensure we have a current chunk
+        // Simplified: just read frames directly, no time sync
         let needs_new = self.current.as_ref().is_none_or(|c| c.is_end());
         if needs_new {
             self.current = self.chunks.pop_front();
@@ -161,67 +157,8 @@ impl Stream {
         if self.current.is_none() {
             return false;
         }
-
-        let frame_size = self.format.frame_size() as usize;
-        let req_bytes = frames as usize * frame_size;
-
-        if self.hard_sync {
-            return self.do_hard_sync(server_now_usec, output_buffer_dac_time_usec, output, frames);
-        }
-
-        // Soft sync: compute sample rate correction
-        let mut frames_correction: i32 = 0;
-        if self.correct_after_x_frames != 0 {
-            self.played_frames += frames;
-            if self.played_frames >= self.correct_after_x_frames.unsigned_abs() {
-                frames_correction = self.played_frames as i32 / self.correct_after_x_frames;
-                self.played_frames %= self.correct_after_x_frames.unsigned_abs();
-            }
-        }
-
-        // Read frames with correction
-        let chunk_start = match self.read_with_correction(output, frames, frames_correction) {
-            Some(ts) => ts,
-            None => return false,
-        };
-
-        let age_usec =
-            server_now_usec - chunk_start - self.buffer_ms * 1000 + output_buffer_dac_time_usec;
-
-        self.set_real_sample_rate(self.format.rate() as f64);
-
-        // Check if hard sync is needed
-        let needs_hard_sync = (self.buffer.full()
-            && self.median.abs() > 2000
-            && age_usec.abs() > 500)
-            || (self.short_buffer.full() && self.short_median.abs() > 5000 && age_usec.abs() > 500)
-            || (self.mini_buffer.full()
-                && self.mini_buffer.median_simple().abs() > 50000
-                && age_usec.abs() > 500)
-            || age_usec.abs() > 500_000;
-
-        if needs_hard_sync {
-            self.hard_sync = true;
-        } else if self.short_buffer.full() {
-            // Soft sync: adjust playback speed
-            let mini_median = self.mini_buffer.median_simple();
-            if self.short_median > 100 && mini_median > 50 && age_usec > 50 {
-                let rate_adj = (self.short_median as f64 / 100.0) * 0.00005;
-                let rate = 1.0 - rate_adj.min(0.0005);
-                self.set_real_sample_rate(self.format.rate() as f64 * rate);
-            } else if self.short_median < -100 && mini_median < -50 && age_usec < -50 {
-                let rate_adj = (-self.short_median as f64 / 100.0) * 0.00005;
-                let rate = 1.0 + rate_adj.min(0.0005);
-                self.set_real_sample_rate(self.format.rate() as f64 * rate);
-            }
-        }
-
-        self.update_buffers(age_usec);
-        self.median = self.buffer.median_simple();
-        self.short_median = self.short_buffer.median_simple();
-
-        let _ = req_bytes; // used implicitly via frames
-        age_usec.abs() < 500_000
+        self.read_next(output, frames);
+        true
     }
 
     /// Fill output with silence.

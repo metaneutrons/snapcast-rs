@@ -144,12 +144,11 @@ impl Stream {
     /// Returns `true` if audio data was written, `false` if silence should be played.
     pub fn get_player_chunk(
         &mut self,
-        _server_now_usec: i64,
-        _output_buffer_dac_time_usec: i64,
+        server_now_usec: i64,
+        output_buffer_dac_time_usec: i64,
         output: &mut [u8],
         frames: u32,
     ) -> bool {
-        // Simplified: just read frames directly, no time sync
         let needs_new = self.current.as_ref().is_none_or(|c| c.is_end());
         if needs_new {
             self.current = self.chunks.pop_front();
@@ -157,8 +156,112 @@ impl Stream {
         if self.current.is_none() {
             return false;
         }
-        self.read_next(output, frames);
-        true
+
+        if self.hard_sync {
+            let chunk = self.current.as_ref().unwrap();
+            let req_duration_usec = (frames as i64 * 1_000_000) / self.format.rate() as i64;
+            let age_usec = server_now_usec - chunk.start_usec() - self.buffer_ms * 1000
+                + output_buffer_dac_time_usec;
+
+            if age_usec < -req_duration_usec {
+                // Too early — entire buffer is silence
+                self.get_silence(output, frames);
+                return true;
+            }
+
+            if age_usec > 0 {
+                // Too late — drop old chunks
+                self.current = None;
+                while let Some(mut c) = self.chunks.pop_front() {
+                    let a = server_now_usec - c.start_usec() - self.buffer_ms * 1000
+                        + output_buffer_dac_time_usec;
+                    if a > 0 && a < c.duration_usec() {
+                        let skip = (self.format.rate() as f64 * a as f64 / 1_000_000.0) as u32;
+                        c.seek(skip);
+                        self.current = Some(c);
+                        break;
+                    } else if a <= 0 {
+                        self.current = Some(c);
+                        break;
+                    }
+                }
+                if self.current.is_none() {
+                    return false;
+                }
+            }
+
+            // Recompute age after potential chunk changes
+            let chunk = self.current.as_ref().unwrap();
+            let age_usec = server_now_usec - chunk.start_usec() - self.buffer_ms * 1000
+                + output_buffer_dac_time_usec;
+
+            if age_usec <= 0 {
+                let silent_frames =
+                    (self.format.rate() as f64 * (-age_usec) as f64 / 1_000_000.0) as u32;
+                let silent_frames = silent_frames.min(frames);
+                let frame_size = self.format.frame_size() as usize;
+
+                if silent_frames > 0 {
+                    output[..silent_frames as usize * frame_size].fill(0);
+                }
+
+                let remaining = frames - silent_frames;
+                if remaining > 0 {
+                    let offset = silent_frames as usize * frame_size;
+                    self.read_next(&mut output[offset..], remaining);
+                }
+
+                // Only exit hard_sync if we actually played some audio
+                // (matching C++ behavior: result = silent_frames <= frames)
+                if silent_frames < frames {
+                    self.hard_sync = false;
+                }
+                return true;
+            }
+            return false;
+        }
+
+        // Normal playback with drift correction
+        let mut frames_correction: i32 = 0;
+        if self.correct_after_x_frames != 0 {
+            self.played_frames += frames;
+            if self.played_frames >= self.correct_after_x_frames.unsigned_abs() {
+                frames_correction = self.played_frames as i32 / self.correct_after_x_frames;
+                self.played_frames %= self.correct_after_x_frames.unsigned_abs();
+            }
+        }
+
+        let chunk_start = match self.read_with_correction(output, frames, frames_correction) {
+            Some(ts) => ts,
+            None => return false,
+        };
+
+        let age_usec =
+            server_now_usec - chunk_start - self.buffer_ms * 1000 + output_buffer_dac_time_usec;
+
+        self.set_real_sample_rate(self.format.rate() as f64);
+
+        // Re-trigger hard_sync only on extreme drift (>500ms)
+        if age_usec.abs() > 500_000 {
+            self.hard_sync = true;
+        } else if self.short_buffer.full() {
+            let mini_median = self.mini_buffer.median_simple();
+            if self.short_median > 100 && mini_median > 50 && age_usec > 50 {
+                let rate_adj = (self.short_median as f64 / 100.0) * 0.00005;
+                let rate = 1.0 - rate_adj.min(0.0005);
+                self.set_real_sample_rate(self.format.rate() as f64 * rate);
+            } else if self.short_median < -100 && mini_median < -50 && age_usec < -50 {
+                let rate_adj = (-self.short_median as f64 / 100.0) * 0.00005;
+                let rate = 1.0 + rate_adj.min(0.0005);
+                self.set_real_sample_rate(self.format.rate() as f64 * rate);
+            }
+        }
+
+        self.update_buffers(age_usec);
+        self.median = self.buffer.median_simple();
+        self.short_median = self.short_buffer.median_simple();
+
+        age_usec.abs() < 500_000
     }
 
     /// Fill output with silence.
@@ -184,78 +287,6 @@ impl Stream {
     }
 
     // --- Private helpers ---
-
-    fn do_hard_sync(
-        &mut self,
-        server_now_usec: i64,
-        dac_time_usec: i64,
-        output: &mut [u8],
-        frames: u32,
-    ) -> bool {
-        let Some(chunk) = self.current.as_ref() else {
-            return false;
-        };
-        let frame_ns = 1_000_000_000.0 / self.format.rate() as f64;
-        let req_duration_usec = (frames as f64 * frame_ns / 1000.0) as i64;
-
-        let age_usec = server_now_usec - chunk.start_usec() - self.buffer_ms * 1000 + dac_time_usec;
-
-        if age_usec < -req_duration_usec {
-            // Too early — play silence
-            self.get_silence(output, frames);
-            return true;
-        }
-
-        if age_usec > 0 {
-            // Too late — drop old chunks until we catch up
-            self.current = None;
-            while let Some(mut c) = self.chunks.pop_front() {
-                let a = server_now_usec - c.start_usec() - self.buffer_ms * 1000 + dac_time_usec;
-                if a > 0 && a < c.duration_usec() {
-                    // Fast-forward within this chunk
-                    let skip_frames = (self.format.rate() as f64 * a as f64 / 1_000_000.0) as u32;
-                    c.seek(skip_frames);
-                    self.current = Some(c);
-                    break;
-                } else if a <= 0 {
-                    self.current = Some(c);
-                    break;
-                }
-                // else: chunk entirely too old, drop it
-            }
-            if self.current.is_none() {
-                return false;
-            }
-        }
-
-        // Play with partial silence if needed
-        let Some(chunk) = self.current.as_ref() else {
-            return false;
-        };
-        let age_usec = server_now_usec - chunk.start_usec() - self.buffer_ms * 1000 + dac_time_usec;
-
-        if age_usec <= 0 {
-            let silent_frames =
-                (self.format.rate() as f64 * (-age_usec) as f64 / 1_000_000.0) as u32;
-            let silent_frames = silent_frames.min(frames);
-            if silent_frames > 0 {
-                self.get_silence(
-                    &mut output[..silent_frames as usize * self.format.frame_size() as usize],
-                    silent_frames,
-                );
-            }
-            let remaining = frames - silent_frames;
-            if remaining > 0 {
-                let offset = silent_frames as usize * self.format.frame_size() as usize;
-                self.read_next(&mut output[offset..], remaining);
-            }
-            self.hard_sync = false;
-            self.reset_buffers();
-            return true;
-        }
-
-        false
-    }
 
     fn read_next(&mut self, output: &mut [u8], frames: u32) -> Option<i64> {
         let chunk = self.current.as_mut()?;

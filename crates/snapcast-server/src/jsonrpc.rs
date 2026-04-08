@@ -36,12 +36,28 @@ pub struct StreamControlMsg {
     pub params: Value,
 }
 
+/// A settings update to push to a streaming client via binary protocol.
+#[derive(Debug, Clone)]
+pub struct ClientSettingsUpdate {
+    /// Target client ID.
+    pub client_id: String,
+    /// Buffer size in ms.
+    pub buffer_ms: i32,
+    /// Latency offset in ms.
+    pub latency: i32,
+    /// Volume (0–100).
+    pub volume: u16,
+    /// Mute state.
+    pub muted: bool,
+}
+
 /// Handle a JSON-RPC request against shared server state.
 pub async fn handle_request(
     request: &Value,
     state: &Arc<Mutex<ServerState>>,
     auth_config: &AuthConfig,
     stream_control_tx: &tokio::sync::mpsc::Sender<StreamControlMsg>,
+    settings_tx: &tokio::sync::mpsc::Sender<ClientSettingsUpdate>,
 ) -> RpcResult {
     let id = &request["id"];
     let method = request["method"].as_str().unwrap_or("");
@@ -95,6 +111,8 @@ pub async fn handle_request(
                 c.config.volume.muted = muted;
             }
             let vol = json!({"percent": c.config.volume.percent, "muted": c.config.volume.muted});
+            // Push to streaming client via binary protocol
+            let _ = settings_tx.send(client_settings_update(client_id, c)).await;
             ok_with_notify(
                 id,
                 json!({"volume": &vol}),
@@ -113,6 +131,8 @@ pub async fn handle_request(
             if let Some(lat) = params["latency"].as_i64() {
                 c.config.latency = lat as i32;
             }
+            // Push to streaming client via binary protocol
+            let _ = settings_tx.send(client_settings_update(client_id, c)).await;
             ok_with_notify(
                 id,
                 json!({"latency": c.config.latency}),
@@ -338,6 +358,15 @@ fn err(id: &Value, code: i64, msg: &str) -> RpcResult {
     }
 }
 
+fn client_settings_update(client_id: &str, c: &crate::state::Client) -> ClientSettingsUpdate {
+    ClientSettingsUpdate {
+        client_id: client_id.to_string(),
+        buffer_ms: 1000, // TODO: from server config
+        latency: c.config.latency,
+        volume: c.config.volume.percent,
+        muted: c.config.volume.muted,
+    }
+}
 fn client_json(c: &crate::state::Client) -> Value {
     json!({
         "id": c.id,
@@ -375,6 +404,7 @@ mod tests {
         Arc<Mutex<ServerState>>,
         AuthConfig,
         tokio::sync::mpsc::Sender<StreamControlMsg>,
+        tokio::sync::mpsc::Sender<ClientSettingsUpdate>,
     ) {
         let mut s = ServerState::default();
         s.get_or_create_client("c1", "host1", "mac1");
@@ -387,15 +417,16 @@ mod tests {
             properties: Default::default(),
         });
         let (tx, _rx) = tokio::sync::mpsc::channel(16);
-        (Arc::new(Mutex::new(s)), AuthConfig::default(), tx)
+        let (stx, _srx) = tokio::sync::mpsc::channel(16);
+        (Arc::new(Mutex::new(s)), AuthConfig::default(), tx, stx)
     }
 
     #[tokio::test]
     async fn server_get_status() {
-        let (state, auth_config, stream_tx) = test_state().await;
+        let (state, auth_config, stream_tx, settings_tx) = test_state().await;
         let req = json!({"jsonrpc": "2.0", "id": 1, "method": "Server.GetStatus", "params": {}});
         let RpcResult::Response { response, .. } =
-            handle_request(&req, &state, &auth_config, &stream_tx).await
+            handle_request(&req, &state, &auth_config, &stream_tx, &settings_tx).await
         else {
             panic!("expected response");
         };
@@ -404,7 +435,7 @@ mod tests {
 
     #[tokio::test]
     async fn client_set_volume() {
-        let (state, auth_config, stream_tx) = test_state().await;
+        let (state, auth_config, stream_tx, settings_tx) = test_state().await;
         let req = json!({
             "jsonrpc": "2.0", "id": 2,
             "method": "Client.SetVolume",
@@ -413,7 +444,7 @@ mod tests {
         let RpcResult::Response {
             response,
             notification,
-        } = handle_request(&req, &state, &auth_config, &stream_tx).await
+        } = handle_request(&req, &state, &auth_config, &stream_tx, &settings_tx).await
         else {
             panic!("expected response");
         };
@@ -428,17 +459,17 @@ mod tests {
 
     #[tokio::test]
     async fn unknown_method_returns_unknown() {
-        let (state, auth_config, stream_tx) = test_state().await;
+        let (state, auth_config, stream_tx, settings_tx) = test_state().await;
         let req = json!({"jsonrpc": "2.0", "id": 3, "method": "Client.SetEq", "params": {}});
         assert!(matches!(
-            handle_request(&req, &state, &auth_config, &stream_tx).await,
+            handle_request(&req, &state, &auth_config, &stream_tx, &settings_tx).await,
             RpcResult::Unknown
         ));
     }
 
     #[tokio::test]
     async fn group_set_stream() {
-        let (state, auth_config, stream_tx) = test_state().await;
+        let (state, auth_config, stream_tx, settings_tx) = test_state().await;
         let gid = {
             let s = state.lock().await;
             s.groups[0].id.clone()
@@ -449,7 +480,7 @@ mod tests {
             "params": {"id": gid, "stream_id": "music"}
         });
         let RpcResult::Response { notification, .. } =
-            handle_request(&req, &state, &auth_config, &stream_tx).await
+            handle_request(&req, &state, &auth_config, &stream_tx, &settings_tx).await
         else {
             panic!("expected response");
         };

@@ -10,7 +10,7 @@ use tokio::sync::{Mutex, broadcast, mpsc};
 
 use crate::ServerEvent;
 use crate::auth::AuthConfig;
-use crate::jsonrpc::{self, RpcResult, StreamControlMsg};
+use crate::jsonrpc::{self, ClientSettingsUpdate, RpcResult, StreamControlMsg};
 use crate::state::ServerState;
 
 /// Runs the JSON-RPC control server on a TCP port.
@@ -21,6 +21,7 @@ pub async fn run_tcp(
     notify_tx: broadcast::Sender<Value>,
     auth_config: Arc<AuthConfig>,
     stream_control_tx: mpsc::Sender<StreamControlMsg>,
+    settings_tx: mpsc::Sender<ClientSettingsUpdate>,
 ) -> Result<()> {
     let listener = TcpListener::bind(format!("0.0.0.0:{port}")).await?;
     tracing::info!(port, "Control server (TCP) listening");
@@ -35,6 +36,7 @@ pub async fn run_tcp(
         let mut notify_rx = notify_tx.subscribe();
         let auth_config = Arc::clone(&auth_config);
         let stream_control_tx = stream_control_tx.clone();
+        let settings_tx = settings_tx.clone();
 
         tokio::spawn(async move {
             let (reader, mut writer) = stream.into_split();
@@ -56,7 +58,7 @@ pub async fn run_tcp(
                             continue;
                         };
 
-                        match jsonrpc::handle_request(&request, &state, &auth_config, &stream_control_tx).await {
+                        match jsonrpc::handle_request(&request, &state, &auth_config, &stream_control_tx, &settings_tx).await {
                             RpcResult::Response { response, notification } => {
                                 let _ = send_json(&mut writer, &response).await;
                                 if let Some(n) = notification {

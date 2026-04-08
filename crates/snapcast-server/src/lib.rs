@@ -257,6 +257,8 @@ impl SnapServer {
         let (notify_tx, _) = tokio::sync::broadcast::channel::<serde_json::Value>(256);
         let (stream_ctrl_tx, _stream_ctrl_rx) =
             tokio::sync::mpsc::channel::<jsonrpc::StreamControlMsg>(64);
+        let (settings_push_tx, _settings_push_rx) =
+            tokio::sync::mpsc::channel::<jsonrpc::ClientSettingsUpdate>(64);
         let auth_cfg = Arc::new(auth::AuthConfig::default());
         let control_state = Arc::clone(&shared_state);
         let control_event_tx = event_tx.clone();
@@ -264,6 +266,7 @@ impl SnapServer {
         let control_port = self.config.control_port;
         let control_auth = Arc::clone(&auth_cfg);
         let control_stream_tx = stream_ctrl_tx.clone();
+        let control_settings_tx = settings_push_tx.clone();
 
         let control_handle = tokio::spawn(async move {
             if let Err(e) = control::run_tcp(
@@ -273,6 +276,7 @@ impl SnapServer {
                 control_notify_tx,
                 control_auth,
                 control_stream_tx,
+                control_settings_tx,
             )
             .await
             {

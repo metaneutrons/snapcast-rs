@@ -1,6 +1,6 @@
 [workspace]
 resolver = "3"
-members = ["crates/snapcast-proto", "crates/snapcast-client", "crates/snapclient-rs"]
+members = ["crates/snapcast-proto", "crates/snapcast-client", "crates/snapcast-server", "crates/snapclient-rs", "crates/snapserver-rs"]
 
 [workspace.package]
 version = "0.1.0"
@@ -14,6 +14,7 @@ authors = ["Fabian Schmieder"]
 # Internal
 snapcast-proto = { path = "crates/snapcast-proto" }
 snapcast-client = { path = "crates/snapcast-client" }
+snapcast-server = { path = "crates/snapcast-server" }
 
 # Async runtime
 tokio = { version = "1", features = ["full"] }

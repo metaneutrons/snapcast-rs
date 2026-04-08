@@ -1284,6 +1284,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "snapcast-server"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "serde",
+ "serde_json",
+ "snapcast-proto",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
 name = "snapclient-rs"
 version = "0.1.0"
 dependencies = [
@@ -1295,6 +1307,19 @@ dependencies = [
  "tokio",
  "tracing",
  "tracing-appender",
+ "tracing-subscriber",
+]
+
+[[package]]
+name = "snapserver-rs"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "clap",
+ "serde_json",
+ "snapcast-server",
+ "tokio",
+ "tracing",
  "tracing-subscriber",
 ]
 

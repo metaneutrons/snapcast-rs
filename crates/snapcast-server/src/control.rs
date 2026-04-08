@@ -68,10 +68,10 @@ pub async fn run_tcp(
                         }
                     }
                     notification = notify_rx.recv() => {
-                        if let Ok(n) = notification {
-                            if send_json(&mut writer, &n).await.is_err() {
-                                break;
-                            }
+                        if let Ok(n) = notification
+                            && send_json(&mut writer, &n).await.is_err()
+                        {
+                            break;
                         }
                     }
                 }

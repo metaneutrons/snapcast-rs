@@ -1,8 +1,11 @@
 //! Audio encoders — PCM, FLAC, Opus, Vorbis.
 
+#[cfg(feature = "flac")]
 pub mod flac;
+#[cfg(feature = "opus")]
 pub mod opus;
 pub mod pcm;
+#[cfg(feature = "vorbis")]
 pub mod vorbis;
 
 use anyhow::Result;
@@ -32,9 +35,12 @@ pub trait Encoder {
 pub fn create(codec: &str, format: SampleFormat, options: &str) -> Result<Box<dyn Encoder>> {
     match codec {
         "pcm" => Ok(Box::new(pcm::PcmEncoder::new(format))),
+        #[cfg(feature = "flac")]
         "flac" => Ok(Box::new(flac::FlacEncoder::new(format, options)?)),
+        #[cfg(feature = "opus")]
         "opus" => Ok(Box::new(opus::OpusEncoder::new(format, options)?)),
+        #[cfg(feature = "vorbis")]
         "ogg" => Ok(Box::new(vorbis::VorbisEncoder::new(format, options)?)),
-        other => anyhow::bail!("unsupported codec: {other}"),
+        other => anyhow::bail!("unsupported codec: {other} (check enabled features)"),
     }
 }

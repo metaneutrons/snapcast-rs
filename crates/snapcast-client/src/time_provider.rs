@@ -49,12 +49,13 @@ impl TimeProvider {
         let now = Instant::now();
 
         // Clear buffer if last sync was more than 60 seconds ago
-        if let Some(last) = self.last_sync {
-            if now.duration_since(last) > Duration::from_secs(60) && !self.diff_buffer.is_empty() {
-                self.diff_to_server_usec
-                    .store((ms * 1000.0) as i64, Ordering::Relaxed);
-                self.diff_buffer.clear();
-            }
+        if let Some(last) = self.last_sync
+            && now.duration_since(last) > Duration::from_secs(60)
+            && !self.diff_buffer.is_empty()
+        {
+            self.diff_to_server_usec
+                .store((ms * 1000.0) as i64, Ordering::Relaxed);
+            self.diff_buffer.clear();
         }
         self.last_sync = Some(now);
 

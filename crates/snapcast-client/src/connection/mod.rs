@@ -157,12 +157,11 @@ impl TcpConnection {
             let stream = self.stream_mut()?;
             let msg = read_frame(stream).await?;
 
-            if msg.base.refers_to != 0 {
-                if let Some(pending) = self.pending.remove(&msg.base.refers_to) {
-                    // Deliver to waiting send_request caller
-                    let _ = pending.tx.send(msg);
-                    continue;
-                }
+            if msg.base.refers_to != 0
+                && let Some(pending) = self.pending.remove(&msg.base.refers_to)
+            {
+                let _ = pending.tx.send(msg);
+                continue;
             }
             return Ok(msg);
         }

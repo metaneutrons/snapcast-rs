@@ -139,21 +139,33 @@ fn encode_loop(
     tx: &broadcast::Sender<WireChunkData>,
     stream_id: &str,
 ) {
+    // Track timestamp of first buffered chunk (for codecs that buffer internally)
+    let mut pending_timestamp: Option<i64> = None;
+
     while let Some(pcm) = rx.blocking_recv() {
+        // Save timestamp of first chunk fed to encoder
+        if pending_timestamp.is_none() {
+            pending_timestamp = Some(pcm.timestamp_usec);
+        }
+
         match enc.encode(&pcm.data) {
             Ok(encoded) => {
                 if encoded.data.is_empty() {
+                    // Encoder is buffering — keep the pending timestamp
                     continue;
                 }
                 let wire = WireChunkData {
                     stream_id: stream_id.to_string(),
-                    timestamp_usec: pcm.timestamp_usec,
+                    timestamp_usec: pending_timestamp.take().unwrap_or(pcm.timestamp_usec),
                     data: encoded.data,
                 };
                 let _ = tx.send(wire);
+                // Reset for next frame
+                pending_timestamp = None;
             }
             Err(e) => {
                 tracing::warn!(stream_id, error = %e, "Encode failed");
+                pending_timestamp = None;
             }
         }
     }

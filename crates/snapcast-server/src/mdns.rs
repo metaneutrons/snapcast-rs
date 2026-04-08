@@ -6,6 +6,7 @@ use mdns_sd::{ServiceDaemon, ServiceInfo};
 /// Advertise the Snapcast server via mDNS.
 pub struct MdnsAdvertiser {
     daemon: ServiceDaemon,
+    fullname: String,
 }
 
 impl MdnsAdvertiser {
@@ -23,15 +24,26 @@ impl MdnsAdvertiser {
             port,
             None,
         )?;
+        let fullname = service.get_fullname().to_string();
         daemon.register(service)?;
         tracing::info!(port, host = %mdns_host, "mDNS: advertising _snapcast._tcp");
-        Ok(Self { daemon })
+        Ok(Self { daemon, fullname })
+    }
+
+    /// Gracefully unregister and shut down the mDNS daemon.
+    /// Must be called while the async runtime is still alive.
+    pub fn shutdown(&self) {
+        tracing::debug!("mDNS: shutting down");
+        let _ = self.daemon.unregister(&self.fullname);
+        // Give the daemon time to send the unregister packet
+        std::thread::sleep(std::time::Duration::from_millis(100));
+        let _ = self.daemon.shutdown();
     }
 }
 
 impl Drop for MdnsAdvertiser {
     fn drop(&mut self) {
-        // Just shut down — don't try to unregister (causes error spam)
+        // If shutdown() wasn't called explicitly, just stop the daemon
         let _ = self.daemon.shutdown();
     }
 }

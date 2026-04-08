@@ -19,7 +19,7 @@ hostname = { workspace = true }
 libc = { workspace = true }
 mac_address = { workspace = true }
 symphonia = { workspace = true }
-audiopus = { workspace = true }
+opus-decoder = "0.1"
 
 # Optional
 mdns-sd = { workspace = true, optional = true }

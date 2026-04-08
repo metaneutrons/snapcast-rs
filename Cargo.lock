@@ -929,6 +929,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7c87def4c32ab89d880effc9e097653c8da5d6ef28e6b539d313baaacfbafcbe"
 
 [[package]]
+name = "opus-decoder"
+version = "0.1.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "15ae32c275dabb0cd2c863460bf349e9abc3568ba2abf0f9eb7b7d2edeeed07e"
+dependencies = [
+ "thiserror",
+]
+
+[[package]]
 name = "parking_lot"
 version = "0.12.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1315,7 +1324,6 @@ version = "0.1.0"
 dependencies = [
  "alsa",
  "anyhow",
- "audiopus",
  "coreaudio-rs",
  "futures-util",
  "hostname",
@@ -1324,6 +1332,7 @@ dependencies = [
  "libpulse-simple-binding",
  "mac_address",
  "mdns-sd",
+ "opus-decoder",
  "rubato",
  "rustls",
  "rustls-native-certs",

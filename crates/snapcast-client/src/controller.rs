@@ -62,22 +62,28 @@ impl Controller {
 
     /// Run the client, reconnecting on errors until stopped.
     pub async fn run(&mut self) -> Result<()> {
+        let mut attempts = 0u32;
         loop {
             match self.session().await {
                 Ok(()) => {
-                    // Clean exit (e.g. Stop command)
                     self.cleanup();
                     return Ok(());
                 }
                 Err(e) => {
-                    tracing::error!("Session error: {e}");
+                    if attempts == 0 {
+                        tracing::warn!("Connection failed: {e}");
+                    } else {
+                        tracing::debug!("Reconnect attempt {attempts} failed: {e}");
+                    }
                     self.emit(ClientEvent::Disconnected {
                         reason: e.to_string(),
                     });
+                    attempts = attempts.saturating_add(1);
                 }
             }
             self.cleanup();
-            tokio::time::sleep(Duration::from_secs(1)).await;
+            let delay = Duration::from_secs(attempts.min(30) as u64);
+            tokio::time::sleep(delay).await;
         }
     }
 

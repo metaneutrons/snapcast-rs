@@ -1,24 +1,52 @@
-//! FLAC encoder using libflac via flac-bound (persistent streaming encoder).
+//! FLAC encoder using libflac-sys directly (raw FFI with streaming callback).
+//!
+//! Uses the raw C callback API to distinguish header writes from frame writes,
+//! matching the C++ server's FlacEncoder exactly.
 
-use std::io::{Cursor, Write};
+use std::ffi::c_void;
 
 use anyhow::{Result, bail};
-use flac_bound::{FlacEncoder as FlacEnc, WriteWrapper};
+use libflac_sys::*;
 use snapcast_proto::SampleFormat;
 
 use super::{EncodedChunk, Encoder};
 
-struct FlacEncState {
-    _write_wrapper: Box<WriteWrapper<'static>>,
-    encoder: FlacEnc<'static>,
+/// Client data passed to the libflac write callback.
+struct CallbackData {
+    header: Vec<u8>,
+    frame_buf: Vec<u8>,
+    encoded_samples: u32,
 }
 
-/// Streaming FLAC encoder that persists across encode() calls.
+/// Streaming FLAC encoder using raw libflac FFI.
 pub struct FlacEncoder {
     format: SampleFormat,
-    header: Vec<u8>,
-    encoder: *mut FlacEncState,
-    output_buf: *mut Cursor<Vec<u8>>,
+    encoder: *mut FLAC__StreamEncoder,
+    callback_data: *mut CallbackData,
+}
+
+#[allow(unsafe_code)]
+unsafe extern "C" fn write_callback(
+    _encoder: *const FLAC__StreamEncoder,
+    buffer: *const FLAC__byte,
+    bytes: usize,
+    samples: u32,
+    current_frame: u32,
+    client_data: *mut c_void,
+) -> FLAC__StreamEncoderWriteStatus {
+    let data = unsafe { &mut *(client_data as *mut CallbackData) };
+    let slice = unsafe { std::slice::from_raw_parts(buffer, bytes) };
+
+    if current_frame == 0 && samples == 0 {
+        // Header/metadata — goes to header buffer
+        data.header.extend_from_slice(slice);
+    } else {
+        // Frame data — goes to frame buffer
+        data.frame_buf.extend_from_slice(slice);
+        data.encoded_samples += samples;
+    }
+
+    0 // FLAC__STREAM_ENCODER_WRITE_STATUS_OK
 }
 
 #[allow(unsafe_code)]
@@ -36,55 +64,51 @@ impl FlacEncoder {
             bail!("FLAC compression level must be 0-8, got {level}");
         }
 
-        // Heap-allocate output buffer (stable address for encoder lifetime)
-        let output_buf = Box::into_raw(Box::new(Cursor::new(Vec::with_capacity(8192))));
-
-        // SAFETY: output_buf lives until Drop. Transmute lifetime to 'static.
-        let ww: WriteWrapper<'static> = unsafe {
-            let buf_ref: &'static mut Cursor<Vec<u8>> = &mut *output_buf;
-            std::mem::transmute(WriteWrapper(buf_ref as &mut dyn Write))
-        };
-        let ww_box = Box::into_raw(Box::new(ww));
-
-        // Init encoder — this writes the FLAC header to output_buf
-        let enc = FlacEnc::new()
-            .ok_or_else(|| anyhow::anyhow!("failed to create FLAC encoder"))?
-            .channels(format.channels() as u32)
-            .bits_per_sample(format.bits() as u32)
-            .sample_rate(format.rate())
-            .compression_level(level);
-
-        let enc = unsafe {
-            enc.init_write(&mut *ww_box)
-                .map_err(|e| anyhow::anyhow!("FLAC encoder init failed: {e:?}"))?
-        };
-
-        // Capture header from THIS encoder instance
-        let header = unsafe { (*output_buf).get_ref().clone() };
-
-        // Clear buffer — subsequent process() output goes to encode() return
         unsafe {
-            (*output_buf).get_mut().clear();
-            (*output_buf).set_position(0);
+            let encoder = FLAC__stream_encoder_new();
+            if encoder.is_null() {
+                bail!("failed to create FLAC encoder");
+            }
+
+            FLAC__stream_encoder_set_verify(encoder, 1);
+            FLAC__stream_encoder_set_compression_level(encoder, level);
+            FLAC__stream_encoder_set_channels(encoder, format.channels() as u32);
+            FLAC__stream_encoder_set_bits_per_sample(encoder, format.bits() as u32);
+            FLAC__stream_encoder_set_sample_rate(encoder, format.rate());
+
+            let callback_data = Box::into_raw(Box::new(CallbackData {
+                header: Vec::new(),
+                frame_buf: Vec::new(),
+                encoded_samples: 0,
+            }));
+
+            let status = FLAC__stream_encoder_init_stream(
+                encoder,
+                Some(write_callback),
+                None, // seek
+                None, // tell
+                None, // metadata
+                callback_data as *mut c_void,
+            );
+
+            if status != 0 {
+                FLAC__stream_encoder_delete(encoder);
+                let _ = Box::from_raw(callback_data);
+                bail!("FLAC encoder init failed with status {status}");
+            }
+
+            tracing::info!(
+                compression_level = level,
+                header_bytes = (*callback_data).header.len(),
+                "FLAC streaming encoder initialized"
+            );
+
+            Ok(Self {
+                format,
+                encoder,
+                callback_data,
+            })
         }
-
-        let state = Box::into_raw(Box::new(FlacEncState {
-            _write_wrapper: unsafe { Box::from_raw(ww_box) },
-            encoder: enc,
-        }));
-
-        tracing::info!(
-            compression_level = level,
-            header_bytes = header.len(),
-            "FLAC streaming encoder initialized"
-        );
-
-        Ok(Self {
-            format,
-            header,
-            encoder: state,
-            output_buf,
-        })
     }
 }
 
@@ -95,7 +119,7 @@ impl Encoder for FlacEncoder {
     }
 
     fn header(&self) -> &[u8] {
-        &self.header
+        unsafe { &(*self.callback_data).header }
     }
 
     fn encode(&mut self, pcm: &[u8]) -> Result<EncodedChunk> {
@@ -104,35 +128,38 @@ impl Encoder for FlacEncoder {
         let samples = pcm.len() / sample_size;
         let frames = samples / channels;
 
-        // Convert to per-channel i32 buffers
-        let mut channel_bufs: Vec<Vec<i32>> = vec![Vec::with_capacity(frames); channels];
+        // Convert to interleaved i32 (libflac process_interleaved format)
+        let mut i32_buf: Vec<i32> = Vec::with_capacity(samples);
         match sample_size {
             2 => {
-                for (i, chunk) in pcm.chunks_exact(2).enumerate() {
-                    channel_bufs[i % channels]
-                        .push(i16::from_le_bytes([chunk[0], chunk[1]]) as i32);
+                for chunk in pcm.chunks_exact(2) {
+                    i32_buf.push(i16::from_le_bytes([chunk[0], chunk[1]]) as i32);
                 }
             }
             4 => {
-                for (i, chunk) in pcm.chunks_exact(4).enumerate() {
-                    channel_bufs[i % channels]
-                        .push(i32::from_le_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]));
+                for chunk in pcm.chunks_exact(4) {
+                    i32_buf.push(i32::from_le_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]));
                 }
             }
             _ => bail!("unsupported sample size: {sample_size}"),
         }
-        let channel_refs: Vec<&[i32]> = channel_bufs.iter().map(|v| v.as_slice()).collect();
 
         unsafe {
-            (*self.output_buf).get_mut().clear();
-            (*self.output_buf).set_position(0);
+            // Clear frame buffer
+            (*self.callback_data).frame_buf.clear();
+            (*self.callback_data).encoded_samples = 0;
 
-            (*self.encoder)
-                .encoder
-                .process(&channel_refs)
-                .map_err(|_| anyhow::anyhow!("FLAC encode failed"))?;
+            let ok = FLAC__stream_encoder_process_interleaved(
+                self.encoder,
+                i32_buf.as_ptr(),
+                frames as u32,
+            );
 
-            let data = (*self.output_buf).get_ref().clone();
+            if ok == 0 {
+                bail!("FLAC encode failed");
+            }
+
+            let data = (*self.callback_data).frame_buf.clone();
             let duration_ms = frames as f64 * 1000.0 / self.format.rate() as f64;
             Ok(EncodedChunk { data, duration_ms })
         }
@@ -144,11 +171,11 @@ impl Drop for FlacEncoder {
     fn drop(&mut self) {
         unsafe {
             if !self.encoder.is_null() {
-                let state = Box::from_raw(self.encoder);
-                let _ = state.encoder.finish();
+                FLAC__stream_encoder_finish(self.encoder);
+                FLAC__stream_encoder_delete(self.encoder);
             }
-            if !self.output_buf.is_null() {
-                let _ = Box::from_raw(self.output_buf);
+            if !self.callback_data.is_null() {
+                let _ = Box::from_raw(self.callback_data);
             }
         }
     }
@@ -170,28 +197,35 @@ mod tests {
     }
 
     #[test]
-    fn encode_multiple_chunks() {
-        let fmt = SampleFormat::new(48000, 16, 2);
-        let mut enc = FlacEncoder::new(fmt, "").unwrap();
-        for i in 0..3 {
-            let pcm = vec![((i * 10) & 0xFF) as u8; 960 * 4];
-            let result = enc.encode(&pcm).unwrap();
-            assert!(
-                result.data.is_empty() || result.data[0] == 0xFF,
-                "chunk {i}: unexpected data"
-            );
-        }
-    }
-
-    #[test]
-    fn encode_produces_output() {
+    fn encode_produces_frames() {
         let fmt = SampleFormat::new(48000, 16, 2);
         let mut enc = FlacEncoder::new(fmt, "").unwrap();
         let mut total = 0;
         for _ in 0..10 {
-            let pcm = vec![0u8; 1152 * 4];
-            total += enc.encode(&pcm).unwrap().data.len();
+            let pcm = vec![0u8; 960 * 4]; // 20ms chunks
+            let result = enc.encode(&pcm).unwrap();
+            if !result.data.is_empty() {
+                // FLAC frame sync code
+                assert_eq!(result.data[0], 0xFF);
+                assert!(result.data[1] == 0xF8 || result.data[1] == 0xF9);
+            }
+            total += result.data.len();
         }
-        assert!(total > 0, "expected FLAC output after 10 chunks");
+        assert!(total > 0, "expected FLAC output");
+    }
+
+    #[test]
+    fn persistent_across_chunks() {
+        let fmt = SampleFormat::new(48000, 16, 2);
+        let mut enc = FlacEncoder::new(fmt, "").unwrap();
+        // Encode 100 chunks — should not crash or produce header data
+        for _ in 0..100 {
+            let pcm = vec![42u8; 960 * 4];
+            let result = enc.encode(&pcm).unwrap();
+            // Frame data only — no fLaC header bytes
+            if result.data.len() >= 4 {
+                assert_ne!(&result.data[..4], b"fLaC", "got header in frame data");
+            }
+        }
     }
 }

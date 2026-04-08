@@ -790,15 +790,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "5baebc0774151f905a1a2cc41989300b1e6fbb29aff0ceffa1064fdd3088d582"
 
 [[package]]
-name = "flac-bound"
-version = "0.5.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1e907092e9fba0d718cad77433321f524836e90a2c4cc7ab67e8fb5244047ad2"
-dependencies = [
- "libflac-sys",
-]
-
-[[package]]
 name = "flume"
 version = "0.11.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2433,10 +2424,10 @@ dependencies = [
  "anyhow",
  "audiopus",
  "axum",
- "flac-bound",
  "hostname",
  "jsonwebtoken",
  "libc",
+ "libflac-sys",
  "mdns-sd",
  "ogg",
  "rust-ini",

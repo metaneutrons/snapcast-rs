@@ -61,7 +61,11 @@ impl Controller {
     pub async fn run(&mut self) -> Result<()> {
         loop {
             match self.session().await {
-                Ok(()) => tracing::info!("Session ended"),
+                Ok(()) => {
+                    // Clean exit (e.g. Stop command)
+                    self.cleanup();
+                    return Ok(());
+                }
                 Err(e) => {
                     tracing::error!("Session error: {e}");
                     self.emit(ClientEvent::Disconnected {

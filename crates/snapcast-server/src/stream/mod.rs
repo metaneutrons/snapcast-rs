@@ -1,6 +1,8 @@
 //! Stream readers — async PCM audio sources.
 
+pub mod airplay;
 pub mod file;
+pub mod librespot;
 pub mod manager;
 pub mod pipe;
 pub mod process;
@@ -64,12 +66,16 @@ pub fn create(source_uri: &str, default_format: SampleFormat) -> Result<StreamRe
         .unwrap_or(default_format);
 
     let (tx, rx) = mpsc::channel(128);
+    // Metadata channel for librespot/airplay (ignored for other schemes)
+    let (meta_tx, _meta_rx) = mpsc::channel::<(String, String)>(32);
 
     let handle = match parsed.scheme.as_str() {
         "pipe" => pipe::start(parsed, format, tx)?,
         "file" => file::start(parsed, format, tx)?,
         "process" => process::start(parsed, format, tx)?,
         "tcp" => tcp::start(parsed, format, tx)?,
+        "librespot" => librespot::start(parsed, format, tx, meta_tx)?,
+        "airplay" => airplay::start(parsed, format, tx, meta_tx)?,
         other => anyhow::bail!("unsupported stream scheme: {other}"),
     };
 

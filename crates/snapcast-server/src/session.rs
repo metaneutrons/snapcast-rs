@@ -17,6 +17,7 @@ use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::{Mutex, broadcast, mpsc};
 
 use crate::ServerEvent;
+use crate::jsonrpc::ClientSettingsUpdate;
 use crate::stream::manager::WireChunkData;
 use crate::time::now_usec;
 
@@ -38,6 +39,7 @@ pub struct SessionServer {
     port: u16,
     buffer_ms: i32,
     clients: Arc<Mutex<HashMap<String, ClientInfo>>>,
+    settings_senders: Arc<Mutex<HashMap<String, mpsc::Sender<ClientSettingsUpdate>>>>,
 }
 
 impl SessionServer {
@@ -47,6 +49,15 @@ impl SessionServer {
             port,
             buffer_ms,
             clients: Arc::new(Mutex::new(HashMap::new())),
+            settings_senders: Arc::new(Mutex::new(HashMap::new())),
+        }
+    }
+
+    /// Push a settings update to a specific streaming client.
+    pub async fn push_settings(&self, update: ClientSettingsUpdate) {
+        let senders = self.settings_senders.lock().await;
+        if let Some(tx) = senders.get(&update.client_id) {
+            let _ = tx.send(update).await;
         }
     }
 
@@ -67,23 +78,28 @@ impl SessionServer {
 
             let chunk_sub = chunk_rx.subscribe();
             let clients = Arc::clone(&self.clients);
+            let settings_senders = Arc::clone(&self.settings_senders);
             let event_tx = event_tx.clone();
             let buffer_ms = self.buffer_ms;
             let codec = codec.clone();
             let codec_header = codec_header.clone();
 
             tokio::spawn(async move {
-                if let Err(e) = handle_client(
+                let (settings_tx, settings_rx) = mpsc::channel(16);
+                let result = handle_client(
                     stream,
                     chunk_sub,
-                    clients,
+                    settings_rx,
+                    &clients,
+                    &settings_senders,
+                    settings_tx,
                     event_tx,
                     buffer_ms,
                     &codec,
                     &codec_header,
                 )
-                .await
-                {
+                .await;
+                if let Err(e) = result {
                     tracing::debug!(%peer, error = %e, "Client session ended");
                 }
             });
@@ -102,17 +118,21 @@ impl SessionServer {
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn handle_client(
     mut stream: TcpStream,
-    mut chunk_rx: broadcast::Receiver<WireChunkData>,
-    clients: Arc<Mutex<HashMap<String, ClientInfo>>>,
+    chunk_rx: broadcast::Receiver<WireChunkData>,
+    settings_rx: mpsc::Receiver<ClientSettingsUpdate>,
+    clients: &Mutex<HashMap<String, ClientInfo>>,
+    settings_senders: &Mutex<HashMap<String, mpsc::Sender<ClientSettingsUpdate>>>,
+    settings_tx: mpsc::Sender<ClientSettingsUpdate>,
     event_tx: mpsc::Sender<ServerEvent>,
     buffer_ms: i32,
     codec: &str,
     codec_header: &[u8],
 ) -> Result<()> {
     // 1. Read Hello
-    let hello_msg = read_frame(&mut stream).await?;
+    let hello_msg = read_frame_from(&mut stream).await?;
     let hello = match hello_msg.payload {
         MessagePayload::Hello(h) => h,
         _ => anyhow::bail!("expected Hello, got {:?}", hello_msg.base.msg_type),
@@ -121,10 +141,9 @@ async fn handle_client(
     let client_id = hello.id.clone();
     tracing::info!(id = %client_id, name = %hello.host_name, mac = %hello.mac, "Client hello");
 
-    // Register client
+    // Register client + settings channel
     {
-        let mut map = clients.lock().await;
-        map.insert(
+        clients.lock().await.insert(
             client_id.clone(),
             ClientInfo {
                 id: client_id.clone(),
@@ -133,6 +152,10 @@ async fn handle_client(
                 connected: true,
             },
         );
+        settings_senders
+            .lock()
+            .await
+            .insert(client_id.clone(), settings_tx);
     }
 
     let _ = event_tx
@@ -168,8 +191,8 @@ async fn handle_client(
     )
     .await?;
 
-    // 4. Main loop: forward chunks + handle time sync
-    let result = session_loop(&mut stream, &mut chunk_rx).await;
+    // 4. Main loop
+    let result = session_loop(&mut stream, chunk_rx, settings_rx).await;
 
     // Cleanup
     {
@@ -178,6 +201,7 @@ async fn handle_client(
             c.connected = false;
         }
     }
+    settings_senders.lock().await.remove(&client_id);
     let _ = event_tx
         .send(ServerEvent::ClientDisconnected { id: client_id })
         .await;
@@ -187,13 +211,13 @@ async fn handle_client(
 
 async fn session_loop(
     stream: &mut TcpStream,
-    chunk_rx: &mut broadcast::Receiver<WireChunkData>,
+    mut chunk_rx: broadcast::Receiver<WireChunkData>,
+    mut settings_rx: mpsc::Receiver<ClientSettingsUpdate>,
 ) -> Result<()> {
     let (mut reader, mut writer) = stream.split();
 
     loop {
         tokio::select! {
-            // Forward encoded chunks to client
             chunk = chunk_rx.recv() => {
                 let chunk = chunk.context("broadcast closed")?;
                 let ts_usec = chunk.timestamp_usec;
@@ -204,44 +228,51 @@ async fn session_loop(
                     },
                     payload: chunk.data,
                 };
-                let mut base = BaseMessage {
-                    msg_type: MessageType::WireChunk,
-                    id: 0,
-                    refers_to: 0,
-                    sent: now_timeval(),
-                    received: Timeval::default(),
-                    size: 0,
-                };
-                let frame = factory::serialize(&mut base, &MessagePayload::WireChunk(wc))
-                    .map_err(|e| anyhow::anyhow!("serialize: {e}"))?;
+                let frame = serialize_msg(MessageType::WireChunk, &MessagePayload::WireChunk(wc), 0)?;
                 writer.write_all(&frame).await.context("write chunk")?;
             }
-            // Handle incoming messages (Time sync)
             msg = read_frame_from(&mut reader) => {
                 let msg = msg?;
-                match msg.payload {
-                    MessagePayload::Time(t) => {
-                        // Respond with server timestamps
-                        let response = Time { latency: t.latency };
-                        let mut base = BaseMessage {
-                            msg_type: MessageType::Time,
-                            id: 0,
-                            refers_to: msg.base.id,
-                            sent: now_timeval(),
-                            received: Timeval::default(),
-                            size: 0,
-                        };
-                        let frame = factory::serialize(&mut base, &MessagePayload::Time(response))
-                            .map_err(|e| anyhow::anyhow!("serialize: {e}"))?;
-                        writer.write_all(&frame).await.context("write time")?;
-                    }
-                    _ => {
-                        tracing::trace!(msg_type = ?msg.base.msg_type, "Ignoring client message");
-                    }
+                if let MessagePayload::Time(t) = msg.payload {
+                    let response = Time { latency: t.latency };
+                    let frame = serialize_msg(MessageType::Time, &MessagePayload::Time(response), msg.base.id)?;
+                    writer.write_all(&frame).await.context("write time")?;
                 }
+            }
+            update = settings_rx.recv() => {
+                let Some(update) = update else { continue };
+                let ss = ServerSettings {
+                    buffer_ms: update.buffer_ms,
+                    latency: update.latency,
+                    volume: update.volume,
+                    muted: update.muted,
+                };
+                let frame = serialize_msg(
+                    MessageType::ServerSettings,
+                    &MessagePayload::ServerSettings(ss),
+                    0,
+                )?;
+                writer.write_all(&frame).await.context("write settings")?;
+                tracing::debug!(volume = update.volume, latency = update.latency, "Pushed settings to client");
             }
         }
     }
+}
+
+fn serialize_msg(
+    msg_type: MessageType,
+    payload: &MessagePayload,
+    refers_to: u16,
+) -> Result<Vec<u8>> {
+    let mut base = BaseMessage {
+        msg_type,
+        id: 0,
+        refers_to,
+        sent: now_timeval(),
+        received: Timeval::default(),
+        size: 0,
+    };
+    factory::serialize(&mut base, payload).map_err(|e| anyhow::anyhow!("serialize: {e}"))
 }
 
 async fn send_msg(
@@ -249,18 +280,8 @@ async fn send_msg(
     msg_type: MessageType,
     payload: &MessagePayload,
 ) -> Result<()> {
-    let mut base = BaseMessage {
-        msg_type,
-        id: 0,
-        refers_to: 0,
-        sent: now_timeval(),
-        received: Timeval::default(),
-        size: 0,
-    };
-    let frame =
-        factory::serialize(&mut base, payload).map_err(|e| anyhow::anyhow!("serialize: {e}"))?;
-    stream.write_all(&frame).await.context("write message")?;
-    Ok(())
+    let frame = serialize_msg(msg_type, payload, 0)?;
+    stream.write_all(&frame).await.context("write message")
 }
 
 async fn read_frame_from<R: AsyncReadExt + Unpin>(reader: &mut R) -> Result<TypedMessage> {
@@ -269,8 +290,8 @@ async fn read_frame_from<R: AsyncReadExt + Unpin>(reader: &mut R) -> Result<Type
         .read_exact(&mut header_buf)
         .await
         .context("read header")?;
-    let mut base = BaseMessage::read_from(&mut &header_buf[..])
-        .map_err(|e| anyhow::anyhow!("parse header: {e}"))?;
+    let mut base =
+        BaseMessage::read_from(&mut &header_buf[..]).map_err(|e| anyhow::anyhow!("parse: {e}"))?;
     base.received = now_timeval();
     let mut payload_buf = vec![0u8; base.size as usize];
     if !payload_buf.is_empty() {
@@ -280,10 +301,6 @@ async fn read_frame_from<R: AsyncReadExt + Unpin>(reader: &mut R) -> Result<Type
             .context("read payload")?;
     }
     factory::deserialize(base, &payload_buf).map_err(|e| anyhow::anyhow!("deserialize: {e}"))
-}
-
-async fn read_frame(stream: &mut TcpStream) -> Result<TypedMessage> {
-    read_frame_from(stream).await
 }
 
 fn now_timeval() -> Timeval {

@@ -237,14 +237,17 @@ impl SnapServer {
         let codec = codec.to_string();
         let header = header.to_vec();
 
-        // Start session server
-        let session_srv =
-            session::SessionServer::new(self.config.stream_port, self.config.buffer_ms as i32);
         let chunk_sender = manager.chunk_sender();
         let session_event_tx = event_tx.clone();
 
+        // Start session server (shared for settings push)
+        let session_srv = Arc::new(session::SessionServer::new(
+            self.config.stream_port,
+            self.config.buffer_ms as i32,
+        ));
+        let session_for_run = Arc::clone(&session_srv);
         let session_handle = tokio::spawn(async move {
-            if let Err(e) = session_srv
+            if let Err(e) = session_for_run
                 .run(chunk_sender, codec, header, session_event_tx)
                 .await
             {
@@ -304,14 +307,7 @@ impl SnapServer {
                 }
                 update = settings_push_rx.recv() => {
                     if let Some(update) = update {
-                        tracing::debug!(
-                            client_id = %update.client_id,
-                            volume = update.volume,
-                            latency = update.latency,
-                            "Pushing settings to streaming client"
-                        );
-                        // TODO: route to the correct client session via session server
-                        // For now, the session server needs a channel to receive these
+                        session_srv.push_settings(update).await;
                     }
                 }
                 ctrl = stream_ctrl_rx.recv() => {
@@ -319,9 +315,8 @@ impl SnapServer {
                         tracing::debug!(
                             stream_id = %ctrl.stream_id,
                             command = %ctrl.command,
-                            "Stream control command"
+                            "Stream control (routing not yet implemented for process stdin)"
                         );
-                        // TODO: route to the correct stream reader
                     }
                 }
             }

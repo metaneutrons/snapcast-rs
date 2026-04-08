@@ -16,6 +16,8 @@ struct Claims {
 /// Auth configuration.
 #[derive(Debug, Clone)]
 pub struct AuthConfig {
+    /// Whether authentication is required.
+    pub enabled: bool,
     /// Secret key for JWT signing/validation.
     pub secret: String,
 }
@@ -23,9 +25,22 @@ pub struct AuthConfig {
 impl Default for AuthConfig {
     fn default() -> Self {
         Self {
+            enabled: false,
             secret: "snapcast-default-secret-key-32bytes!".into(),
         }
     }
+}
+
+/// Validate an HTTP Authorization header. Returns Ok(subject) or Err.
+pub fn validate_bearer(config: &AuthConfig, header: Option<&str>) -> Result<String> {
+    if !config.enabled {
+        return Ok("anonymous".into());
+    }
+    let header = header.ok_or_else(|| anyhow::anyhow!("missing Authorization header"))?;
+    let token = header
+        .strip_prefix("Bearer ")
+        .ok_or_else(|| anyhow::anyhow!("expected Bearer token"))?;
+    validate_token(config, token)
 }
 
 /// Generate a JWT token for the given subject.
@@ -70,6 +85,7 @@ mod tests {
     #[test]
     fn token_roundtrip() {
         let config = AuthConfig {
+            enabled: true,
             secret: "test-secret-must-be-32-bytes-long".into(),
         };
         let token = generate_token(&config, "user1").unwrap();
@@ -80,6 +96,7 @@ mod tests {
     #[test]
     fn invalid_token() {
         let config = AuthConfig {
+            enabled: true,
             secret: "test-secret-must-be-32-bytes-long".into(),
         };
         assert!(validate_token(&config, "garbage").is_err());
@@ -88,9 +105,11 @@ mod tests {
     #[test]
     fn wrong_secret() {
         let config1 = AuthConfig {
+            enabled: true,
             secret: "secret1-must-be-at-least-32bytes!".into(),
         };
         let config2 = AuthConfig {
+            enabled: true,
             secret: "secret2-must-be-at-least-32bytes!".into(),
         };
         let token = generate_token(&config1, "user1").unwrap();

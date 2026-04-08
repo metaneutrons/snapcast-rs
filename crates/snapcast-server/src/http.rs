@@ -81,7 +81,22 @@ pub async fn run_http(cfg: HttpConfig) -> Result<()> {
 }
 
 /// HTTP POST /jsonrpc handler.
-async fn http_jsonrpc_handler(State(app): State<AppState>, body: String) -> impl IntoResponse {
+async fn http_jsonrpc_handler(
+    State(app): State<AppState>,
+    headers: axum::http::HeaderMap,
+    body: String,
+) -> impl IntoResponse {
+    // Auth check
+    let auth_header = headers
+        .get(axum::http::header::AUTHORIZATION)
+        .and_then(|v| v.to_str().ok());
+    if let Err(e) = crate::auth::validate_bearer(&app.auth_config, auth_header) {
+        return axum::Json(serde_json::json!({
+            "jsonrpc": "2.0", "id": null,
+            "error": {"code": -32000, "message": format!("Unauthorized: {e}")}
+        }));
+    }
+
     let Ok(request) = serde_json::from_str::<Value>(&body) else {
         return axum::Json(serde_json::json!({
             "jsonrpc": "2.0", "id": null,

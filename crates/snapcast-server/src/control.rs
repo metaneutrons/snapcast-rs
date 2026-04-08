@@ -55,6 +55,7 @@ pub async fn run_tcp(cfg: ControlConfig) -> Result<()> {
             let (reader, mut writer) = stream.into_split();
             let mut lines = BufReader::new(reader).lines();
             let client_id = peer.to_string();
+            let mut authenticated = !auth_config.enabled;
 
             loop {
                 tokio::select! {
@@ -71,8 +72,26 @@ pub async fn run_tcp(cfg: ControlConfig) -> Result<()> {
                             continue;
                         };
 
+                        // Auth gate: allow Server.GetToken and Server.Authenticate without auth
+                        let method = request["method"].as_str().unwrap_or("");
+                        if !authenticated
+                            && method != "Server.GetToken"
+                            && method != "Server.Authenticate"
+                        {
+                            let err = serde_json::json!({
+                                "jsonrpc": "2.0", "id": request["id"],
+                                "error": {"code": -32000, "message": "Unauthorized — call Server.Authenticate first"}
+                            });
+                            let _ = send_json(&mut writer, &err).await;
+                            continue;
+                        }
+
                         match jsonrpc::handle_request(&request, &state, &auth_config, &stream_control_tx, &settings_tx, buffer_ms).await {
                             RpcResult::Response { response, notification } => {
+                                // Mark as authenticated if Server.Authenticate succeeded
+                                if method == "Server.Authenticate" && response["result"]["ok"] == true {
+                                    authenticated = true;
+                                }
                                 let _ = send_json(&mut writer, &response).await;
                                 if let Some(n) = notification {
                                     let _ = notify_tx.send(n);

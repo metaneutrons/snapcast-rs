@@ -61,6 +61,7 @@
 use tokio::sync::mpsc;
 
 pub mod encoder;
+pub mod session;
 pub mod stream;
 pub mod time;
 
@@ -187,12 +188,12 @@ impl SnapServer {
 
     /// Run the server. Blocks until stopped or a fatal error occurs.
     pub async fn run(&mut self) -> anyhow::Result<()> {
-        let _command_rx = self
+        let mut command_rx = self
             .command_rx
             .take()
             .ok_or_else(|| anyhow::anyhow!("run() already called"))?;
 
-        let _event_tx = self.event_tx.clone();
+        let event_tx = self.event_tx.clone();
 
         tracing::info!(
             stream_port = self.config.stream_port,
@@ -200,12 +201,57 @@ impl SnapServer {
             "Snapserver starting"
         );
 
-        // TODO: Phase 1+ implementation
-        // - Start stream readers from config.sources
-        // - Start stream server (binary protocol) on stream_port
-        // - Start control server (JSON-RPC) on control_port + http_port
-        // - Main select loop: stream chunks, client sessions, commands
+        // Parse default sample format
+        let default_format: snapcast_proto::SampleFormat = self
+            .config
+            .sample_format
+            .parse()
+            .unwrap_or_else(|_| snapcast_proto::SampleFormat::new(48000, 16, 2));
 
-        anyhow::bail!("server not yet implemented")
+        // Start stream manager with configured sources
+        let mut manager = stream::manager::StreamManager::new();
+        for source in &self.config.sources {
+            if let Err(e) = manager.add_stream(source, default_format, &self.config.codec, "") {
+                tracing::error!(source, error = %e, "Failed to add stream");
+            }
+        }
+
+        // Get codec header from first stream for client handshake
+        let first_stream = manager.stream_ids().into_iter().next().unwrap_or_default();
+        let (codec, header, _format) =
+            manager
+                .header(&first_stream)
+                .unwrap_or(("pcm", &[], default_format));
+        let codec = codec.to_string();
+        let header = header.to_vec();
+
+        // Start session server
+        let session_srv =
+            session::SessionServer::new(self.config.stream_port, self.config.buffer_ms as i32);
+        let chunk_sender = manager.chunk_sender();
+        let session_event_tx = event_tx.clone();
+
+        let session_handle = tokio::spawn(async move {
+            if let Err(e) = session_srv
+                .run(chunk_sender, codec, header, session_event_tx)
+                .await
+            {
+                tracing::error!(error = %e, "Session server error");
+            }
+        });
+
+        // Wait for stop command
+        loop {
+            match command_rx.recv().await {
+                Some(ServerCommand::Stop) | None => {
+                    tracing::info!("Server stopping");
+                    session_handle.abort();
+                    return Ok(());
+                }
+                Some(ServerCommand::SendJsonRpc { .. }) => {
+                    // TODO: Phase 3
+                }
+            }
+        }
     }
 }

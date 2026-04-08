@@ -55,6 +55,11 @@ impl StreamManager {
         }
     }
 
+    /// Get the broadcast sender (for passing to SessionServer).
+    pub fn chunk_sender(&self) -> broadcast::Sender<WireChunkData> {
+        self.chunk_tx.clone()
+    }
+
     /// Get a broadcast receiver for encoded chunks.
     pub fn subscribe(&self) -> broadcast::Receiver<WireChunkData> {
         self.chunk_tx.subscribe()

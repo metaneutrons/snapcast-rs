@@ -27,7 +27,7 @@ impl FlacEncoder {
             format.rate(),
             format.bits() as u32,
             format.channels() as u8,
-            Some(0),
+            None,
         )?;
         writer.finalize()?;
         let header = header_buf.into_inner();

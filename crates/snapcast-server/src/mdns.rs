@@ -16,7 +16,12 @@ impl MdnsAdvertiser {
         let service = ServiceInfo::new(
             "_snapcast._tcp.local.",
             "Snapserver",
-            &format!("{}.", hostname::get()?.to_string_lossy()),
+            &format!(
+                "{}.local.",
+                hostname::get()?
+                    .to_string_lossy()
+                    .trim_end_matches(".local")
+            ),
             "",
             port,
             None,

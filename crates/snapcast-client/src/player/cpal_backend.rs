@@ -86,13 +86,19 @@ impl Player for CpalPlayer {
         let cpal_stream = match format.bits() {
             16 => device.build_output_stream(
                 &config,
-                move |data: &mut [i16], _info: &cpal::OutputCallbackInfo| {
+                move |data: &mut [i16], info: &cpal::OutputCallbackInfo| {
                     let num_frames = data.len() / format.channels() as usize;
                     let byte_len = num_frames * frame_size;
                     let mut pcm_buf = vec![0u8; byte_len];
 
-                    let buffer_dac_usec =
-                        (num_frames as i64 * 1_000_000) / format.rate() as i64 + 5000;
+                    // Use cpal's timestamp to compute actual DAC delay
+                    let buffer_dac_usec = info
+                        .timestamp()
+                        .playback
+                        .duration_since(&info.timestamp().callback)
+                        .map(|d| d.as_micros() as i64)
+                        .unwrap_or(0)
+                        + (num_frames as i64 * 1_000_000) / format.rate() as i64;
 
                     let server_now = {
                         let tp = time_provider.lock().unwrap();

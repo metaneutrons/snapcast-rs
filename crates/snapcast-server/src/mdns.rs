@@ -6,7 +6,6 @@ use mdns_sd::{ServiceDaemon, ServiceInfo};
 /// Advertise the Snapcast server via mDNS.
 pub struct MdnsAdvertiser {
     daemon: ServiceDaemon,
-    fullname: String,
 }
 
 impl MdnsAdvertiser {
@@ -14,32 +13,25 @@ impl MdnsAdvertiser {
     pub fn new(port: u16) -> Result<Self> {
         let daemon = ServiceDaemon::new()?;
         let host = hostname::get()?.to_string_lossy().to_string();
-        let host = format!(
-            "{}.local.",
-            host.trim_end_matches(".local")
-                .trim_end_matches(".local.")
-                .split('.')
-                .next()
-                .unwrap_or(&host)
-        );
-        let service =
-            ServiceInfo::new("_snapcast._tcp.local.", "Snapserver", &host, "", port, None)?;
-        let fullname = service.get_fullname().to_string();
+        let short = host.split('.').next().unwrap_or(&host);
+        let mdns_host = format!("{short}.local.");
+        let service = ServiceInfo::new(
+            "_snapcast._tcp.local.",
+            "Snapserver",
+            &mdns_host,
+            "",
+            port,
+            None,
+        )?;
         daemon.register(service)?;
-        tracing::info!(port, host, "mDNS: advertising _snapcast._tcp");
-        Ok(Self { daemon, fullname })
-    }
-
-    /// Graceful shutdown — unregister and stop daemon.
-    pub fn shutdown(&self) {
-        let _ = self.daemon.unregister(&self.fullname);
-        let _ = self.daemon.shutdown();
+        tracing::info!(port, host = %mdns_host, "mDNS: advertising _snapcast._tcp");
+        Ok(Self { daemon })
     }
 }
 
 impl Drop for MdnsAdvertiser {
     fn drop(&mut self) {
-        // Don't unregister on drop — use shutdown() for clean exit
+        // Just shut down — don't try to unregister (causes error spam)
         let _ = self.daemon.shutdown();
     }
 }

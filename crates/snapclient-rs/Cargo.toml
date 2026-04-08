@@ -22,3 +22,13 @@ tracing-appender = { workspace = true }
 anyhow = { workspace = true }
 base64 = { workspace = true }
 libc = { workspace = true }
+
+[features]
+default = ["snapcast-client/default"]
+coreaudio = ["snapcast-client/coreaudio"]
+alsa = ["snapcast-client/alsa"]
+pulse = ["snapcast-client/pulse"]
+mdns = ["snapcast-client/mdns"]
+websocket = ["snapcast-client/websocket"]
+tls = ["snapcast-client/tls"]
+resampler = ["snapcast-client/resampler"]

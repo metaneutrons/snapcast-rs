@@ -332,7 +332,7 @@ impl Controller {
         ));
 
         #[cfg(not(any(feature = "coreaudio", feature = "alsa", feature = "pulse")))]
-        bail!("no audio backend available — enable coreaudio, alsa, or pulse feature");
+        compile_error!("no audio backend — enable coreaudio, alsa, or pulse feature");
 
         if let Some(ref ss) = self.server_settings {
             player.set_volume(Volume {

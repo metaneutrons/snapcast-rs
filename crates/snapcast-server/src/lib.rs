@@ -63,8 +63,10 @@ use std::sync::Arc;
 use tokio::sync::mpsc;
 
 pub mod auth;
+pub mod config;
 pub mod control;
 pub mod encoder;
+pub mod http;
 pub mod jsonrpc;
 pub mod mdns;
 pub mod session;
@@ -289,6 +291,35 @@ impl SnapServer {
             }
         });
 
+        // Start HTTP/WebSocket server + Snapweb
+        let http_state = Arc::clone(&shared_state);
+        let http_event_tx = event_tx.clone();
+        let http_notify_tx = notify_tx.clone();
+        let http_auth = Arc::clone(&auth_cfg);
+        let http_stream_tx = stream_ctrl_tx.clone();
+        let http_settings_tx = settings_push_tx.clone();
+        let http_port = self.config.http_port;
+        let http_doc_root = self.config.doc_root.clone();
+        let http_buffer_ms = self.config.buffer_ms as i32;
+
+        let http_handle = tokio::spawn(async move {
+            if let Err(e) = http::run_http(http::HttpConfig {
+                port: http_port,
+                doc_root: http_doc_root,
+                state: http_state,
+                event_tx: http_event_tx,
+                notify_tx: http_notify_tx,
+                auth_config: http_auth,
+                stream_control_tx: http_stream_tx,
+                settings_tx: http_settings_tx,
+                buffer_ms: http_buffer_ms,
+            })
+            .await
+            {
+                tracing::error!(error = %e, "HTTP server error");
+            }
+        });
+
         // Main loop: handle commands, settings pushes, stream control
         loop {
             tokio::select! {
@@ -298,6 +329,7 @@ impl SnapServer {
                             tracing::info!("Server stopping");
                             session_handle.abort();
                             control_handle.abort();
+                            http_handle.abort();
                             return Ok(());
                         }
                         Some(ServerCommand::SendJsonRpc { message, .. }) => {

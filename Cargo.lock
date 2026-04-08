@@ -1338,6 +1338,7 @@ dependencies = [
  "audiopus",
  "flac-bound",
  "hostname",
+ "libc",
  "mdns-sd",
  "ogg",
  "serde",

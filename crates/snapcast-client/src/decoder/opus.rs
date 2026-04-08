@@ -57,6 +57,7 @@ fn to_audiopus_channels(ch: u16) -> Result<Channels> {
     }
 }
 
+/// Opus audio decoder using audiopus.
 pub struct OpusDecoder {
     decoder: OpusDec,
     sample_format: SampleFormat,

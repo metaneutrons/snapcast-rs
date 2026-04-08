@@ -25,6 +25,7 @@ use crate::player::coreaudio::CoreAudioPlayer;
 
 const VERSION: &str = env!("CARGO_PKG_VERSION");
 
+/// Main orchestrator wiring connection, decoder, stream, and player.
 pub struct Controller {
     settings: ClientSettings,
     connection: TcpConnection,
@@ -39,6 +40,7 @@ pub struct Controller {
 }
 
 impl Controller {
+    /// Create a new controller with the given settings and event channels.
     pub fn new(
         settings: ClientSettings,
         event_tx: mpsc::Sender<ClientEvent>,
@@ -58,6 +60,7 @@ impl Controller {
         }
     }
 
+    /// Run the client, reconnecting on errors until stopped.
     pub async fn run(&mut self) -> Result<()> {
         loop {
             match self.session().await {

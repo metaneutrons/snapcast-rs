@@ -71,6 +71,7 @@ pub struct TcpConnection {
 }
 
 impl TcpConnection {
+    /// Create a new connection to the given host and port.
     pub fn new(host: &str, port: u16) -> Self {
         Self {
             stream: None,
@@ -81,6 +82,7 @@ impl TcpConnection {
         }
     }
 
+    /// Establish the TCP connection.
     pub async fn connect(&mut self) -> Result<()> {
         let addr = format!("{}:{}", self.host, self.port);
         let stream = TcpStream::connect(&addr)
@@ -92,6 +94,7 @@ impl TcpConnection {
         Ok(())
     }
 
+    /// Close the connection.
     pub fn disconnect(&mut self) {
         self.stream = None;
         self.pending.clear();
@@ -188,6 +191,7 @@ fn steady_time_of_day() -> Timeval {
 
 /// Microseconds since boot (monotonic clock).
 /// Uses the same clock source as C++ std::chrono::steady_clock.
+#[allow(unsafe_code)] // FFI: mach_continuous_time (macOS), clock_gettime (Linux)
 fn monotonic_usec() -> i64 {
     #[cfg(target_os = "macos")]
     {

@@ -61,6 +61,7 @@ fn query_output_latency(audio_unit: &AudioUnit, sample_rate: u32) -> i64 {
     total
 }
 
+/// macOS CoreAudio player backend.
 pub struct CoreAudioPlayer {
     audio_unit: Option<AudioUnit>,
     stream: Arc<Mutex<Stream>>,
@@ -70,6 +71,7 @@ pub struct CoreAudioPlayer {
 }
 
 impl CoreAudioPlayer {
+    /// Create a new CoreAudio player.
     pub fn new(
         stream: Arc<Mutex<Stream>>,
         time_provider: Arc<Mutex<TimeProvider>>,

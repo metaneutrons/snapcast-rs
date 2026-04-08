@@ -25,6 +25,7 @@ impl Default for TimeProvider {
 }
 
 impl TimeProvider {
+    /// Create a new time provider with default settings.
     pub fn new() -> Self {
         Self {
             diff_buffer: DoubleBuffer::new(200),

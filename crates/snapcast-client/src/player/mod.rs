@@ -37,9 +37,13 @@ pub type VolumeCallback = Box<dyn Fn(&Volume) + Send>;
 
 /// Audio player trait.
 pub trait Player: Send {
+    /// Start audio playback.
     fn start(&mut self) -> Result<()>;
+    /// Stop audio playback.
     fn stop(&mut self) -> Result<()>;
+    /// Set the playback volume.
     fn set_volume(&mut self, volume: Volume);
+    /// Get the current volume.
     fn volume(&self) -> Volume;
 }
 

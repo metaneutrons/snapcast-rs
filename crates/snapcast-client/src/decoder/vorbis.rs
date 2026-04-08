@@ -57,6 +57,7 @@ fn parse_vorbis_header(payload: &[u8]) -> Result<(SampleFormat, Vec<u8>)> {
     Ok((sf, payload.to_vec()))
 }
 
+/// Vorbis audio decoder using symphonia.
 pub struct VorbisDecoder {
     decoder: Box<dyn symphonia::core::codecs::Decoder>,
     sample_format: SampleFormat,

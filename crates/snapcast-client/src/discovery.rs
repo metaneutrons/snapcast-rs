@@ -9,7 +9,9 @@ const SERVICE_TYPE: &str = "_snapcast._tcp.local.";
 /// Discovered snapserver endpoint.
 #[derive(Debug, Clone)]
 pub struct Endpoint {
+    /// Hostname or IP address.
     pub host: String,
+    /// TCP port number.
     pub port: u16,
 }
 

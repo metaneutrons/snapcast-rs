@@ -28,32 +28,43 @@ pub struct ServerSettings {
 /// Authentication credentials.
 #[derive(Debug, Clone)]
 pub struct Auth {
+    /// Auth scheme (e.g. "Basic").
     pub scheme: String,
+    /// Auth parameter (e.g. base64-encoded credentials).
     pub param: String,
 }
 
 /// Mixer mode.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub enum MixerMode {
+    /// Software volume control (default).
     #[default]
     Software,
+    /// Hardware mixer (e.g. ALSA).
     Hardware,
+    /// External script mixer.
     Script,
+    /// No volume control.
     None,
 }
 
 /// Mixer settings.
 #[derive(Debug, Clone, Default)]
 pub struct MixerSettings {
+    /// Mixer mode.
     pub mode: MixerMode,
+    /// Mixer-specific parameter string.
     pub parameter: String,
 }
 
 /// PCM device identifier.
 #[derive(Debug, Clone)]
 pub struct PcmDevice {
+    /// Device index (-1 for default).
     pub idx: i32,
+    /// Device name.
     pub name: String,
+    /// Human-readable description.
     pub description: String,
 }
 
@@ -70,18 +81,26 @@ impl Default for PcmDevice {
 /// Audio player settings.
 #[derive(Debug, Clone, Default)]
 pub struct PlayerSettings {
+    /// Backend name (e.g. "alsa", "coreaudio").
     pub player_name: String,
+    /// Backend-specific parameters.
     pub parameter: String,
+    /// Additional latency in milliseconds.
     pub latency: i32,
+    /// PCM output device.
     pub pcm_device: PcmDevice,
+    /// Requested sample format (default: server format).
     pub sample_format: SampleFormat,
+    /// Volume mixer settings.
     pub mixer: MixerSettings,
 }
 
 /// Logging settings.
 #[derive(Debug, Clone)]
 pub struct LoggingSettings {
+    /// Log sink: "stdout", "stderr", "null", "file:\<path\>".
     pub sink: String,
+    /// Log filter: "\<tag\>:\<level\>[,...]".
     pub filter: String,
 }
 
@@ -107,11 +126,17 @@ pub struct DaemonSettings {
 /// Top-level client settings.
 #[derive(Debug, Clone)]
 pub struct ClientSettings {
+    /// Instance id when running multiple clients on one host.
     pub instance: u32,
+    /// Unique host identifier (default: MAC address).
     pub host_id: String,
+    /// Server connection settings.
     pub server: ServerSettings,
+    /// Audio player settings.
     pub player: PlayerSettings,
+    /// Logging configuration.
     pub logging: LoggingSettings,
+    /// Daemon settings (Unix only).
     #[cfg(unix)]
     pub daemon: Option<DaemonSettings>,
 }

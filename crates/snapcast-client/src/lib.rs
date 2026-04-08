@@ -1,3 +1,9 @@
+#![warn(unsafe_code)]
+#![warn(clippy::redundant_closure)]
+#![warn(clippy::implicit_clone)]
+#![warn(clippy::uninlined_format_args)]
+#![warn(missing_docs)]
+
 //! Snapcast client library — embeddable synchronized multiroom audio.
 //!
 //! # Example
@@ -57,22 +63,47 @@ pub use snapcast_proto::SampleFormat;
 #[derive(Debug, Clone)]
 pub enum ClientEvent {
     /// Connected to server.
-    Connected { host: String, port: u16 },
+    Connected {
+        /// Server hostname or IP.
+        host: String,
+        /// Server port.
+        port: u16,
+    },
     /// Disconnected from server.
-    Disconnected { reason: String },
+    Disconnected {
+        /// Reason for disconnection.
+        reason: String,
+    },
     /// Audio stream started with the given format.
-    StreamStarted { codec: String, format: SampleFormat },
+    StreamStarted {
+        /// Codec name (e.g. "flac", "opus").
+        codec: String,
+        /// PCM sample format.
+        format: SampleFormat,
+    },
     /// Server settings received or updated.
     ServerSettings {
+        /// Playout buffer in milliseconds.
         buffer_ms: i32,
+        /// Additional latency in milliseconds.
         latency: i32,
+        /// Volume (0–100).
         volume: u16,
+        /// Mute state.
         muted: bool,
     },
     /// Volume changed (from server or local).
-    VolumeChanged { volume: u16, muted: bool },
+    VolumeChanged {
+        /// Volume (0–100).
+        volume: u16,
+        /// Mute state.
+        muted: bool,
+    },
     /// Time sync completed.
-    TimeSyncComplete { diff_ms: f64 },
+    TimeSyncComplete {
+        /// Clock difference to server in milliseconds.
+        diff_ms: f64,
+    },
     /// Raw JSON-RPC message from server — extension point.
     JsonRpc(serde_json::Value),
 }
@@ -81,7 +112,12 @@ pub enum ClientEvent {
 #[derive(Debug, Clone)]
 pub enum ClientCommand {
     /// Set volume (0–100) and mute state.
-    SetVolume { volume: u16, muted: bool },
+    SetVolume {
+        /// Volume (0–100).
+        volume: u16,
+        /// Mute state.
+        muted: bool,
+    },
     /// Send arbitrary JSON-RPC to the server — extension point.
     SendJsonRpc(serde_json::Value),
     /// Stop the client gracefully.
@@ -91,9 +127,13 @@ pub enum ClientCommand {
 /// Configuration for the embeddable client.
 #[derive(Debug, Clone)]
 pub struct ClientConfig {
+    /// Server connection settings.
     pub server: ServerSettings,
+    /// Audio player settings.
     pub player: PlayerSettings,
+    /// Instance id (for multiple clients on one host).
     pub instance: u32,
+    /// Unique host identifier (default: MAC address).
     pub host_id: String,
 }
 

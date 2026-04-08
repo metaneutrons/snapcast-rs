@@ -13,6 +13,7 @@ pub struct DoubleBuffer {
 }
 
 impl DoubleBuffer {
+    /// Create a buffer with the given capacity.
     pub fn new(capacity: usize) -> Self {
         Self {
             buf: VecDeque::with_capacity(capacity),
@@ -53,18 +54,22 @@ impl DoubleBuffer {
         self.median(1)
     }
 
+    /// Remove all values.
     pub fn clear(&mut self) {
         self.buf.clear();
     }
 
+    /// Returns true if the buffer contains no values.
     pub fn is_empty(&self) -> bool {
         self.buf.is_empty()
     }
 
+    /// Number of values currently stored.
     pub fn len(&self) -> usize {
         self.buf.len()
     }
 
+    /// Returns true if the buffer has reached capacity.
     pub fn full(&self) -> bool {
         self.buf.len() >= self.capacity
     }

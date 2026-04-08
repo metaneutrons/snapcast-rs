@@ -23,6 +23,7 @@ pub trait Decoder: Send {
 pub struct PcmDecoder;
 
 impl PcmDecoder {
+    /// Create a new PCM passthrough decoder.
     pub fn new() -> Self {
         Self
     }

@@ -56,6 +56,7 @@ fn parse_streaminfo(payload: &[u8]) -> Result<(SampleFormat, CodecParameters)> {
     Ok((sf, params))
 }
 
+/// FLAC audio decoder using symphonia.
 pub struct FlacDecoder {
     decoder: Box<dyn symphonia::core::codecs::Decoder>,
     sample_format: SampleFormat,

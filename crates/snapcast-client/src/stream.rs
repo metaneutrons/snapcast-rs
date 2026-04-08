@@ -10,13 +10,17 @@ use crate::double_buffer::DoubleBuffer;
 /// A decoded PCM chunk with a server-time timestamp and a read cursor.
 #[derive(Debug, Clone)]
 pub struct PcmChunk {
+    /// Server-time timestamp of this chunk.
     pub timestamp: Timeval,
+    /// Raw PCM sample data.
     pub data: Vec<u8>,
+    /// Sample format (rate, bits, channels).
     pub format: SampleFormat,
     read_pos: usize,
 }
 
 impl PcmChunk {
+    /// Create a new PCM chunk.
     pub fn new(timestamp: Timeval, data: Vec<u8>, format: SampleFormat) -> Self {
         Self {
             timestamp,
@@ -26,10 +30,12 @@ impl PcmChunk {
         }
     }
 
+    /// Start time of this chunk in microseconds.
     pub fn start_usec(&self) -> i64 {
         self.timestamp.sec as i64 * 1_000_000 + self.timestamp.usec as i64
     }
 
+    /// Duration of this chunk in microseconds.
     pub fn duration_usec(&self) -> i64 {
         if self.format.frame_size() == 0 || self.format.rate() == 0 {
             return 0;
@@ -38,6 +44,7 @@ impl PcmChunk {
         frames * 1_000_000 / self.format.rate() as i64
     }
 
+    /// Read up to `frames` frames into `output`, returning the number read.
     pub fn read_frames(&mut self, output: &mut [u8], frames: u32) -> u32 {
         let frame_size = self.format.frame_size() as usize;
         let available_bytes = self.data.len() - self.read_pos;
@@ -49,10 +56,12 @@ impl PcmChunk {
         to_read as u32
     }
 
+    /// Returns true if all data has been read.
     pub fn is_end(&self) -> bool {
         self.read_pos >= self.data.len()
     }
 
+    /// Skip forward by `frames` frames.
     pub fn seek(&mut self, frames: u32) {
         let bytes = frames as usize * self.format.frame_size() as usize;
         self.read_pos = (self.read_pos + bytes).min(self.data.len());
@@ -88,6 +97,7 @@ pub struct Stream {
 }
 
 impl Stream {
+    /// Create a new stream for the given sample format.
     pub fn new(format: SampleFormat) -> Self {
         Self {
             format,
@@ -108,22 +118,27 @@ impl Stream {
         }
     }
 
+    /// Returns the sample format.
     pub fn format(&self) -> SampleFormat {
         self.format
     }
 
+    /// Set the target buffer size in milliseconds.
     pub fn set_buffer_ms(&mut self, ms: i64) {
         self.buffer_ms = ms;
     }
 
+    /// Enqueue a decoded PCM chunk.
     pub fn add_chunk(&mut self, chunk: PcmChunk) {
         self.chunks.push_back(chunk);
     }
 
+    /// Number of queued chunks.
     pub fn chunk_count(&self) -> usize {
         self.chunks.len()
     }
 
+    /// Clear all queued chunks and reset sync state.
     pub fn clear(&mut self) {
         self.chunks.clear();
         self.current = None;
@@ -152,6 +167,7 @@ impl Stream {
         }
     }
 
+    /// Fill `output` with time-synchronized PCM data. Returns false if no data available.
     pub fn get_player_chunk(
         &mut self,
         server_now_usec: i64,
@@ -317,11 +333,13 @@ impl Stream {
         age_usec.abs() < 500_000
     }
 
+    /// Fill `output` with silence.
     pub fn get_silence(&self, output: &mut [u8], frames: u32) {
         let bytes = frames as usize * self.format.frame_size() as usize;
         output[..bytes].fill(0);
     }
 
+    /// Like [`get_player_chunk`](Self::get_player_chunk), but fills silence on failure.
     pub fn get_player_chunk_or_silence(
         &mut self,
         server_now_usec: i64,

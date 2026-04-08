@@ -67,6 +67,9 @@ fn main() -> anyhow::Result<()> {
             tokio::signal::ctrl_c().await.ok();
             tracing::info!("Received Ctrl-C, shutting down");
             cmd.send(ClientCommand::Stop).await.ok();
+            // Force exit if the client doesn't stop within 1 second
+            tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+            std::process::exit(0);
         });
 
         client.run().await

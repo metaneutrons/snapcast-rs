@@ -332,8 +332,7 @@ impl SnapServer {
                             session_handle.abort();
                             control_handle.abort();
                             http_handle.abort();
-                            // Force exit — axum::serve doesn't respond to abort
-                            std::process::exit(0);
+                            return Ok(());
                         }
                         Some(ServerCommand::SendJsonRpc { message, .. }) => {
                             let _ = notify_tx.send(message);

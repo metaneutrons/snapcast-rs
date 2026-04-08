@@ -211,7 +211,7 @@ impl SnapServer {
         );
 
         // Advertise via mDNS
-        let mdns = mdns::MdnsAdvertiser::new(self.config.stream_port)
+        let mut mdns = mdns::MdnsAdvertiser::new(self.config.stream_port)
             .map_err(|e| tracing::warn!(error = %e, "mDNS advertisement failed"))
             .ok();
 
@@ -326,11 +326,9 @@ impl SnapServer {
                 cmd = command_rx.recv() => {
                     match cmd {
                         Some(ServerCommand::Stop) | None => {
+                            // Shut down mDNS first (daemon thread still alive)
+                            drop(mdns.take());
                             tracing::info!("Server stopping");
-                            // Shut down mDNS first (while async runtime is still alive)
-                            if let Some(m) = mdns.as_ref() {
-                                m.shutdown();
-                            }
                             session_handle.abort();
                             control_handle.abort();
                             http_handle.abort();

@@ -31,11 +31,8 @@ impl MdnsAdvertiser {
     }
 
     /// Gracefully unregister and shut down the mDNS daemon.
-    /// Must be called while the async runtime is still alive.
     pub fn shutdown(&self) {
-        tracing::debug!("mDNS: shutting down");
         let _ = self.daemon.unregister(&self.fullname);
-        // Give the daemon time to send the unregister packet
         std::thread::sleep(std::time::Duration::from_millis(100));
         let _ = self.daemon.shutdown();
     }
@@ -43,7 +40,6 @@ impl MdnsAdvertiser {
 
 impl Drop for MdnsAdvertiser {
     fn drop(&mut self) {
-        // If shutdown() wasn't called explicitly, just stop the daemon
-        let _ = self.daemon.shutdown();
+        self.shutdown();
     }
 }

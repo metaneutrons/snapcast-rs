@@ -125,9 +125,9 @@ impl Player for CoreAudioPlayer {
             pcm_buf.resize(num_frames * frame_size, 0);
 
             // Total time until this buffer reaches the speakers:
-            // current buffer duration + pipeline latency
+            // current buffer duration + one internal buffer (double-buffering) + pipeline latency
             let buffer_dac_usec =
-                (num_frames as i64 * 1_000_000) / format.rate() as i64 + dac_delay_usec;
+                (num_frames as i64 * 2 * 1_000_000) / format.rate() as i64 + dac_delay_usec;
 
             let server_now = {
                 let tp = time_provider.lock().unwrap();

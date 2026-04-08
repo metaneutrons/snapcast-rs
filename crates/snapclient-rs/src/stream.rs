@@ -1,15 +1,9 @@
 //! Time-synchronized PCM audio stream buffer.
-//!
-//! Port of the C++ `Stream` class. Manages a queue of decoded PCM chunks,
-//! aligns playback to server time, and corrects drift by inserting/removing
-//! individual samples.
 
 use std::collections::VecDeque;
 
 use snapcast_proto::SampleFormat;
 use snapcast_proto::types::Timeval;
-
-use crate::double_buffer::DoubleBuffer;
 
 /// A decoded PCM chunk with a server-time timestamp and a read cursor.
 #[derive(Debug, Clone)]
@@ -30,12 +24,10 @@ impl PcmChunk {
         }
     }
 
-    /// Start time as microseconds since epoch.
     pub fn start_usec(&self) -> i64 {
         self.timestamp.sec as i64 * 1_000_000 + self.timestamp.usec as i64
     }
 
-    /// Duration in microseconds based on payload size and format.
     pub fn duration_usec(&self) -> i64 {
         if self.format.frame_size() == 0 || self.format.rate() == 0 {
             return 0;
@@ -44,7 +36,6 @@ impl PcmChunk {
         frames * 1_000_000 / self.format.rate() as i64
     }
 
-    /// Read up to `frames` frames from the chunk. Returns number of frames actually read.
     pub fn read_frames(&mut self, output: &mut [u8], frames: u32) -> u32 {
         let frame_size = self.format.frame_size() as usize;
         let available_bytes = self.data.len() - self.read_pos;
@@ -56,12 +47,10 @@ impl PcmChunk {
         to_read as u32
     }
 
-    /// Whether all data has been consumed.
     pub fn is_end(&self) -> bool {
         self.read_pos >= self.data.len()
     }
 
-    /// Skip `frames` frames.
     pub fn seek(&mut self, frames: u32) {
         let bytes = frames as usize * self.format.frame_size() as usize;
         self.read_pos = (self.read_pos + bytes).min(self.data.len());
@@ -74,19 +63,7 @@ pub struct Stream {
     chunks: VecDeque<PcmChunk>,
     current: Option<PcmChunk>,
     buffer_ms: i64,
-
-    // Drift detection buffers
-    mini_buffer: DoubleBuffer,
-    short_buffer: DoubleBuffer,
-    buffer: DoubleBuffer,
-
-    median: i64,
-    short_median: i64,
     hard_sync: bool,
-    played_frames: u32,
-    correct_after_x_frames: i32,
-    frame_delta: i32,
-    read_buf: Vec<u8>,
 }
 
 impl Stream {
@@ -96,16 +73,7 @@ impl Stream {
             chunks: VecDeque::new(),
             current: None,
             buffer_ms: 1000,
-            mini_buffer: DoubleBuffer::new(20),
-            short_buffer: DoubleBuffer::new(100),
-            buffer: DoubleBuffer::new(500),
-            median: 0,
-            short_median: 0,
             hard_sync: true,
-            played_frames: 0,
-            correct_after_x_frames: 0,
-            frame_delta: 0,
-            read_buf: Vec::new(),
         }
     }
 
@@ -117,31 +85,20 @@ impl Stream {
         self.buffer_ms = ms;
     }
 
-    /// Add a decoded PCM chunk to the queue.
     pub fn add_chunk(&mut self, chunk: PcmChunk) {
         self.chunks.push_back(chunk);
     }
 
-    /// Number of chunks in the queue.
     pub fn chunk_count(&self) -> usize {
         self.chunks.len()
     }
 
-    /// Clear all chunks and reset sync state.
     pub fn clear(&mut self) {
         self.chunks.clear();
         self.current = None;
-        self.reset_buffers();
+        self.hard_sync = true;
     }
 
-    /// Get the next player chunk, time-aligned to server time.
-    ///
-    /// `server_now_usec`: current server time in microseconds
-    /// `output_buffer_dac_time_usec`: time until the buffer reaches the DAC
-    /// `output`: buffer to fill with PCM data
-    /// `frames`: number of frames requested
-    ///
-    /// Returns `true` if audio data was written, `false` if silence should be played.
     pub fn get_player_chunk(
         &mut self,
         server_now_usec: i64,
@@ -164,13 +121,13 @@ impl Stream {
                 + output_buffer_dac_time_usec;
 
             if age_usec < -req_duration_usec {
-                // Too early — entire buffer is silence
+                // Too early — play silence
                 self.get_silence(output, frames);
                 return true;
             }
 
             if age_usec > 0 {
-                // Too late — drop old chunks
+                // Too late — drop old chunks until we catch up
                 self.current = None;
                 while let Some(mut c) = self.chunks.pop_front() {
                     let a = server_now_usec - c.start_usec() - self.buffer_ms * 1000
@@ -204,15 +161,11 @@ impl Stream {
                 if silent_frames > 0 {
                     output[..silent_frames as usize * frame_size].fill(0);
                 }
-
                 let remaining = frames - silent_frames;
                 if remaining > 0 {
                     let offset = silent_frames as usize * frame_size;
                     self.read_next(&mut output[offset..], remaining);
                 }
-
-                // Only exit hard_sync if we actually played some audio
-                // (matching C++ behavior: result = silent_frames <= frames)
                 if silent_frames < frames {
                     self.hard_sync = false;
                 }
@@ -221,66 +174,16 @@ impl Stream {
             return false;
         }
 
-        // Normal playback with drift correction
-        let mut frames_correction: i32 = 0;
-        if self.correct_after_x_frames != 0 {
-            self.played_frames += frames;
-            if self.played_frames >= self.correct_after_x_frames.unsigned_abs() {
-                frames_correction = self.played_frames as i32 / self.correct_after_x_frames;
-                self.played_frames %= self.correct_after_x_frames.unsigned_abs();
-            }
-        }
-
-        let chunk_start = match self.read_with_correction(output, frames, frames_correction) {
-            Some(ts) => ts,
-            None => return false,
-        };
-
-        let age_usec =
-            server_now_usec - chunk_start - self.buffer_ms * 1000 + output_buffer_dac_time_usec;
-
-        self.set_real_sample_rate(self.format.rate() as f64);
-
-        // Hard sync re-trigger using C++ thresholds
-        // These are safe now because soft sync runs independently
-        if (self.buffer.full() && self.median.abs() > 2000 && age_usec.abs() > 500)
-            || (self.short_buffer.full() && self.short_median.abs() > 5000 && age_usec.abs() > 500)
-            || (self.mini_buffer.full()
-                && self.mini_buffer.median_simple().abs() > 50000
-                && age_usec.abs() > 500)
-            || age_usec.abs() > 500_000
-        {
-            self.hard_sync = true;
-        }
-
-        // Soft sync: always run to keep drift near zero
-        if self.short_buffer.full() {
-            let mini_median = self.mini_buffer.median_simple();
-            if self.short_median > 100 && mini_median > 50 && age_usec > 50 {
-                let rate_adj = (self.short_median as f64 / 100.0) * 0.00005;
-                let rate = 1.0 - rate_adj.min(0.0005);
-                self.set_real_sample_rate(self.format.rate() as f64 * rate);
-            } else if self.short_median < -100 && mini_median < -50 && age_usec < -50 {
-                let rate_adj = (-self.short_median as f64 / 100.0) * 0.00005;
-                let rate = 1.0 + rate_adj.min(0.0005);
-                self.set_real_sample_rate(self.format.rate() as f64 * rate);
-            }
-        }
-
-        self.update_buffers(age_usec);
-        self.median = self.buffer.median_simple();
-        self.short_median = self.short_buffer.median_simple();
-
-        age_usec.abs() < 500_000
+        // Normal playback — just read frames sequentially
+        self.read_next(output, frames);
+        true
     }
 
-    /// Fill output with silence.
     pub fn get_silence(&self, output: &mut [u8], frames: u32) {
         let bytes = frames as usize * self.format.frame_size() as usize;
         output[..bytes].fill(0);
     }
 
-    /// Get player chunk, falling back to silence on failure.
     pub fn get_player_chunk_or_silence(
         &mut self,
         server_now_usec: i64,
@@ -295,8 +198,6 @@ impl Stream {
         }
         result
     }
-
-    // --- Private helpers ---
 
     fn read_next(&mut self, output: &mut [u8], frames: u32) -> Option<i64> {
         let chunk = self.current.as_mut()?;
@@ -316,83 +217,6 @@ impl Stream {
         }
         Some(ts)
     }
-
-    fn read_with_correction(
-        &mut self,
-        output: &mut [u8],
-        frames: u32,
-        correction: i32,
-    ) -> Option<i64> {
-        if correction == 0 {
-            return self.read_next(output, frames);
-        }
-
-        self.frame_delta -= correction;
-        let to_read = (frames as i32 + correction) as u32;
-        let frame_size = self.format.frame_size() as usize;
-
-        // Take read_buf out of self to avoid double borrow
-        let mut read_buf = std::mem::take(&mut self.read_buf);
-        read_buf.resize(to_read as usize * frame_size, 0);
-        let ts = self.read_next(&mut read_buf, to_read);
-
-        let max = if correction < 0 {
-            frames as usize
-        } else {
-            to_read as usize
-        };
-        let slices = (correction.unsigned_abs() as usize + 1).min(max);
-        let slice_size = max / slices;
-
-        let mut pos = 0usize;
-        for n in 0..slices {
-            let size = if n + 1 == slices {
-                max - pos
-            } else {
-                slice_size
-            };
-
-            if correction < 0 {
-                let src_offset = (pos - n) * frame_size;
-                let dst_offset = pos * frame_size;
-                output[dst_offset..dst_offset + size * frame_size]
-                    .copy_from_slice(&read_buf[src_offset..src_offset + size * frame_size]);
-            } else {
-                let src_offset = pos * frame_size;
-                let dst_offset = (pos - n) * frame_size;
-                output[dst_offset..dst_offset + size * frame_size]
-                    .copy_from_slice(&read_buf[src_offset..src_offset + size * frame_size]);
-            }
-            pos += size;
-        }
-
-        // Put read_buf back
-        self.read_buf = read_buf;
-        ts
-    }
-
-    fn set_real_sample_rate(&mut self, sample_rate: f64) {
-        let nominal = self.format.rate() as f64;
-        if (sample_rate - nominal).abs() < f64::EPSILON {
-            self.correct_after_x_frames = 0;
-        } else {
-            let ratio = nominal / sample_rate;
-            self.correct_after_x_frames = (ratio / (ratio - 1.0)).round() as i32;
-        }
-    }
-
-    fn update_buffers(&mut self, age_usec: i64) {
-        self.buffer.add(age_usec);
-        self.mini_buffer.add(age_usec);
-        self.short_buffer.add(age_usec);
-    }
-
-    fn reset_buffers(&mut self) {
-        self.buffer.clear();
-        self.mini_buffer.clear();
-        self.short_buffer.clear();
-        self.hard_sync = true;
-    }
 }
 
 #[cfg(test)]
@@ -405,7 +229,6 @@ mod tests {
 
     fn make_chunk(sec: i32, usec: i32, frames: u32, format: SampleFormat) -> PcmChunk {
         let bytes = frames as usize * format.frame_size() as usize;
-        // Fill with non-zero pattern so we can detect silence vs data
         let data: Vec<u8> = (0..bytes).map(|i| (i % 256) as u8).collect();
         PcmChunk::new(Timeval { sec, usec }, data, format)
     }
@@ -413,7 +236,7 @@ mod tests {
     #[test]
     fn pcm_chunk_duration() {
         let f = fmt();
-        let chunk = make_chunk(0, 0, 480, f); // 480 frames @ 48kHz = 10ms
+        let chunk = make_chunk(0, 0, 480, f);
         assert_eq!(chunk.duration_usec(), 10_000);
     }
 
@@ -437,7 +260,7 @@ mod tests {
         chunk.seek(90);
         let mut buf = vec![0u8; 100 * f.frame_size() as usize];
         let read = chunk.read_frames(&mut buf, 100);
-        assert_eq!(read, 10); // only 10 frames left
+        assert_eq!(read, 10);
     }
 
     #[test]
@@ -473,15 +296,12 @@ mod tests {
         let f = fmt();
         let mut stream = Stream::new(f);
         stream.set_buffer_ms(1000);
-
-        // Chunk at t=100s, server_now=100s → age = 0 - 1000ms = -1000ms (too early)
         stream.add_chunk(make_chunk(100, 0, 4800, f));
-        let server_now = 100_000_000i64; // 100s in usec
+        let server_now = 100_000_000i64;
         let mut buf = vec![0xFFu8; 480 * f.frame_size() as usize];
         let result = stream.get_player_chunk(server_now, 0, &mut buf, 480);
-        // Should play silence (chunk is 1000ms in the future)
         assert!(result);
-        assert!(buf.iter().all(|&b| b == 0)); // silence
+        assert!(buf.iter().all(|&b| b == 0));
     }
 
     #[test]
@@ -489,26 +309,11 @@ mod tests {
         let f = fmt();
         let mut stream = Stream::new(f);
         stream.set_buffer_ms(1000);
-
-        // Chunk at t=99s, server_now=100s → age = 1s - 1000ms = 0 (perfect)
         stream.add_chunk(make_chunk(99, 0, 4800, f));
         let server_now = 100_000_000i64;
         let mut buf = vec![0u8; 480 * f.frame_size() as usize];
         let result = stream.get_player_chunk(server_now, 0, &mut buf, 480);
         assert!(result);
-        // Should have non-zero data (our test chunks have patterned data)
         assert!(buf.iter().any(|&b| b != 0));
-    }
-
-    #[test]
-    fn set_real_sample_rate_correction() {
-        let f = fmt();
-        let mut stream = Stream::new(f);
-        stream.set_real_sample_rate(48000.0);
-        assert_eq!(stream.correct_after_x_frames, 0);
-
-        // Slightly fast → need to insert frames
-        stream.set_real_sample_rate(47999.0);
-        assert_ne!(stream.correct_after_x_frames, 0);
     }
 }

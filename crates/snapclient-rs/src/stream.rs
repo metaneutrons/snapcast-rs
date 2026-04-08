@@ -241,10 +241,13 @@ impl Stream {
 
         self.set_real_sample_rate(self.format.rate() as f64);
 
-        // Re-trigger hard_sync only on extreme drift (>500ms)
+        // Hard sync re-trigger only on extreme drift
         if age_usec.abs() > 500_000 {
             self.hard_sync = true;
-        } else if self.short_buffer.full() {
+        }
+
+        // Soft sync: always run to keep drift near zero
+        if self.short_buffer.full() {
             let mini_median = self.mini_buffer.median_simple();
             if self.short_median > 100 && mini_median > 50 && age_usec > 50 {
                 let rate_adj = (self.short_median as f64 / 100.0) * 0.00005;

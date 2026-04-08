@@ -33,6 +33,7 @@ coreaudio-rs = { workspace = true, optional = true }
 alsa = { workspace = true, optional = true }
 libpulse-binding = { workspace = true, optional = true }
 libpulse-simple-binding = { workspace = true, optional = true }
+cpal = { version = "0.15", optional = true }
 
 [features]
 default = ["coreaudio", "mdns"]
@@ -43,3 +44,4 @@ mdns = ["dep:mdns-sd"]
 websocket = ["dep:tokio-tungstenite", "dep:futures-util"]
 tls = ["websocket", "dep:tokio-rustls", "dep:rustls", "dep:rustls-native-certs"]
 resampler = ["dep:rubato"]
+cpal = ["dep:cpal"]

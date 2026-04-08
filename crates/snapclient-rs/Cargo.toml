@@ -26,6 +26,7 @@ libc = { workspace = true }
 [features]
 default = ["mdns"]
 coreaudio = ["snapcast-client/coreaudio"]
+cpal = ["snapcast-client/cpal"]
 alsa = ["snapcast-client/alsa"]
 pulse = ["snapcast-client/pulse"]
 mdns = ["snapcast-client/mdns"]
@@ -38,3 +39,6 @@ snapcast-client = { workspace = true, features = ["coreaudio"] }
 
 [target.'cfg(target_os = "linux")'.dependencies]
 snapcast-client = { workspace = true, features = ["alsa"] }
+
+[target.'cfg(target_os = "windows")'.dependencies]
+snapcast-client = { workspace = true, features = ["cpal"] }

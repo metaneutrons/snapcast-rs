@@ -4,6 +4,8 @@
 pub mod alsa;
 #[cfg(feature = "coreaudio")]
 pub mod coreaudio;
+#[cfg(feature = "cpal")]
+pub mod cpal_backend;
 #[cfg(feature = "pulse")]
 pub mod pulse;
 

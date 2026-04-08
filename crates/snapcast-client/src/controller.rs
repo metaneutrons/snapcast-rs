@@ -315,7 +315,14 @@ impl Controller {
             self.sample_format,
         ));
 
-        #[cfg(all(feature = "alsa", not(feature = "coreaudio")))]
+        #[cfg(all(feature = "cpal", not(feature = "coreaudio")))]
+        let mut player: Box<dyn Player> = Box::new(crate::player::cpal_backend::CpalPlayer::new(
+            Arc::clone(&stream),
+            Arc::clone(&self.time_provider),
+            self.sample_format,
+        ));
+
+        #[cfg(all(feature = "alsa", not(feature = "coreaudio"), not(feature = "cpal")))]
         let mut player: Box<dyn Player> = Box::new(crate::player::alsa::AlsaPlayer::new(
             Arc::clone(&stream),
             Arc::clone(&self.time_provider),
@@ -323,7 +330,12 @@ impl Controller {
             &self.settings.player.pcm_device.name,
         ));
 
-        #[cfg(all(feature = "pulse", not(feature = "coreaudio"), not(feature = "alsa")))]
+        #[cfg(all(
+            feature = "pulse",
+            not(feature = "coreaudio"),
+            not(feature = "cpal"),
+            not(feature = "alsa")
+        ))]
         let mut player: Box<dyn Player> = Box::new(crate::player::pulse::PulsePlayer::new(
             Arc::clone(&stream),
             Arc::clone(&self.time_provider),
@@ -331,8 +343,13 @@ impl Controller {
             None,
         ));
 
-        #[cfg(not(any(feature = "coreaudio", feature = "alsa", feature = "pulse")))]
-        compile_error!("no audio backend — enable coreaudio, alsa, or pulse feature");
+        #[cfg(not(any(
+            feature = "coreaudio",
+            feature = "cpal",
+            feature = "alsa",
+            feature = "pulse"
+        )))]
+        compile_error!("no audio backend — enable coreaudio, cpal, alsa, or pulse feature");
 
         if let Some(ref ss) = self.server_settings {
             player.set_volume(Volume {

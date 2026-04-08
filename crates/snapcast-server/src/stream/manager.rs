@@ -23,8 +23,6 @@ pub struct WireChunkData {
 
 /// Info about a managed stream.
 struct ManagedStream {
-    #[allow(dead_code)]
-    name: String,
     format: SampleFormat,
     header: Vec<u8>,
     codec: String,
@@ -109,7 +107,6 @@ impl StreamManager {
         self.streams.insert(
             name.clone(),
             ManagedStream {
-                name: name.clone(),
                 format,
                 header,
                 codec: codec_name.clone(),

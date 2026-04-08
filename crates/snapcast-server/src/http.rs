@@ -74,6 +74,7 @@ pub async fn run_http(cfg: HttpConfig) -> Result<()> {
     }
 
     let addr = format!("0.0.0.0:{}", cfg.port);
+    tracing::debug!(addr, "HTTP: binding");
     let listener = tokio::net::TcpListener::bind(&addr).await?;
     tracing::info!(port = cfg.port, "HTTP/WebSocket server listening");
     axum::serve(listener, app).await?;

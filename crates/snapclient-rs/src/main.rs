@@ -44,9 +44,7 @@ fn main() -> anyhow::Result<()> {
                     ClientEvent::Connected { host, port } => {
                         tracing::info!(host, port, "Connected");
                     }
-                    ClientEvent::Disconnected { reason } => {
-                        tracing::warn!(reason, "Disconnected");
-                    }
+                    ClientEvent::Disconnected { .. } => {}
                     ClientEvent::VolumeChanged { volume, muted } => {
                         tracing::info!(volume, muted, "Volume changed");
                     }

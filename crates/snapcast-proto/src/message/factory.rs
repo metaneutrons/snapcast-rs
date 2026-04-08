@@ -15,19 +15,28 @@ use crate::message::wire_chunk::WireChunk;
 /// A deserialized typed message with its base header.
 #[derive(Debug)]
 pub struct TypedMessage {
+    /// The base message header.
     pub base: BaseMessage,
+    /// The deserialized typed payload.
     pub payload: MessagePayload,
 }
 
 /// The typed payload of a protocol message.
 #[derive(Debug)]
 pub enum MessagePayload {
+    /// Time sync payload.
     Time(Time),
+    /// Client hello payload.
     Hello(Hello),
+    /// Server settings payload.
     ServerSettings(ServerSettings),
+    /// Codec header payload.
     CodecHeader(CodecHeader),
+    /// Encoded audio chunk payload.
     WireChunk(WireChunk),
+    /// Client info payload.
     ClientInfo(ClientInfo),
+    /// Error payload.
     Error(Error),
 }
 

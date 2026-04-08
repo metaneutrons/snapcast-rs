@@ -15,14 +15,22 @@ pub mod wire_chunk;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(u16)]
 pub enum MessageType {
+    /// Base message (type 0), header only.
     Base = 0,
+    /// Codec header (type 1).
     CodecHeader = 1,
+    /// Encoded audio chunk (type 2).
     WireChunk = 2,
+    /// Server settings (type 3).
     ServerSettings = 3,
+    /// Time sync (type 4).
     Time = 4,
+    /// Client hello (type 5).
     Hello = 5,
     // 6 is unused (was StreamTags)
+    /// Client info (type 7).
     ClientInfo = 7,
+    /// Error (type 8).
     Error = 8,
 }
 

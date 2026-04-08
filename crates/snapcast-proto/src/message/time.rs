@@ -13,6 +13,7 @@ use crate::types::Timeval;
 /// Time sync message payload (8 bytes).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Time {
+    /// Round-trip latency measurement.
     pub latency: Timeval,
 }
 
@@ -20,18 +21,21 @@ impl Time {
     /// Payload size in bytes.
     pub const SIZE: u32 = 8;
 
+    /// Create a new Time message with zero latency.
     pub fn new() -> Self {
         Self {
             latency: Timeval::default(),
         }
     }
 
+    /// Deserialize a Time message from a reader.
     pub fn read_from<R: Read>(r: &mut R) -> Result<Self, ProtoError> {
         Ok(Self {
             latency: Timeval::read_from(r)?,
         })
     }
 
+    /// Serialize a Time message to a writer.
     pub fn write_to<W: Write>(&self, w: &mut W) -> Result<(), ProtoError> {
         self.latency.write_to(w)?;
         Ok(())

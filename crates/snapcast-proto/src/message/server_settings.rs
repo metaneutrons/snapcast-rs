@@ -13,24 +13,31 @@ use crate::message::wire;
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ServerSettings {
+    /// Buffer size in milliseconds.
     pub buffer_ms: i32,
+    /// Additional latency in milliseconds.
     pub latency: i32,
+    /// Playback volume (0–100).
     pub volume: u16,
+    /// Whether the client is muted.
     pub muted: bool,
 }
 
 impl ServerSettings {
+    /// Wire size of the JSON payload including length prefix.
     pub fn wire_size(&self) -> u32 {
         let json = serde_json::to_string(self).unwrap_or_default();
         wire::string_wire_size(&json)
     }
 
+    /// Deserialize server settings from a reader.
     pub fn read_from<R: Read>(r: &mut R) -> Result<Self, ProtoError> {
         let json_str = wire::read_string(r)?;
         serde_json::from_str(&json_str)
             .map_err(|e| ProtoError::Io(std::io::Error::new(std::io::ErrorKind::InvalidData, e)))
     }
 
+    /// Serialize server settings to a writer.
     pub fn write_to<W: Write>(&self, w: &mut W) -> Result<(), ProtoError> {
         let json_str = serde_json::to_string(self)
             .map_err(|e| ProtoError::Io(std::io::Error::new(std::io::ErrorKind::InvalidData, e)))?;

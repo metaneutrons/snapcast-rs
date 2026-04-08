@@ -1,4 +1,4 @@
-#![warn(unsafe_code)]
+#![deny(unsafe_code)]
 #![warn(clippy::redundant_closure)]
 #![warn(clippy::implicit_clone)]
 #![warn(clippy::uninlined_format_args)]

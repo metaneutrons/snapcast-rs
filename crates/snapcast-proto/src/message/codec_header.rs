@@ -23,12 +23,14 @@ impl CodecHeader {
         wire::string_wire_size(&self.codec) + wire::bytes_wire_size(&self.payload)
     }
 
+    /// Deserialize a codec header from a reader.
     pub fn read_from<R: Read>(r: &mut R) -> Result<Self, ProtoError> {
         let codec = wire::read_string(r)?;
         let payload = wire::read_bytes(r)?;
         Ok(Self { codec, payload })
     }
 
+    /// Serialize a codec header to a writer.
     pub fn write_to<W: Write>(&self, w: &mut W) -> Result<(), ProtoError> {
         wire::write_string(w, &self.codec)?;
         wire::write_bytes(w, &self.payload)?;

@@ -1,3 +1,9 @@
+#![forbid(unsafe_code)]
+#![warn(clippy::redundant_closure)]
+#![warn(clippy::implicit_clone)]
+#![warn(clippy::uninlined_format_args)]
+#![warn(missing_docs)]
+
 //! Snapcast binary protocol implementation.
 //!
 //! This crate implements the Snapcast binary wire protocol, providing

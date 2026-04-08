@@ -11,8 +11,10 @@ use crate::types::Timeval;
 /// Errors that can occur during message parsing.
 #[derive(Debug, Error)]
 pub enum ProtoError {
+    /// An I/O error occurred during read or write.
     #[error("I/O error: {0}")]
     Io(#[from] io::Error),
+    /// Received an unrecognized message type value.
     #[error("unknown message type: {0}")]
     UnknownMessageType(u16),
 }
@@ -23,11 +25,17 @@ pub enum ProtoError {
 /// `size` bytes of typed payload.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct BaseMessage {
+    /// Type of the message payload.
     pub msg_type: MessageType,
+    /// Sequence identifier.
     pub id: u16,
+    /// ID of the message this is a response to.
     pub refers_to: u16,
+    /// Timestamp when the message was sent.
     pub sent: Timeval,
+    /// Timestamp when the message was received.
     pub received: Timeval,
+    /// Size of the payload in bytes.
     pub size: u32,
 }
 

@@ -9,10 +9,13 @@ use std::str::FromStr;
 
 use thiserror::Error;
 
+/// Errors when parsing a [`SampleFormat`] from a string.
 #[derive(Debug, Error)]
 pub enum SampleFormatError {
+    /// The string does not have the expected `rate:bits:channels` format.
     #[error("sample format must be <rate>:<bits>:<channels>, got {0:?}")]
     InvalidFormat(String),
+    /// A numeric field could not be parsed.
     #[error("invalid number in sample format: {0}")]
     InvalidNumber(#[from] std::num::ParseIntError),
 }
@@ -35,14 +38,17 @@ impl SampleFormat {
         }
     }
 
+    /// Sample rate in Hz.
     pub fn rate(&self) -> u32 {
         self.rate
     }
 
+    /// Bit depth per sample.
     pub fn bits(&self) -> u16 {
         self.bits
     }
 
+    /// Number of audio channels.
     pub fn channels(&self) -> u16 {
         self.channels
     }

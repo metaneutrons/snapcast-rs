@@ -23,12 +23,14 @@ impl WireChunk {
         8 + wire::bytes_wire_size(&self.payload)
     }
 
+    /// Deserialize a wire chunk from a reader.
     pub fn read_from<R: Read>(r: &mut R) -> Result<Self, ProtoError> {
         let timestamp = Timeval::read_from(r)?;
         let payload = wire::read_bytes(r)?;
         Ok(Self { timestamp, payload })
     }
 
+    /// Serialize a wire chunk to a writer.
     pub fn write_to<W: Write>(&self, w: &mut W) -> Result<(), ProtoError> {
         self.timestamp.write_to(w)?;
         wire::write_bytes(w, &self.payload)?;

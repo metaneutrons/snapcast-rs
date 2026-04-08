@@ -12,8 +12,11 @@ use crate::message::wire;
 /// Error message payload.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Error {
+    /// Numeric error code.
     pub code: u32,
+    /// Short error name.
     pub error: String,
+    /// Human-readable error description.
     pub message: String,
 }
 
@@ -23,6 +26,7 @@ impl Error {
         4 + wire::string_wire_size(&self.error) + wire::string_wire_size(&self.message)
     }
 
+    /// Deserialize an error message from a reader.
     pub fn read_from<R: Read>(r: &mut R) -> Result<Self, ProtoError> {
         let code = r.read_u32::<LittleEndian>()?;
         let error = wire::read_string(r)?;
@@ -34,6 +38,7 @@ impl Error {
         })
     }
 
+    /// Serialize an error message to a writer.
     pub fn write_to<W: Write>(&self, w: &mut W) -> Result<(), ProtoError> {
         w.write_u32::<LittleEndian>(self.code)?;
         wire::write_string(w, &self.error)?;

@@ -9,7 +9,9 @@ use byteorder::{LittleEndian, ReadBytesExt, WriteBytesExt};
 /// Matches the C++ `tv` struct used throughout the Snapcast protocol.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct Timeval {
+    /// Seconds component.
     pub sec: i32,
+    /// Microseconds component.
     pub usec: i32,
 }
 

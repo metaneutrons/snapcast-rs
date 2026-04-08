@@ -13,7 +13,9 @@ use crate::message::wire;
 /// Authentication info (optional).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Auth {
+    /// Authentication scheme (e.g. "Basic").
     pub scheme: String,
+    /// Scheme-specific parameter (e.g. base64 credentials).
     pub param: String,
 }
 
@@ -21,18 +23,28 @@ pub struct Auth {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "PascalCase")]
 pub struct Hello {
+    /// Client MAC address.
     #[serde(rename = "MAC")]
     pub mac: String,
+    /// Client hostname.
     pub host_name: String,
+    /// Client software version.
     pub version: String,
+    /// Client application name.
     pub client_name: String,
+    /// Client operating system.
     #[serde(rename = "OS")]
     pub os: String,
+    /// Client CPU architecture.
     pub arch: String,
+    /// Client instance number.
     pub instance: u32,
+    /// Unique client identifier.
     #[serde(rename = "ID")]
     pub id: String,
+    /// Protocol version supported by the client.
     pub snap_stream_protocol_version: u32,
+    /// Optional authentication info.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub auth: Option<Auth>,
 }
@@ -44,12 +56,14 @@ impl Hello {
         wire::string_wire_size(&json)
     }
 
+    /// Deserialize a Hello message from a reader.
     pub fn read_from<R: Read>(r: &mut R) -> Result<Self, ProtoError> {
         let json_str = wire::read_string(r)?;
         serde_json::from_str(&json_str)
             .map_err(|e| ProtoError::Io(std::io::Error::new(std::io::ErrorKind::InvalidData, e)))
     }
 
+    /// Serialize a Hello message to a writer.
     pub fn write_to<W: Write>(&self, w: &mut W) -> Result<(), ProtoError> {
         let json_str = serde_json::to_string(self)
             .map_err(|e| ProtoError::Io(std::io::Error::new(std::io::ErrorKind::InvalidData, e)))?;

@@ -5,7 +5,6 @@ use snapclient_rs::controller::Controller;
 fn main() -> anyhow::Result<()> {
     let cli = cli::Cli::parse();
 
-    // Initialize logging from CLI options before anything else
     snapclient_rs::logging::init(&cli.logsink, &cli.logfilter)?;
 
     let settings = cli.into_settings()?;
@@ -18,6 +17,17 @@ fn main() -> anyhow::Result<()> {
     let rt = tokio::runtime::Runtime::new()?;
     rt.block_on(async {
         let mut controller = Controller::new(settings);
-        controller.run().await
-    })
+
+        tokio::select! {
+            result = controller.run() => result,
+            _ = tokio::signal::ctrl_c() => {
+                tracing::info!("Received Ctrl-C, shutting down");
+                controller.shutdown();
+                Ok(())
+            }
+        }
+    })?;
+
+    tracing::info!("snapclient-rs terminated");
+    Ok(())
 }

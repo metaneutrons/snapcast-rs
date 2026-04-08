@@ -275,6 +275,12 @@ impl Controller {
         self.decoder = None;
         self.connection.disconnect();
     }
+
+    /// Graceful shutdown — stops player and closes connection.
+    pub fn shutdown(&mut self) {
+        tracing::info!("Shutting down");
+        self.cleanup();
+    }
 }
 
 fn hostname() -> String {

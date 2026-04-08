@@ -315,8 +315,22 @@ impl Controller {
             self.sample_format,
         ));
 
-        #[cfg(not(feature = "coreaudio"))]
-        let mut player: Box<dyn Player> = bail!("no audio backend available");
+        #[cfg(all(feature = "alsa", not(feature = "coreaudio")))]
+        let mut player: Box<dyn Player> = Box::new(crate::player::alsa::AlsaPlayer::new(
+            Arc::clone(&stream),
+            Arc::clone(&self.time_provider),
+            self.sample_format,
+        ));
+
+        #[cfg(all(feature = "pulse", not(feature = "coreaudio"), not(feature = "alsa")))]
+        let mut player: Box<dyn Player> = Box::new(crate::player::pulse::PulsePlayer::new(
+            Arc::clone(&stream),
+            Arc::clone(&self.time_provider),
+            self.sample_format,
+        ));
+
+        #[cfg(not(any(feature = "coreaudio", feature = "alsa", feature = "pulse")))]
+        bail!("no audio backend available — enable coreaudio, alsa, or pulse feature");
 
         if let Some(ref ss) = self.server_settings {
             player.set_volume(Volume {

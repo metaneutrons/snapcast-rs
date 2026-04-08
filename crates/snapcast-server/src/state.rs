@@ -77,6 +77,9 @@ pub struct StreamInfo {
     pub status: String,
     /// Source URI.
     pub uri: String,
+    /// Stream properties (metadata: artist, title, etc.).
+    #[serde(default)]
+    pub properties: std::collections::HashMap<String, serde_json::Value>,
 }
 
 /// Complete server state.
@@ -283,6 +286,7 @@ mod tests {
             id: "default".into(),
             status: "playing".into(),
             uri: "pipe:///tmp/snapfifo".into(),
+            properties: Default::default(),
         });
 
         let json = serde_json::to_string(&state).unwrap();

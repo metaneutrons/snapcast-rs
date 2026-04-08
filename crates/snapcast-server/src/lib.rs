@@ -62,6 +62,7 @@ use std::sync::Arc;
 
 use tokio::sync::mpsc;
 
+pub mod auth;
 pub mod control;
 pub mod encoder;
 pub mod jsonrpc;
@@ -254,10 +255,15 @@ impl SnapServer {
         // Start control server (JSON-RPC over TCP)
         let shared_state = Arc::new(tokio::sync::Mutex::new(state::ServerState::default()));
         let (notify_tx, _) = tokio::sync::broadcast::channel::<serde_json::Value>(256);
+        let (stream_ctrl_tx, _stream_ctrl_rx) =
+            tokio::sync::mpsc::channel::<jsonrpc::StreamControlMsg>(64);
+        let auth_cfg = Arc::new(auth::AuthConfig::default());
         let control_state = Arc::clone(&shared_state);
         let control_event_tx = event_tx.clone();
         let control_notify_tx = notify_tx.clone();
         let control_port = self.config.control_port;
+        let control_auth = Arc::clone(&auth_cfg);
+        let control_stream_tx = stream_ctrl_tx.clone();
 
         let control_handle = tokio::spawn(async move {
             if let Err(e) = control::run_tcp(
@@ -265,6 +271,8 @@ impl SnapServer {
                 control_state,
                 control_event_tx,
                 control_notify_tx,
+                control_auth,
+                control_stream_tx,
             )
             .await
             {

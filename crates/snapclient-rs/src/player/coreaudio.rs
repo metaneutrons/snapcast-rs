@@ -11,6 +11,56 @@ use super::{Player, Volume, apply_volume};
 use crate::stream::Stream;
 use crate::time_provider::TimeProvider;
 
+/// Query the total output latency of the AudioUnit in microseconds.
+/// Includes: AudioUnit processing latency + one callback buffer period (double-buffering).
+/// This matches the C++ approach: buffered frames + DAC delay.
+fn query_output_latency(audio_unit: &AudioUnit, sample_rate: u32) -> i64 {
+    // kAudioUnitProperty_Latency = 12 (returns seconds as f64)
+    let au_latency_usec = audio_unit
+        .get_property::<f64>(12, Scope::Global, Element::Output)
+        .map(|secs| (secs * 1_000_000.0) as i64)
+        .unwrap_or(0);
+
+    // kAudioDevicePropertyLatency = 0x6C746E63 ('ltnc') on the output device
+    // kAudioDevicePropertySafetyOffset = 0x73616674 ('saft')
+    // kAudioDevicePropertyBufferFrameSize = 0x6673697A ('fsiz')
+    // These require the device ID which we get from the AudioUnit
+    let device_latency_frames: i64 = audio_unit
+        .get_property::<u32>(0x6C746E63, Scope::Output, Element::Output)
+        .map(|f| f as i64)
+        .unwrap_or(0);
+
+    let safety_offset_frames: i64 = audio_unit
+        .get_property::<u32>(0x73616674, Scope::Output, Element::Output)
+        .map(|f| f as i64)
+        .unwrap_or(0);
+
+    let buffer_frames: i64 = audio_unit
+        .get_property::<u32>(0x6673697A, Scope::Global, Element::Output)
+        .map(|f| f as i64)
+        .unwrap_or(512);
+
+    let frames_to_usec = |frames: i64| frames * 1_000_000 / sample_rate as i64;
+
+    // Total latency: AU processing + device hardware + safety offset + one buffer period
+    // The one buffer period accounts for AudioUnit's internal double-buffering
+    let total = au_latency_usec
+        + frames_to_usec(device_latency_frames)
+        + frames_to_usec(safety_offset_frames)
+        + frames_to_usec(buffer_frames);
+
+    tracing::info!(
+        au_latency_us = au_latency_usec,
+        device_latency_frames,
+        safety_offset_frames,
+        buffer_frames,
+        total_us = total,
+        "CoreAudio output latency"
+    );
+
+    total
+}
+
 pub struct CoreAudioPlayer {
     audio_unit: Option<AudioUnit>,
     stream: Arc<Mutex<Stream>>,
@@ -41,42 +91,25 @@ impl Player for CoreAudioPlayer {
 
         let format = self.sample_format;
 
-        // Set the AudioUnit input format to match our stream's sample rate
+        // Set sample rate to match our stream
         let mut stream_format = audio_unit.output_stream_format()?;
-        tracing::info!(
-            default_rate = stream_format.sample_rate,
-            target_rate = format.rate(),
-            "CoreAudio configuring"
-        );
         stream_format.sample_rate = format.rate() as f64;
-        // kAudioUnitProperty_StreamFormat = 8
         audio_unit.set_property(
-            8,
+            8, // kAudioUnitProperty_StreamFormat
             Scope::Input,
             Element::Output,
             Some(&stream_format.to_asbd()),
         )?;
+
+        // Query actual output latency for precise DAC delay estimation
+        let dac_delay_usec = query_output_latency(&audio_unit, format.rate());
+
         let stream = Arc::clone(&self.stream);
         let time_provider = Arc::clone(&self.time_provider);
         let volume = Arc::clone(&self.volume);
         let sample_size = format.sample_size() as usize;
         let channels = format.channels() as usize;
         let frame_size = format.frame_size() as usize;
-        let dac_delay_usec: i64 = 15_000;
-
-        // Query AudioUnit output latency for more accurate DAC delay
-        let device_latency_usec: i64 = audio_unit
-            .get_property::<f64>(
-                12, // kAudioUnitProperty_Latency
-                Scope::Global,
-                Element::Output,
-            )
-            .map(|secs| (secs * 1_000_000.0) as i64)
-            .unwrap_or(dac_delay_usec);
-        tracing::info!(
-            device_latency_us = device_latency_usec,
-            "CoreAudio device latency"
-        );
 
         let mut pcm_buf: Vec<u8> = Vec::new();
 
@@ -91,8 +124,10 @@ impl Player for CoreAudioPlayer {
 
             pcm_buf.resize(num_frames * frame_size, 0);
 
+            // Total time until this buffer reaches the speakers:
+            // current buffer duration + pipeline latency
             let buffer_dac_usec =
-                (num_frames as i64 * 1_000_000) / format.rate() as i64 + device_latency_usec;
+                (num_frames as i64 * 1_000_000) / format.rate() as i64 + dac_delay_usec;
 
             let server_now = {
                 let tp = time_provider.lock().unwrap();

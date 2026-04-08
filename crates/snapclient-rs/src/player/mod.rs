@@ -87,6 +87,29 @@ pub fn apply_volume(buffer: &mut [u8], sample_size: u16, volume: &Volume) {
     }
 }
 
+/// Run a script mixer command to set volume.
+/// The script receives volume (0-100) and mute state as arguments.
+#[cfg(unix)]
+pub fn run_mixer_script(script: &str, volume: &Volume) {
+    let vol_percent = (volume.volume * 100.0) as u32;
+    let muted = if volume.muted { "true" } else { "false" };
+    match std::process::Command::new(script)
+        .args([&vol_percent.to_string(), muted])
+        .output()
+    {
+        Ok(output) => {
+            if !output.status.success() {
+                tracing::warn!(
+                    script,
+                    status = %output.status,
+                    "Mixer script failed"
+                );
+            }
+        }
+        Err(e) => tracing::error!(script, error = %e, "Failed to run mixer script"),
+    }
+}
+
 // Suppress unused warning — Stream and PcmDevice will be used by backends
 const _: () = {
     fn _assert_send<T: Send>() {}

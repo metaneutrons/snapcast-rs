@@ -64,6 +64,20 @@ impl Player for CoreAudioPlayer {
         let frame_size = format.frame_size() as usize;
         let dac_delay_usec: i64 = 15_000;
 
+        // Query AudioUnit output latency for more accurate DAC delay
+        let device_latency_usec: i64 = audio_unit
+            .get_property::<f64>(
+                12, // kAudioUnitProperty_Latency
+                Scope::Global,
+                Element::Output,
+            )
+            .map(|secs| (secs * 1_000_000.0) as i64)
+            .unwrap_or(dac_delay_usec);
+        tracing::info!(
+            device_latency_us = device_latency_usec,
+            "CoreAudio device latency"
+        );
+
         let mut pcm_buf: Vec<u8> = Vec::new();
 
         type Args = render_callback::Args<data::NonInterleaved<f32>>;
@@ -78,7 +92,7 @@ impl Player for CoreAudioPlayer {
             pcm_buf.resize(num_frames * frame_size, 0);
 
             let buffer_dac_usec =
-                (num_frames as i64 * 1_000_000) / format.rate() as i64 + dac_delay_usec;
+                (num_frames as i64 * 1_000_000) / format.rate() as i64 + device_latency_usec;
 
             let server_now = {
                 let tp = time_provider.lock().unwrap();

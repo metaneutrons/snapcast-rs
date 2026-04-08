@@ -241,8 +241,15 @@ impl Stream {
 
         self.set_real_sample_rate(self.format.rate() as f64);
 
-        // Hard sync re-trigger only on extreme drift
-        if age_usec.abs() > 500_000 {
+        // Hard sync re-trigger using C++ thresholds
+        // These are safe now because soft sync runs independently
+        if (self.buffer.full() && self.median.abs() > 2000 && age_usec.abs() > 500)
+            || (self.short_buffer.full() && self.short_median.abs() > 5000 && age_usec.abs() > 500)
+            || (self.mini_buffer.full()
+                && self.mini_buffer.median_simple().abs() > 50000
+                && age_usec.abs() > 500)
+            || age_usec.abs() > 500_000
+        {
             self.hard_sync = true;
         }
 

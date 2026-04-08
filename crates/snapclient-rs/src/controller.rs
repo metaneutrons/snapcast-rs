@@ -60,6 +60,21 @@ impl Controller {
     }
 
     async fn session(&mut self) -> Result<()> {
+        // mDNS discovery if host is empty or starts with "_"
+        if self.settings.server.host.is_empty() || self.settings.server.host.starts_with('_') {
+            #[cfg(feature = "mdns")]
+            {
+                tracing::info!(service = %self.settings.server.host, "Browsing mDNS...");
+                let endpoint = crate::discovery::discover(Duration::from_secs(5)).await?;
+                self.settings.server.host = endpoint.host;
+                self.settings.server.port = endpoint.port;
+                self.connection =
+                    TcpConnection::new(&self.settings.server.host, self.settings.server.port);
+            }
+            #[cfg(not(feature = "mdns"))]
+            bail!("mDNS not available — specify server URL");
+        }
+
         self.connection.connect().await?;
         tracing::info!(
             host = %self.settings.server.host,

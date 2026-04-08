@@ -14,6 +14,7 @@ path = "src/main.rs"
 
 [dependencies]
 snapcast-client = { workspace = true }
+snapcast-proto = { workspace = true }
 tokio = { workspace = true }
 clap = { workspace = true }
 tracing = { workspace = true }
@@ -22,23 +23,11 @@ tracing-appender = { workspace = true }
 anyhow = { workspace = true }
 base64 = { workspace = true }
 libc = { workspace = true }
+cpal = "0.15"
 
 [features]
 default = ["mdns"]
-coreaudio = ["snapcast-client/coreaudio"]
-cpal = ["snapcast-client/cpal"]
-alsa = ["snapcast-client/alsa"]
-pulse = ["snapcast-client/pulse"]
 mdns = ["snapcast-client/mdns"]
 websocket = ["snapcast-client/websocket"]
 tls = ["snapcast-client/tls"]
 resampler = ["snapcast-client/resampler"]
-
-[target.'cfg(target_os = "macos")'.dependencies]
-snapcast-client = { workspace = true, features = ["coreaudio"] }
-
-[target.'cfg(target_os = "linux")'.dependencies]
-snapcast-client = { workspace = true, features = ["alsa"] }
-
-[target.'cfg(target_os = "windows")'.dependencies]
-snapcast-client = { workspace = true, features = ["cpal"] }

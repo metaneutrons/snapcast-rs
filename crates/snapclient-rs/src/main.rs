@@ -1,5 +1,6 @@
 mod cli;
 mod logging;
+mod player;
 
 use clap::Parser;
 use snapcast_client::{ClientCommand, ClientConfig, ClientEvent, SnapClient};
@@ -34,8 +35,13 @@ fn main() -> anyhow::Result<()> {
     let rt = tokio::runtime::Runtime::new()?;
 
     rt.block_on(async {
-        let (mut client, mut events, _audio_rx) = SnapClient::new(config);
+        let (mut client, mut events, audio_rx) = SnapClient::new(config);
         let cmd = client.command_sender();
+
+        // Audio output: read f32 from library, write to device
+        tokio::spawn(async move {
+            player::play_audio(audio_rx).await;
+        });
 
         // Log events
         tokio::spawn(async move {

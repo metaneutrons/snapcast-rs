@@ -29,19 +29,10 @@ rustls = { workspace = true, optional = true }
 rustls-native-certs = { workspace = true, optional = true }
 futures-util = { workspace = true, optional = true }
 rubato = { workspace = true, optional = true }
-coreaudio-rs = { workspace = true, optional = true }
-alsa = { workspace = true, optional = true }
-libpulse-binding = { workspace = true, optional = true }
-libpulse-simple-binding = { workspace = true, optional = true }
-cpal = { version = "0.15", optional = true }
 
 [features]
-default = ["coreaudio", "mdns"]
-coreaudio = ["dep:coreaudio-rs"]
-alsa = ["dep:alsa"]
-pulse = ["dep:libpulse-binding", "dep:libpulse-simple-binding"]
+default = ["mdns"]
 mdns = ["dep:mdns-sd"]
 websocket = ["dep:tokio-tungstenite", "dep:futures-util"]
 tls = ["websocket", "dep:tokio-rustls", "dep:rustls", "dep:rustls-native-certs"]
 resampler = ["dep:rubato"]
-cpal = ["dep:cpal"]

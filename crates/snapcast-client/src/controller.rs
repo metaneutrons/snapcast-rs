@@ -15,24 +15,19 @@ use tokio::sync::mpsc;
 use crate::config::ClientSettings;
 use crate::connection::TcpConnection;
 use crate::decoder::{self, Decoder, PcmDecoder};
-use crate::player::{Player, Volume};
 use crate::stream::{PcmChunk, Stream};
 use crate::time_provider::TimeProvider;
 use crate::{ClientCommand, ClientEvent};
 
-#[cfg(feature = "coreaudio")]
-use crate::player::coreaudio::CoreAudioPlayer;
-
 const VERSION: &str = env!("CARGO_PKG_VERSION");
 
-/// Main orchestrator wiring connection, decoder, stream, and player.
+/// Main orchestrator wiring connection, decoder, stream, and audio output.
 pub struct Controller {
     settings: ClientSettings,
     connection: TcpConnection,
     time_provider: Arc<Mutex<TimeProvider>>,
     stream: Option<Arc<Mutex<Stream>>>,
     decoder: Option<Box<dyn Decoder>>,
-    player: Option<Box<dyn Player>>,
     sample_format: SampleFormat,
     server_settings: Option<ServerSettings>,
     event_tx: mpsc::Sender<ClientEvent>,
@@ -56,7 +51,6 @@ impl Controller {
             time_provider: Arc::new(Mutex::new(TimeProvider::new())),
             stream: None,
             decoder: None,
-            player: None,
             sample_format: SampleFormat::default(),
             server_settings: None,
             event_tx,
@@ -196,12 +190,7 @@ impl Controller {
                             return Ok(());
                         }
                         Some(ClientCommand::SetVolume { volume, muted }) => {
-                            if let Some(ref mut p) = self.player {
-                                p.set_volume(Volume {
-                                    volume: volume as f64 / 100.0,
-                                    muted,
-                                });
-                            }
+                            tracing::debug!(volume, muted, "Volume change (applied by binary)");
                         }
                         Some(ClientCommand::SendJsonRpc(_msg)) => {
                             // JSON-RPC is handled server-side; client binary protocol
@@ -278,12 +267,6 @@ impl Controller {
     }
 
     fn apply_server_settings(&mut self, ss: &ServerSettings) {
-        if let Some(ref mut p) = self.player {
-            p.set_volume(Volume {
-                volume: ss.volume as f64 / 100.0,
-                muted: ss.muted,
-            });
-        }
         if let Some(ref stream) = self.stream {
             let buf_ms = (ss.buffer_ms - ss.latency - self.settings.player.latency).max(0);
             stream.lock().unwrap().set_buffer_ms(buf_ms as i64);
@@ -291,10 +274,6 @@ impl Controller {
     }
 
     fn init_audio_pipeline(&mut self, header: &CodecHeader) -> Result<()> {
-        if let Some(ref mut p) = self.player {
-            let _ = p.stop();
-        }
-        self.player = None;
         self.stream = None;
 
         let mut dec: Box<dyn Decoder> = match header.codec.as_str() {
@@ -333,58 +312,6 @@ impl Controller {
         });
         self.audio_pump_handle = Some(pump_handle);
 
-        #[cfg(feature = "coreaudio")]
-        let mut player: Box<dyn Player> = Box::new(CoreAudioPlayer::new(
-            stream,
-            Arc::clone(&self.time_provider),
-            self.sample_format,
-        ));
-
-        #[cfg(all(feature = "cpal", not(feature = "coreaudio")))]
-        let mut player: Box<dyn Player> = Box::new(crate::player::cpal_backend::CpalPlayer::new(
-            Arc::clone(&stream),
-            Arc::clone(&self.time_provider),
-            self.sample_format,
-        ));
-
-        #[cfg(all(feature = "alsa", not(feature = "coreaudio"), not(feature = "cpal")))]
-        let mut player: Box<dyn Player> = Box::new(crate::player::alsa::AlsaPlayer::new(
-            Arc::clone(&stream),
-            Arc::clone(&self.time_provider),
-            self.sample_format,
-            &self.settings.player.pcm_device.name,
-        ));
-
-        #[cfg(all(
-            feature = "pulse",
-            not(feature = "coreaudio"),
-            not(feature = "cpal"),
-            not(feature = "alsa")
-        ))]
-        let mut player: Box<dyn Player> = Box::new(crate::player::pulse::PulsePlayer::new(
-            Arc::clone(&stream),
-            Arc::clone(&self.time_provider),
-            self.sample_format,
-            None,
-        ));
-
-        #[cfg(not(any(
-            feature = "coreaudio",
-            feature = "cpal",
-            feature = "alsa",
-            feature = "pulse"
-        )))]
-        compile_error!("no audio backend — enable coreaudio, cpal, alsa, or pulse feature");
-
-        if let Some(ref ss) = self.server_settings {
-            player.set_volume(Volume {
-                volume: ss.volume as f64 / 100.0,
-                muted: ss.muted,
-            });
-        }
-
-        player.start()?;
-        self.player = Some(player);
         self.decoder = Some(dec);
         Ok(())
     }
@@ -399,10 +326,6 @@ impl Controller {
         if let Some(handle) = self.audio_pump_handle.take() {
             handle.abort();
         }
-        if let Some(ref mut p) = self.player {
-            let _ = p.stop();
-        }
-        self.player = None;
         self.stream = None;
         self.decoder = None;
         self.connection.disconnect();

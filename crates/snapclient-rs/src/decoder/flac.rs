@@ -101,20 +101,13 @@ impl Decoder for FlacDecoder {
         let spec = *decoded.spec();
         let frames = decoded.frames() as u64;
 
-        let mut sample_buf = SampleBuffer::<i32>::new(frames, spec);
+        let mut sample_buf = SampleBuffer::<i16>::new(frames, spec);
         sample_buf.copy_interleaved_ref(decoded);
         let samples = sample_buf.samples();
 
-        // Convert interleaved i32 samples to the target bit depth
-        let bytes_per_sample = self.sample_format.sample_size() as usize;
-        let mut out = Vec::with_capacity(samples.len() * bytes_per_sample);
-
+        let mut out = Vec::with_capacity(samples.len() * 2);
         for &s in samples {
-            match bytes_per_sample {
-                2 => out.extend_from_slice(&(s as i16).to_le_bytes()),
-                4 => out.extend_from_slice(&s.to_le_bytes()),
-                _ => out.extend_from_slice(&(s as i16).to_le_bytes()),
-            }
+            out.extend_from_slice(&s.to_le_bytes());
         }
 
         *data = out;

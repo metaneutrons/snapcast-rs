@@ -328,11 +328,12 @@ impl SnapServer {
                         Some(ServerCommand::Stop) | None => {
                             // Shut down mDNS first (daemon thread still alive)
                             drop(mdns.take());
-                            tracing::info!("Server stopping");
+                            tracing::info!("Server stopped");
                             session_handle.abort();
                             control_handle.abort();
                             http_handle.abort();
-                            return Ok(());
+                            // Force exit — axum::serve doesn't respond to abort
+                            std::process::exit(0);
                         }
                         Some(ServerCommand::SendJsonRpc { message, .. }) => {
                             let _ = notify_tx.send(message);

@@ -6,7 +6,6 @@ use mdns_sd::{ServiceDaemon, ServiceInfo};
 /// Advertise the Snapcast server via mDNS.
 pub struct MdnsAdvertiser {
     daemon: ServiceDaemon,
-    fullname: String,
 }
 
 impl MdnsAdvertiser {
@@ -24,16 +23,13 @@ impl MdnsAdvertiser {
             port,
             None,
         )?;
-        let fullname = service.get_fullname().to_string();
         daemon.register(service)?;
         tracing::info!(port, host = %mdns_host, "mDNS: advertising _snapcast._tcp");
-        Ok(Self { daemon, fullname })
+        Ok(Self { daemon })
     }
 
-    /// Gracefully unregister and shut down the mDNS daemon.
+    /// Shut down the mDNS daemon.
     pub fn shutdown(&self) {
-        let _ = self.daemon.unregister(&self.fullname);
-        std::thread::sleep(std::time::Duration::from_millis(100));
         let _ = self.daemon.shutdown();
     }
 }

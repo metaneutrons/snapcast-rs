@@ -1,7 +1,4 @@
 //! FLAC encoder using libflac via flac-bound (persistent streaming encoder).
-//!
-//! Uses a self-referential struct to keep the FLAC encoder alive across
-//! encode() calls, producing a continuous stream of FLAC frames.
 
 use std::io::{Cursor, Write};
 
@@ -11,25 +8,17 @@ use snapcast_proto::SampleFormat;
 
 use super::{EncodedChunk, Encoder};
 
+struct FlacEncState {
+    _write_wrapper: Box<WriteWrapper<'static>>,
+    encoder: FlacEnc<'static>,
+}
+
 /// Streaming FLAC encoder that persists across encode() calls.
-///
-/// Uses unsafe to create a self-referential struct: the encoder
-/// references the output buffer, both owned by this struct.
 pub struct FlacEncoder {
     format: SampleFormat,
     header: Vec<u8>,
-    /// Raw pointer to the encoder. We manage its lifetime manually.
-    /// The encoder writes to `output_buf` via a raw pointer.
     encoder: *mut FlacEncState,
-    /// Output buffer that the encoder writes into.
     output_buf: *mut Cursor<Vec<u8>>,
-}
-
-struct FlacEncState {
-    /// The WriteWrapper must live as long as the encoder.
-    /// We use a Box to get a stable address.
-    _write_wrapper: Box<WriteWrapper<'static>>,
-    encoder: FlacEnc<'static>,
 }
 
 #[allow(unsafe_code)]
@@ -47,34 +36,17 @@ impl FlacEncoder {
             bail!("FLAC compression level must be 0-8, got {level}");
         }
 
-        // Capture header with a temporary encoder
-        let mut header_buf = Cursor::new(Vec::new());
-        {
-            let mut ww = WriteWrapper(&mut header_buf);
-            let enc = FlacEnc::new()
-                .ok_or_else(|| anyhow::anyhow!("failed to create FLAC encoder"))?
-                .channels(format.channels() as u32)
-                .bits_per_sample(format.bits() as u32)
-                .sample_rate(format.rate())
-                .compression_level(level)
-                .init_write(&mut ww)
-                .map_err(|e| anyhow::anyhow!("FLAC encoder init failed: {e:?}"))?;
-            let _ = enc.finish();
-        }
-        let header = header_buf.into_inner();
-
-        // Create persistent encoder with stable heap allocations
+        // Heap-allocate output buffer (stable address for encoder lifetime)
         let output_buf = Box::into_raw(Box::new(Cursor::new(Vec::with_capacity(8192))));
 
-        // SAFETY: output_buf is heap-allocated and lives until we drop it in Drop.
-        // We transmute the lifetime to 'static because we guarantee the buffer
-        // outlives the encoder (both are dropped in our Drop impl).
+        // SAFETY: output_buf lives until Drop. Transmute lifetime to 'static.
         let ww: WriteWrapper<'static> = unsafe {
             let buf_ref: &'static mut Cursor<Vec<u8>> = &mut *output_buf;
             std::mem::transmute(WriteWrapper(buf_ref as &mut dyn Write))
         };
         let ww_box = Box::into_raw(Box::new(ww));
 
+        // Init encoder — this writes the FLAC header to output_buf
         let enc = FlacEnc::new()
             .ok_or_else(|| anyhow::anyhow!("failed to create FLAC encoder"))?
             .channels(format.channels() as u32)
@@ -82,13 +54,15 @@ impl FlacEncoder {
             .sample_rate(format.rate())
             .compression_level(level);
 
-        // SAFETY: ww_box is heap-allocated and lives until Drop
         let enc = unsafe {
             enc.init_write(&mut *ww_box)
                 .map_err(|e| anyhow::anyhow!("FLAC encoder init failed: {e:?}"))?
         };
 
-        // Clear the header that was written during init
+        // Capture header from THIS encoder instance
+        let header = unsafe { (*output_buf).get_ref().clone() };
+
+        // Clear buffer — subsequent process() output goes to encode() return
         unsafe {
             (*output_buf).get_mut().clear();
             (*output_buf).set_position(0);
@@ -149,8 +123,6 @@ impl Encoder for FlacEncoder {
         }
         let channel_refs: Vec<&[i32]> = channel_bufs.iter().map(|v| v.as_slice()).collect();
 
-        // Clear output buffer, encode, drain
-        // SAFETY: we own output_buf and encoder, and they're valid
         unsafe {
             (*self.output_buf).get_mut().clear();
             (*self.output_buf).set_position(0);
@@ -171,13 +143,10 @@ impl Encoder for FlacEncoder {
 impl Drop for FlacEncoder {
     fn drop(&mut self) {
         unsafe {
-            // Drop encoder first (it references output_buf)
             if !self.encoder.is_null() {
                 let state = Box::from_raw(self.encoder);
                 let _ = state.encoder.finish();
-                // _write_wrapper dropped here
             }
-            // Then drop the buffer
             if !self.output_buf.is_null() {
                 let _ = Box::from_raw(self.output_buf);
             }
@@ -185,7 +154,6 @@ impl Drop for FlacEncoder {
     }
 }
 
-// SAFETY: FlacEncoder is only used on the dedicated encode thread
 #[allow(unsafe_code)]
 unsafe impl Send for FlacEncoder {}
 
@@ -205,34 +173,25 @@ mod tests {
     fn encode_multiple_chunks() {
         let fmt = SampleFormat::new(48000, 16, 2);
         let mut enc = FlacEncoder::new(fmt, "").unwrap();
-
-        // Encode 3 chunks — persistent encoder should handle all
         for i in 0..3 {
             let pcm = vec![((i * 10) & 0xFF) as u8; 960 * 4];
             let result = enc.encode(&pcm).unwrap();
-            // May be empty if libflac hasn't flushed a frame yet
-            // (FLAC frames are 1152+ samples at compression level 2)
             assert!(
                 result.data.is_empty() || result.data[0] == 0xFF,
-                "chunk {i}: unexpected data start: {:02X?}",
-                &result.data[..2.min(result.data.len())]
+                "chunk {i}: unexpected data"
             );
         }
     }
 
     #[test]
-    fn encode_large_chunk_produces_output() {
+    fn encode_produces_output() {
         let fmt = SampleFormat::new(48000, 16, 2);
         let mut enc = FlacEncoder::new(fmt, "").unwrap();
-
-        // Feed enough data for libflac to produce frames
-        // Block size at level 0-2 is 1152, but libflac may buffer more
-        let mut total_output = 0;
+        let mut total = 0;
         for _ in 0..10 {
             let pcm = vec![0u8; 1152 * 4];
-            let result = enc.encode(&pcm).unwrap();
-            total_output += result.data.len();
+            total += enc.encode(&pcm).unwrap().data.len();
         }
-        assert!(total_output > 0, "expected FLAC output after 10 chunks");
+        assert!(total > 0, "expected FLAC output after 10 chunks");
     }
 }

@@ -320,6 +320,7 @@ impl Controller {
             Arc::clone(&stream),
             Arc::clone(&self.time_provider),
             self.sample_format,
+            &self.settings.player.pcm_device.name,
         ));
 
         #[cfg(all(feature = "pulse", not(feature = "coreaudio"), not(feature = "alsa")))]
@@ -327,6 +328,7 @@ impl Controller {
             Arc::clone(&stream),
             Arc::clone(&self.time_provider),
             self.sample_format,
+            None,
         ));
 
         #[cfg(not(any(feature = "coreaudio", feature = "alsa", feature = "pulse")))]

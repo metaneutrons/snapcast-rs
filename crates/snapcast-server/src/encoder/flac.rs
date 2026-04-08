@@ -18,17 +18,21 @@ pub struct FlacEncoder {
 impl FlacEncoder {
     /// Create a new FLAC encoder. Options: not yet used.
     pub fn new(format: SampleFormat, _options: &str) -> Result<Self> {
-        // Build header by encoding an empty stream
+        // Build FLAC header by encoding one silent frame
+        let frame_bytes = format.frame_size() as usize;
+        let silent = vec![0u8; frame_bytes * 64]; // 64 silent frames
+
         let mut header_buf = Cursor::new(Vec::new());
-        let writer = FlacByteWriter::endian(
+        let mut writer = FlacByteWriter::endian(
             &mut header_buf,
             LittleEndian,
             Options::default(),
             format.rate(),
             format.bits() as u32,
             format.channels() as u8,
-            None,
+            Some(silent.len() as u64),
         )?;
+        std::io::Write::write_all(&mut writer, &silent)?;
         writer.finalize()?;
         let header = header_buf.into_inner();
 

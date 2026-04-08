@@ -46,7 +46,7 @@ impl AlsaPlayer {
 
     pub fn pcm_list() -> Result<Vec<PcmDevice>> {
         let mut devices = Vec::new();
-        let hints = alsa::device_name::HintIter::new(None, "pcm")?;
+        let hints = alsa::device_name::HintIter::new(None, c"pcm")?;
         for (idx, hint) in hints.enumerate() {
             let name = hint.name.unwrap_or_default();
             let desc = hint.desc.unwrap_or_default();

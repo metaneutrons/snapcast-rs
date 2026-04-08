@@ -1303,6 +1303,7 @@ dependencies = [
  "coreaudio-rs",
  "futures-util",
  "hostname",
+ "libc",
  "libpulse-binding",
  "libpulse-simple-binding",
  "mac_address",

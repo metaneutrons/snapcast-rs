@@ -316,7 +316,7 @@ impl Controller {
         ));
 
         #[cfg(not(feature = "coreaudio"))]
-        bail!("no audio backend available");
+        let mut player: Box<dyn Player> = bail!("no audio backend available");
 
         if let Some(ref ss) = self.server_settings {
             player.set_volume(Volume {

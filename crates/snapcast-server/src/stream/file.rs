@@ -8,7 +8,7 @@ use tokio::task::JoinHandle;
 
 use super::PcmChunk;
 use super::uri::StreamUri;
-use crate::time::now_usec;
+use crate::time::ChunkTimestamper;
 
 /// Start reading PCM from a file, looping on EOF.
 pub fn start(
@@ -22,7 +22,10 @@ pub fn start(
         (format.rate() as usize * format.frame_size() as usize * chunk_ms as usize) / 1000;
     let chunk_duration = std::time::Duration::from_millis(chunk_ms);
 
+    let chunk_frames = chunk_bytes / format.frame_size() as usize;
+
     Ok(tokio::spawn(async move {
+        let mut ts = ChunkTimestamper::new(format.rate());
         loop {
             match tokio::fs::File::open(&path).await {
                 Ok(mut file) => {
@@ -42,7 +45,7 @@ pub fn start(
                         match file.read_exact(&mut buf).await {
                             Ok(_) => {
                                 let chunk = PcmChunk {
-                                    timestamp_usec: now_usec(),
+                                    timestamp_usec: ts.next(chunk_frames as u32),
                                     data: buf.clone(),
                                 };
                                 if tx.send(chunk).await.is_err() {
@@ -57,6 +60,7 @@ pub fn start(
                     tracing::warn!(path, error = %e, "File not found, retrying");
                 }
             }
+            ts.reset();
             tokio::time::sleep(std::time::Duration::from_secs(1)).await;
         }
     }))

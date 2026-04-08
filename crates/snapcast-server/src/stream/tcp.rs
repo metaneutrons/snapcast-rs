@@ -9,7 +9,7 @@ use tokio::task::JoinHandle;
 
 use super::PcmChunk;
 use super::uri::StreamUri;
-use crate::time::now_usec;
+use crate::time::ChunkTimestamper;
 
 /// Start a TCP listener that reads PCM from connecting clients.
 pub fn start(
@@ -26,6 +26,7 @@ pub fn start(
     let addr = format!("{host}:{port}");
     let chunk_ms = 20;
     let chunk_bytes = (format.rate() as usize * format.frame_size() as usize * chunk_ms) / 1000;
+    let chunk_frames = chunk_bytes / format.frame_size() as usize;
 
     Ok(tokio::spawn(async move {
         let listener = match TcpListener::bind(&addr).await {
@@ -39,6 +40,7 @@ pub fn start(
             }
         };
 
+        let mut ts = ChunkTimestamper::new(format.rate());
         loop {
             match listener.accept().await {
                 Ok((mut stream, peer)) => {
@@ -48,7 +50,7 @@ pub fn start(
                         match stream.read_exact(&mut buf).await {
                             Ok(_) => {
                                 let chunk = PcmChunk {
-                                    timestamp_usec: now_usec(),
+                                    timestamp_usec: ts.next(chunk_frames as u32),
                                     data: buf.clone(),
                                 };
                                 if tx.send(chunk).await.is_err() {
@@ -61,6 +63,7 @@ pub fn start(
                             }
                         }
                     }
+                    ts.reset();
                 }
                 Err(e) => {
                     tracing::error!(error = %e, "TCP accept failed");

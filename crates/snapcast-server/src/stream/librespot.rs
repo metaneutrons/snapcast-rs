@@ -9,7 +9,7 @@ use tokio::task::JoinHandle;
 
 use super::PcmChunk;
 use super::uri::StreamUri;
-use crate::time::now_usec;
+use crate::time::ChunkTimestamper;
 
 /// Start librespot and read PCM from stdout, metadata from stderr.
 pub fn start(
@@ -52,8 +52,10 @@ pub fn start(
     }
 
     let chunk_bytes = (format.rate() as usize * format.frame_size() as usize * 20) / 1000;
+    let chunk_frames = chunk_bytes / format.frame_size() as usize;
 
     Ok(tokio::spawn(async move {
+        let mut ts = ChunkTimestamper::new(format.rate());
         loop {
             tracing::info!(args = ?args, "Starting librespot");
             let Ok(mut child) = Command::new("librespot")
@@ -86,7 +88,7 @@ pub fn start(
             let mut buf = vec![0u8; chunk_bytes];
             while reader.read_exact(&mut buf).await.is_ok() {
                 let chunk = PcmChunk {
-                    timestamp_usec: now_usec(),
+                    timestamp_usec: ts.next(chunk_frames as u32),
                     data: buf.clone(),
                 };
                 if tx.send(chunk).await.is_err() {
@@ -97,6 +99,7 @@ pub fn start(
 
             let _ = child.kill().await;
             tracing::info!("librespot exited, restarting");
+            ts.reset();
             tokio::time::sleep(std::time::Duration::from_secs(2)).await;
         }
     }))

@@ -3,9 +3,14 @@
 //! Must use the same clock as the client (`mach_continuous_time` on macOS,
 //! `CLOCK_MONOTONIC` on Linux) for time sync to work.
 
-/// Current monotonic time in microseconds since boot.
-#[allow(unsafe_code)]
+/// Current wall-clock time in microseconds since Unix epoch.
 pub fn now_usec() -> i64 {
+    monotonic_usec()
+}
+
+/// Monotonic microsecond clock (same as client).
+#[allow(unsafe_code)]
+fn monotonic_usec() -> i64 {
     #[cfg(target_os = "macos")]
     {
         unsafe extern "C" {
@@ -47,5 +52,38 @@ pub fn now_usec() -> i64 {
             .duration_since(UNIX_EPOCH)
             .unwrap_or_default()
             .as_micros() as i64
+    }
+}
+
+/// Generates evenly-spaced timestamps based on sample count.
+/// This matches the C++ server behavior: timestamps reflect when audio
+/// *should* be played, not when it was read from the source.
+pub struct ChunkTimestamper {
+    start_usec: i64,
+    samples_written: u64,
+    rate: u32,
+}
+
+impl ChunkTimestamper {
+    /// Create a new timestamper anchored at the current time.
+    pub fn new(rate: u32) -> Self {
+        Self {
+            start_usec: now_usec(),
+            samples_written: 0,
+            rate,
+        }
+    }
+
+    /// Get the timestamp for the next chunk of `frames` frames.
+    pub fn next(&mut self, frames: u32) -> i64 {
+        let ts = self.start_usec + (self.samples_written as i64 * 1_000_000) / self.rate as i64;
+        self.samples_written += frames as u64;
+        ts
+    }
+
+    /// Reset the timestamper (e.g. on stream restart).
+    pub fn reset(&mut self) {
+        self.start_usec = now_usec();
+        self.samples_written = 0;
     }
 }

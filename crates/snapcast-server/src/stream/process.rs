@@ -9,7 +9,7 @@ use tokio::task::JoinHandle;
 
 use super::PcmChunk;
 use super::uri::StreamUri;
-use crate::time::now_usec;
+use crate::time::ChunkTimestamper;
 
 /// Start a child process and read PCM from its stdout.
 pub fn start(
@@ -20,8 +20,10 @@ pub fn start(
     let path = uri.path.clone();
     let params = uri.param("params").unwrap_or("").to_string();
     let chunk_bytes = (format.rate() as usize * format.frame_size() as usize * 20) / 1000;
+    let chunk_frames = chunk_bytes / format.frame_size() as usize;
 
     Ok(tokio::spawn(async move {
+        let mut ts = ChunkTimestamper::new(format.rate());
         loop {
             tracing::info!(path, params, "Starting process stream");
             let args: Vec<&str> = if params.is_empty() {
@@ -49,7 +51,7 @@ pub fn start(
             let mut buf = vec![0u8; chunk_bytes];
             while stdout.read_exact(&mut buf).await.is_ok() {
                 let chunk = PcmChunk {
-                    timestamp_usec: now_usec(),
+                    timestamp_usec: ts.next(chunk_frames as u32),
                     data: buf.clone(),
                 };
                 if tx.send(chunk).await.is_err() {
@@ -60,6 +62,7 @@ pub fn start(
 
             let _ = child.kill().await;
             tracing::info!(path, "Process exited, restarting");
+            ts.reset();
             tokio::time::sleep(std::time::Duration::from_secs(1)).await;
         }
     }))

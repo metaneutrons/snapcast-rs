@@ -4,7 +4,7 @@ use std::sync::{Arc, Mutex};
 
 use anyhow::Result;
 use coreaudio::audio_unit::render_callback::{self, data};
-use coreaudio::audio_unit::{AudioUnit, IOType};
+use coreaudio::audio_unit::{AudioUnit, Element, IOType, Scope};
 use snapcast_proto::SampleFormat;
 
 use super::{Player, Volume, apply_volume};
@@ -40,6 +40,22 @@ impl Player for CoreAudioPlayer {
         let mut audio_unit = AudioUnit::new(IOType::DefaultOutput)?;
 
         let format = self.sample_format;
+
+        // Set the AudioUnit input format to match our stream's sample rate
+        let mut stream_format = audio_unit.output_stream_format()?;
+        tracing::info!(
+            default_rate = stream_format.sample_rate,
+            target_rate = format.rate(),
+            "CoreAudio configuring"
+        );
+        stream_format.sample_rate = format.rate() as f64;
+        // kAudioUnitProperty_StreamFormat = 8
+        audio_unit.set_property(
+            8,
+            Scope::Input,
+            Element::Output,
+            Some(&stream_format.to_asbd()),
+        )?;
         let stream = Arc::clone(&self.stream);
         let time_provider = Arc::clone(&self.time_provider);
         let volume = Arc::clone(&self.volume);

@@ -1,6 +1,7 @@
 //! Stream readers — async PCM audio sources.
 
 pub mod file;
+pub mod manager;
 pub mod pipe;
 pub mod process;
 pub mod tcp;

@@ -37,8 +37,8 @@ pub struct Controller {
     server_settings: Option<ServerSettings>,
     event_tx: mpsc::Sender<ClientEvent>,
     command_rx: mpsc::Receiver<ClientCommand>,
-    #[allow(dead_code)] // TODO: wire in step 1
     audio_tx: mpsc::Sender<crate::AudioFrame>,
+    audio_pump_handle: Option<tokio::task::JoinHandle<()>>,
 }
 
 impl Controller {
@@ -62,6 +62,7 @@ impl Controller {
             event_tx,
             command_rx,
             audio_tx,
+            audio_pump_handle: None,
         }
     }
 
@@ -319,6 +320,19 @@ impl Controller {
         }
         self.stream = Some(Arc::clone(&stream));
 
+        // Start audio pump — reads time-synced PCM from Stream, converts to f32, sends via channel
+        if let Some(handle) = self.audio_pump_handle.take() {
+            handle.abort();
+        }
+        let pump_stream = Arc::clone(&stream);
+        let pump_tp = Arc::clone(&self.time_provider);
+        let pump_tx = self.audio_tx.clone();
+        let pump_format = self.sample_format;
+        let pump_handle = tokio::task::spawn_blocking(move || {
+            audio_pump(pump_stream, pump_tp, pump_tx, pump_format);
+        });
+        self.audio_pump_handle = Some(pump_handle);
+
         #[cfg(feature = "coreaudio")]
         let mut player: Box<dyn Player> = Box::new(CoreAudioPlayer::new(
             stream,
@@ -382,6 +396,9 @@ impl Controller {
     }
 
     fn cleanup(&mut self) {
+        if let Some(handle) = self.audio_pump_handle.take() {
+            handle.abort();
+        }
         if let Some(ref mut p) = self.player {
             let _ = p.stop();
         }
@@ -399,6 +416,77 @@ impl Controller {
     pub fn shutdown(&mut self) {
         tracing::info!("Shutting down");
         self.cleanup();
+    }
+}
+
+/// Timer-driven audio pump: reads time-synced PCM from Stream, converts to f32, sends via channel.
+fn audio_pump(
+    stream: Arc<Mutex<Stream>>,
+    time_provider: Arc<Mutex<TimeProvider>>,
+    tx: mpsc::Sender<crate::AudioFrame>,
+    format: SampleFormat,
+) {
+    let frame_size = format.frame_size() as usize;
+    let channels = format.channels() as usize;
+    let sample_size = format.sample_size() as usize;
+    // ~5ms chunks (matching CoreAudio callback size)
+    let num_frames = (format.rate() as usize) / 200;
+    let buf_bytes = num_frames * frame_size;
+    let chunk_duration =
+        std::time::Duration::from_micros((num_frames as u64 * 1_000_000) / format.rate() as u64);
+    // DAC delay estimate for the audio pump (no real device, so use buffer duration)
+    let dac_usec = chunk_duration.as_micros() as i64;
+
+    let mut pcm_buf = vec![0u8; buf_bytes];
+
+    loop {
+        let start = std::time::Instant::now();
+
+        let server_now = {
+            let tp = time_provider.lock().unwrap();
+            crate::connection::now_usec() + tp.diff_to_server_usec()
+        };
+
+        {
+            let mut s = stream.lock().unwrap();
+            s.get_player_chunk_or_silence(server_now, dac_usec, &mut pcm_buf, num_frames as u32);
+        }
+
+        // Convert PCM bytes to interleaved f32
+        let total_samples = num_frames * channels;
+        let mut samples = Vec::with_capacity(total_samples);
+        match sample_size {
+            2 => {
+                for chunk in pcm_buf.chunks_exact(2) {
+                    let s = i16::from_le_bytes([chunk[0], chunk[1]]);
+                    samples.push(s as f32 / i16::MAX as f32);
+                }
+            }
+            4 => {
+                for chunk in pcm_buf.chunks_exact(4) {
+                    let s = i32::from_le_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]);
+                    samples.push(s as f32 / i32::MAX as f32);
+                }
+            }
+            _ => {}
+        }
+
+        let frame = crate::AudioFrame {
+            samples,
+            sample_rate: format.rate(),
+            channels: format.channels(),
+            timestamp_usec: server_now,
+        };
+
+        if tx.blocking_send(frame).is_err() {
+            break; // receiver dropped
+        }
+
+        // Sleep for remaining chunk duration
+        let elapsed = start.elapsed();
+        if elapsed < chunk_duration {
+            std::thread::sleep(chunk_duration - elapsed);
+        }
     }
 }
 

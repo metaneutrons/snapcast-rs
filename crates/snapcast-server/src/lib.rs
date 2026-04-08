@@ -60,6 +60,8 @@
 
 use tokio::sync::mpsc;
 
+pub mod encoder;
+
 /// Events emitted by the server to the consumer.
 #[derive(Debug, Clone)]
 pub enum ServerEvent {

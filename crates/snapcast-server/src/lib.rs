@@ -255,9 +255,9 @@ impl SnapServer {
         // Start control server (JSON-RPC over TCP)
         let shared_state = Arc::new(tokio::sync::Mutex::new(state::ServerState::default()));
         let (notify_tx, _) = tokio::sync::broadcast::channel::<serde_json::Value>(256);
-        let (stream_ctrl_tx, _stream_ctrl_rx) =
+        let (stream_ctrl_tx, mut stream_ctrl_rx) =
             tokio::sync::mpsc::channel::<jsonrpc::StreamControlMsg>(64);
-        let (settings_push_tx, _settings_push_rx) =
+        let (settings_push_tx, mut settings_push_rx) =
             tokio::sync::mpsc::channel::<jsonrpc::ClientSettingsUpdate>(64);
         let auth_cfg = Arc::new(auth::AuthConfig::default());
         let control_state = Arc::clone(&shared_state);
@@ -267,35 +267,62 @@ impl SnapServer {
         let control_auth = Arc::clone(&auth_cfg);
         let control_stream_tx = stream_ctrl_tx.clone();
         let control_settings_tx = settings_push_tx.clone();
+        let control_buffer_ms = self.config.buffer_ms as i32;
 
         let control_handle = tokio::spawn(async move {
-            if let Err(e) = control::run_tcp(
-                control_port,
-                control_state,
-                control_event_tx,
-                control_notify_tx,
-                control_auth,
-                control_stream_tx,
-                control_settings_tx,
-            )
+            if let Err(e) = control::run_tcp(control::ControlConfig {
+                port: control_port,
+                state: control_state,
+                event_tx: control_event_tx,
+                notify_tx: control_notify_tx,
+                auth_config: control_auth,
+                stream_control_tx: control_stream_tx,
+                settings_tx: control_settings_tx,
+                buffer_ms: control_buffer_ms,
+            })
             .await
             {
                 tracing::error!(error = %e, "Control server error");
             }
         });
 
-        // Main loop: handle commands + forward extension JSON-RPC responses
+        // Main loop: handle commands, settings pushes, stream control
         loop {
-            match command_rx.recv().await {
-                Some(ServerCommand::Stop) | None => {
-                    tracing::info!("Server stopping");
-                    session_handle.abort();
-                    control_handle.abort();
-                    return Ok(());
+            tokio::select! {
+                cmd = command_rx.recv() => {
+                    match cmd {
+                        Some(ServerCommand::Stop) | None => {
+                            tracing::info!("Server stopping");
+                            session_handle.abort();
+                            control_handle.abort();
+                            return Ok(());
+                        }
+                        Some(ServerCommand::SendJsonRpc { message, .. }) => {
+                            let _ = notify_tx.send(message);
+                        }
+                    }
                 }
-                Some(ServerCommand::SendJsonRpc { message, .. }) => {
-                    // Broadcast JSON-RPC response/notification to control clients
-                    let _ = notify_tx.send(message);
+                update = settings_push_rx.recv() => {
+                    if let Some(update) = update {
+                        tracing::debug!(
+                            client_id = %update.client_id,
+                            volume = update.volume,
+                            latency = update.latency,
+                            "Pushing settings to streaming client"
+                        );
+                        // TODO: route to the correct client session via session server
+                        // For now, the session server needs a channel to receive these
+                    }
+                }
+                ctrl = stream_ctrl_rx.recv() => {
+                    if let Some(ctrl) = ctrl {
+                        tracing::debug!(
+                            stream_id = %ctrl.stream_id,
+                            command = %ctrl.command,
+                            "Stream control command"
+                        );
+                        // TODO: route to the correct stream reader
+                    }
                 }
             }
         }

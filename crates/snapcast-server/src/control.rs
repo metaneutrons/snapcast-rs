@@ -13,30 +13,43 @@ use crate::auth::AuthConfig;
 use crate::jsonrpc::{self, ClientSettingsUpdate, RpcResult, StreamControlMsg};
 use crate::state::ServerState;
 
+/// Configuration for the control server.
+pub struct ControlConfig {
+    /// TCP port.
+    pub port: u16,
+    /// Shared server state.
+    pub state: Arc<Mutex<ServerState>>,
+    /// Event sender for extension point.
+    pub event_tx: mpsc::Sender<ServerEvent>,
+    /// Notification broadcast sender.
+    pub notify_tx: broadcast::Sender<Value>,
+    /// Auth configuration.
+    pub auth_config: Arc<AuthConfig>,
+    /// Stream control sender.
+    pub stream_control_tx: mpsc::Sender<StreamControlMsg>,
+    /// Client settings push sender.
+    pub settings_tx: mpsc::Sender<ClientSettingsUpdate>,
+    /// Server buffer size in ms.
+    pub buffer_ms: i32,
+}
+
 /// Runs the JSON-RPC control server on a TCP port.
-pub async fn run_tcp(
-    port: u16,
-    state: Arc<Mutex<ServerState>>,
-    event_tx: mpsc::Sender<ServerEvent>,
-    notify_tx: broadcast::Sender<Value>,
-    auth_config: Arc<AuthConfig>,
-    stream_control_tx: mpsc::Sender<StreamControlMsg>,
-    settings_tx: mpsc::Sender<ClientSettingsUpdate>,
-) -> Result<()> {
-    let listener = TcpListener::bind(format!("0.0.0.0:{port}")).await?;
-    tracing::info!(port, "Control server (TCP) listening");
+pub async fn run_tcp(cfg: ControlConfig) -> Result<()> {
+    let listener = TcpListener::bind(format!("0.0.0.0:{}", cfg.port)).await?;
+    tracing::info!(port = cfg.port, "Control server (TCP) listening");
 
     loop {
         let (stream, peer) = listener.accept().await?;
         tracing::debug!(%peer, "Control client connected");
 
-        let state = Arc::clone(&state);
-        let event_tx = event_tx.clone();
-        let notify_tx = notify_tx.clone();
-        let mut notify_rx = notify_tx.subscribe();
-        let auth_config = Arc::clone(&auth_config);
-        let stream_control_tx = stream_control_tx.clone();
-        let settings_tx = settings_tx.clone();
+        let state = Arc::clone(&cfg.state);
+        let event_tx = cfg.event_tx.clone();
+        let notify_tx = cfg.notify_tx.clone();
+        let mut notify_rx = cfg.notify_tx.subscribe();
+        let auth_config = Arc::clone(&cfg.auth_config);
+        let stream_control_tx = cfg.stream_control_tx.clone();
+        let settings_tx = cfg.settings_tx.clone();
+        let buffer_ms = cfg.buffer_ms;
 
         tokio::spawn(async move {
             let (reader, mut writer) = stream.into_split();
@@ -58,7 +71,7 @@ pub async fn run_tcp(
                             continue;
                         };
 
-                        match jsonrpc::handle_request(&request, &state, &auth_config, &stream_control_tx, &settings_tx).await {
+                        match jsonrpc::handle_request(&request, &state, &auth_config, &stream_control_tx, &settings_tx, buffer_ms).await {
                             RpcResult::Response { response, notification } => {
                                 let _ = send_json(&mut writer, &response).await;
                                 if let Some(n) = notification {

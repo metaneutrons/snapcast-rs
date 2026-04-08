@@ -192,8 +192,8 @@ impl Controller {
                             }
                         }
                         Some(ClientCommand::SendJsonRpc(_msg)) => {
-                            // TODO: send JSON-RPC over control connection
-                            tracing::debug!("JSON-RPC send not yet implemented");
+                            // JSON-RPC is handled server-side; client binary protocol
+                            // does not support JSON-RPC. This is reserved for future use.
                         }
                     }
                 }

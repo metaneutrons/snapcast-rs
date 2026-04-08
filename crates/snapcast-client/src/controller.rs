@@ -37,6 +37,8 @@ pub struct Controller {
     server_settings: Option<ServerSettings>,
     event_tx: mpsc::Sender<ClientEvent>,
     command_rx: mpsc::Receiver<ClientCommand>,
+    #[allow(dead_code)] // TODO: wire in step 1
+    audio_tx: mpsc::Sender<crate::AudioFrame>,
 }
 
 impl Controller {
@@ -45,6 +47,8 @@ impl Controller {
         settings: ClientSettings,
         event_tx: mpsc::Sender<ClientEvent>,
         command_rx: mpsc::Receiver<ClientCommand>,
+        #[allow(dead_code)] // TODO: wire in step 1
+        audio_tx: mpsc::Sender<crate::AudioFrame>,
     ) -> Self {
         Self {
             connection: TcpConnection::new(&settings.server.host, settings.server.port),
@@ -57,6 +61,7 @@ impl Controller {
             server_settings: None,
             event_tx,
             command_rx,
+            audio_tx,
         }
     }
 

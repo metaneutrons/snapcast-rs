@@ -34,7 +34,7 @@ fn main() -> anyhow::Result<()> {
     let rt = tokio::runtime::Runtime::new()?;
 
     rt.block_on(async {
-        let (mut client, mut events) = SnapClient::new(config);
+        let (mut client, mut events, _audio_rx) = SnapClient::new(config);
         let cmd = client.command_sender();
 
         // Log events

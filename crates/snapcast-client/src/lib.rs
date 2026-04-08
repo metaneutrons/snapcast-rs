@@ -12,7 +12,7 @@
 //!
 //! # async fn example() -> anyhow::Result<()> {
 //! let config = ClientConfig::default();
-//! let (mut client, mut events) = SnapClient::new(config);
+//! let (mut client, mut events, mut audio_rx) = SnapClient::new(config);
 //! let cmd = client.command_sender();
 //!
 //! // React to events in a separate task
@@ -58,6 +58,19 @@ use tokio::sync::mpsc;
 
 pub use config::{ClientSettings, PlayerSettings, ServerSettings};
 pub use snapcast_proto::SampleFormat;
+
+/// Interleaved f32 audio frame produced by the client library.
+#[derive(Debug, Clone)]
+pub struct AudioFrame {
+    /// Interleaved f32 samples (channel-interleaved).
+    pub samples: Vec<f32>,
+    /// Sample rate in Hz.
+    pub sample_rate: u32,
+    /// Number of channels.
+    pub channels: u16,
+    /// Server timestamp in microseconds (for sync).
+    pub timestamp_usec: i64,
+}
 
 /// Events emitted by the client to the consumer.
 #[derive(Debug, Clone)]
@@ -165,20 +178,29 @@ pub struct SnapClient {
     event_tx: mpsc::Sender<ClientEvent>,
     command_tx: mpsc::Sender<ClientCommand>,
     command_rx: Option<mpsc::Receiver<ClientCommand>>,
+    audio_tx: Option<mpsc::Sender<AudioFrame>>,
 }
 
 impl SnapClient {
-    /// Create a new client. Returns the client and a receiver for events.
-    pub fn new(config: ClientConfig) -> (Self, mpsc::Receiver<ClientEvent>) {
+    /// Create a new client. Returns the client, event receiver, and audio output receiver.
+    pub fn new(
+        config: ClientConfig,
+    ) -> (
+        Self,
+        mpsc::Receiver<ClientEvent>,
+        mpsc::Receiver<AudioFrame>,
+    ) {
         let (event_tx, event_rx) = mpsc::channel(256);
         let (command_tx, command_rx) = mpsc::channel(64);
+        let (audio_tx, audio_rx) = mpsc::channel(256);
         let client = Self {
             config,
             event_tx,
             command_tx,
             command_rx: Some(command_rx),
+            audio_tx: Some(audio_tx),
         };
-        (client, event_rx)
+        (client, event_rx, audio_rx)
     }
 
     /// Get a cloneable command sender.
@@ -203,7 +225,13 @@ impl SnapClient {
             daemon: None,
         };
 
-        let mut ctrl = controller::Controller::new(settings, self.event_tx.clone(), command_rx);
+        let audio_tx = self
+            .audio_tx
+            .take()
+            .ok_or_else(|| anyhow::anyhow!("run() already called"))?;
+
+        let mut ctrl =
+            controller::Controller::new(settings, self.event_tx.clone(), command_rx, audio_tx);
         ctrl.run().await
     }
 }

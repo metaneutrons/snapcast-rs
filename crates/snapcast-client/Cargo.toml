@@ -1,0 +1,44 @@
+[package]
+name = "snapcast-client"
+description = "Snapcast client library — embeddable synchronized multiroom audio"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[dependencies]
+snapcast-proto = { workspace = true }
+tokio = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+tracing = { workspace = true }
+anyhow = { workspace = true }
+hostname = { workspace = true }
+mac_address = { workspace = true }
+symphonia = { workspace = true }
+audiopus = { workspace = true }
+
+# Optional
+mdns-sd = { workspace = true, optional = true }
+tokio-tungstenite = { workspace = true, optional = true }
+tokio-rustls = { workspace = true, optional = true }
+rustls = { workspace = true, optional = true }
+rustls-native-certs = { workspace = true, optional = true }
+futures-util = { workspace = true, optional = true }
+rubato = { workspace = true, optional = true }
+coreaudio-rs = { workspace = true, optional = true }
+alsa = { workspace = true, optional = true }
+libpulse-binding = { workspace = true, optional = true }
+libpulse-simple-binding = { workspace = true, optional = true }
+
+[features]
+default = ["coreaudio", "mdns"]
+coreaudio = ["dep:coreaudio-rs"]
+alsa = ["dep:alsa"]
+pulse = ["dep:libpulse-binding", "dep:libpulse-simple-binding"]
+mdns = ["dep:mdns-sd"]
+websocket = ["dep:tokio-tungstenite", "dep:futures-util"]
+tls = ["websocket", "dep:tokio-rustls", "dep:rustls", "dep:rustls-native-certs"]
+resampler = ["dep:rubato"]

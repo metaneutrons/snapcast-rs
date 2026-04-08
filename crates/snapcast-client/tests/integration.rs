@@ -6,11 +6,11 @@
 use std::process::{Child, Command};
 use std::time::Duration;
 
+use snapcast_client::connection::TcpConnection;
 use snapcast_proto::MessageType;
 use snapcast_proto::message::factory::MessagePayload;
 use snapcast_proto::message::hello::Hello;
 use snapcast_proto::message::time::Time;
-use snapclient_rs::connection::TcpConnection;
 
 const SNAPSERVER_PORT: u16 = 11704;
 

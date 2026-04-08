@@ -5,7 +5,7 @@ use std::path::PathBuf;
 use anyhow::{Context, Result, bail};
 use clap::Parser;
 
-use crate::config::{self, Auth, ClientSettings, MixerMode, ServerSettings};
+use snapcast_client::config::{self, Auth, ClientSettings, MixerMode, ServerSettings};
 
 /// Snapcast client — synchronized multiroom audio player.
 #[derive(Parser, Debug)]
@@ -91,11 +91,7 @@ pub struct Cli {
 impl Cli {
     /// Parse CLI args and build a [`ClientSettings`].
     pub fn into_settings(self) -> Result<ClientSettings> {
-        let default_url = if cfg!(feature = "mdns") {
-            "tcp://_snapcast._tcp"
-        } else {
-            "tcp://localhost:1704"
-        };
+        let default_url = "tcp://_snapcast._tcp";
         let url = self.url.as_deref().unwrap_or(default_url);
         let mut server = parse_url(url)?;
 
@@ -129,7 +125,7 @@ impl Cli {
             Some(ref sf) => sf
                 .parse()
                 .with_context(|| format!("invalid sample format: {sf}"))?,
-            None => snapcast_proto::SampleFormat::default(),
+            None => snapcast_client::SampleFormat::default(),
         };
 
         // Mixer

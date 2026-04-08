@@ -13,7 +13,7 @@ name = "snapclient-rs"
 path = "src/main.rs"
 
 [dependencies]
-snapcast-proto = { workspace = true }
+snapcast-client = { workspace = true }
 tokio = { workspace = true }
 clap = { workspace = true }
 tracing = { workspace = true }
@@ -21,29 +21,4 @@ tracing-subscriber = { workspace = true }
 tracing-appender = { workspace = true }
 anyhow = { workspace = true }
 base64 = { workspace = true }
-hostname = { workspace = true }
-mac_address = { workspace = true }
 libc = { workspace = true }
-mdns-sd = { workspace = true, optional = true }
-tokio-tungstenite = { workspace = true, optional = true }
-tokio-rustls = { workspace = true, optional = true }
-rustls = { workspace = true, optional = true }
-rustls-native-certs = { workspace = true, optional = true }
-futures-util = { workspace = true, optional = true }
-symphonia = { workspace = true }
-audiopus = { workspace = true }
-rubato = { workspace = true, optional = true }
-coreaudio-rs = { workspace = true, optional = true }
-alsa = { workspace = true, optional = true }
-libpulse-binding = { workspace = true, optional = true }
-libpulse-simple-binding = { workspace = true, optional = true }
-
-[features]
-default = ["coreaudio", "mdns"]
-coreaudio = ["dep:coreaudio-rs"]
-alsa = ["dep:alsa"]
-pulse = ["dep:libpulse-binding", "dep:libpulse-simple-binding"]
-mdns = ["dep:mdns-sd"]
-websocket = ["dep:tokio-tungstenite", "dep:futures-util"]
-tls = ["websocket", "dep:tokio-rustls", "dep:rustls", "dep:rustls-native-certs"]
-resampler = ["dep:rubato"]

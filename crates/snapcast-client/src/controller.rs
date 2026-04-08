@@ -10,6 +10,7 @@ use snapcast_proto::message::hello::{Auth, Hello};
 use snapcast_proto::message::server_settings::ServerSettings;
 use snapcast_proto::message::time::Time;
 use snapcast_proto::{MessageType, SampleFormat};
+use tokio::sync::mpsc;
 
 use crate::config::ClientSettings;
 use crate::connection::TcpConnection;
@@ -17,6 +18,7 @@ use crate::decoder::{self, Decoder, PcmDecoder};
 use crate::player::{Player, Volume};
 use crate::stream::{PcmChunk, Stream};
 use crate::time_provider::TimeProvider;
+use crate::{ClientCommand, ClientEvent};
 
 #[cfg(feature = "coreaudio")]
 use crate::player::coreaudio::CoreAudioPlayer;
@@ -32,10 +34,16 @@ pub struct Controller {
     player: Option<Box<dyn Player>>,
     sample_format: SampleFormat,
     server_settings: Option<ServerSettings>,
+    event_tx: mpsc::Sender<ClientEvent>,
+    command_rx: mpsc::Receiver<ClientCommand>,
 }
 
 impl Controller {
-    pub fn new(settings: ClientSettings) -> Self {
+    pub fn new(
+        settings: ClientSettings,
+        event_tx: mpsc::Sender<ClientEvent>,
+        command_rx: mpsc::Receiver<ClientCommand>,
+    ) -> Self {
         Self {
             connection: TcpConnection::new(&settings.server.host, settings.server.port),
             settings,
@@ -45,6 +53,8 @@ impl Controller {
             player: None,
             sample_format: SampleFormat::default(),
             server_settings: None,
+            event_tx,
+            command_rx,
         }
     }
 
@@ -52,7 +62,12 @@ impl Controller {
         loop {
             match self.session().await {
                 Ok(()) => tracing::info!("Session ended"),
-                Err(e) => tracing::error!("Session error: {e}"),
+                Err(e) => {
+                    tracing::error!("Session error: {e}");
+                    self.emit(ClientEvent::Disconnected {
+                        reason: e.to_string(),
+                    });
+                }
             }
             self.cleanup();
             tokio::time::sleep(Duration::from_secs(1)).await;
@@ -81,6 +96,10 @@ impl Controller {
             port = self.settings.server.port,
             "Connected"
         );
+        self.emit(ClientEvent::Connected {
+            host: self.settings.server.host.clone(),
+            port: self.settings.server.port,
+        });
 
         self.send_hello().await?;
         self.receive_loop().await
@@ -116,16 +135,15 @@ impl Controller {
             .send(MessageType::Hello, &MessagePayload::Hello(hello))
             .await?;
 
-        // Read response — may get ServerSettings or Error
         let response = self.recv_timeout(Duration::from_secs(5)).await?;
         match response.payload {
             MessagePayload::ServerSettings(ss) => {
-                tracing::info!(
-                    buffer_ms = ss.buffer_ms,
-                    volume = ss.volume,
-                    muted = ss.muted,
-                    "ServerSettings received"
-                );
+                self.emit(ClientEvent::ServerSettings {
+                    buffer_ms: ss.buffer_ms,
+                    latency: ss.latency,
+                    volume: ss.volume,
+                    muted: ss.muted,
+                });
                 self.server_settings = Some(ss);
                 Ok(())
             }
@@ -141,7 +159,6 @@ impl Controller {
         let mut quick_syncs_remaining: u32 = 50;
         let mut quick_sync_timer = tokio::time::interval(Duration::from_millis(100));
 
-        // Send first time sync immediately
         self.connection
             .send(MessageType::Time, &MessagePayload::Time(Time::new()))
             .await
@@ -153,6 +170,26 @@ impl Controller {
                     let msg = msg?;
                     self.handle_message(msg)?;
                 }
+                cmd = self.command_rx.recv() => {
+                    match cmd {
+                        Some(ClientCommand::Stop) | None => {
+                            tracing::info!("Stop command received");
+                            return Ok(());
+                        }
+                        Some(ClientCommand::SetVolume { volume, muted }) => {
+                            if let Some(ref mut p) = self.player {
+                                p.set_volume(Volume {
+                                    volume: volume as f64 / 100.0,
+                                    muted,
+                                });
+                            }
+                        }
+                        Some(ClientCommand::SendJsonRpc(_msg)) => {
+                            // TODO: send JSON-RPC over control connection
+                            tracing::debug!("JSON-RPC send not yet implemented");
+                        }
+                    }
+                }
                 _ = quick_sync_timer.tick(), if quick_syncs_remaining > 0 => {
                     quick_syncs_remaining -= 1;
                     self.connection
@@ -161,7 +198,9 @@ impl Controller {
                         .ok();
                     if quick_syncs_remaining == 0 {
                         let diff = self.time_provider.lock().unwrap().diff_to_server_usec();
-                        tracing::info!(diff_ms = diff as f64 / 1000.0, "Time sync complete");
+                        let diff_ms = diff as f64 / 1000.0;
+                        tracing::info!(diff_ms, "Time sync complete");
+                        self.emit(ClientEvent::TimeSyncComplete { diff_ms });
                     }
                 }
                 _ = sync_timer.tick(), if quick_syncs_remaining == 0 => {
@@ -188,11 +227,16 @@ impl Controller {
                 }
             }
             MessagePayload::ServerSettings(ss) => {
-                tracing::info!(
-                    volume = ss.volume,
-                    muted = ss.muted,
-                    "ServerSettings update"
-                );
+                self.emit(ClientEvent::ServerSettings {
+                    buffer_ms: ss.buffer_ms,
+                    latency: ss.latency,
+                    volume: ss.volume,
+                    muted: ss.muted,
+                });
+                self.emit(ClientEvent::VolumeChanged {
+                    volume: ss.volume,
+                    muted: ss.muted,
+                });
                 self.apply_server_settings(&ss);
                 self.server_settings = Some(ss);
             }
@@ -245,6 +289,11 @@ impl Controller {
         self.sample_format = dec.set_header(header)?;
         tracing::info!(codec = %header.codec, format = %self.sample_format, "Codec initialized");
 
+        self.emit(ClientEvent::StreamStarted {
+            codec: header.codec.clone(),
+            format: self.sample_format,
+        });
+
         let stream = Arc::new(Mutex::new(Stream::new(self.sample_format)));
         if let Some(ref ss) = self.server_settings {
             let buf_ms = (ss.buffer_ms - ss.latency - self.settings.player.latency).max(0);
@@ -289,6 +338,10 @@ impl Controller {
         self.stream = None;
         self.decoder = None;
         self.connection.disconnect();
+    }
+
+    fn emit(&self, event: ClientEvent) {
+        let _ = self.event_tx.try_send(event);
     }
 
     /// Graceful shutdown — stops player and closes connection.

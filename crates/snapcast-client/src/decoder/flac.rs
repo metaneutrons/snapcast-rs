@@ -78,6 +78,11 @@ impl FlacDecoder {
 
 impl Decoder for FlacDecoder {
     fn set_header(&mut self, header: &CodecHeader) -> Result<SampleFormat> {
+        tracing::trace!(
+            codec = "flac",
+            payload_len = header.payload.len(),
+            "set_header"
+        );
         let (sf, params) = parse_streaminfo(&header.payload)?;
         *self = Self::new_from_params(sf, &params)?;
         Ok(self.sample_format)
@@ -88,13 +93,20 @@ impl Decoder for FlacDecoder {
             return Ok(false);
         }
 
+        tracing::trace!(
+            codec = "flac",
+            input_bytes = data.len(),
+            packet_id = self.packet_id,
+            "decode"
+        );
+
         let packet = Packet::new_from_slice(0, self.packet_id, 0, data);
         self.packet_id += 1;
 
         let decoded = match self.decoder.decode(&packet) {
             Ok(buf) => buf,
             Err(e) => {
-                tracing::error!("FLAC decode error: {e}");
+                tracing::warn!(codec = "flac", error = %e, "decode failed");
                 return Ok(false);
             }
         };

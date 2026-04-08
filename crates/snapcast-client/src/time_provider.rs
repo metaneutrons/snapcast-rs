@@ -41,6 +41,7 @@ impl TimeProvider {
     pub fn set_diff(&mut self, c2s: &Timeval, s2c: &Timeval) {
         let diff_ms = (f64::from(c2s.sec) / 2.0 - f64::from(s2c.sec) / 2.0) * 1000.0
             + (f64::from(c2s.usec) / 2.0 - f64::from(s2c.usec) / 2.0) / 1000.0;
+        tracing::trace!(diff_ms, "set_diff");
         self.set_diff_ms(diff_ms);
     }
 

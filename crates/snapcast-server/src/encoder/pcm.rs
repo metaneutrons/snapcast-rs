@@ -36,6 +36,7 @@ impl Encoder for PcmEncoder {
             0
         };
         let duration_ms = frames as f64 * 1000.0 / self.format.rate() as f64;
+        tracing::trace!(codec = "pcm", input_bytes = pcm.len(), frames, "encode");
         Ok(EncodedChunk {
             data: pcm.to_vec(),
             duration_ms,

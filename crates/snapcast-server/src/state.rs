@@ -96,10 +96,12 @@ pub struct ServerState {
 impl ServerState {
     /// Load state from a JSON file, or return default if not found.
     pub fn load(path: &Path) -> Self {
-        std::fs::read_to_string(path)
+        let state: Self = std::fs::read_to_string(path)
             .ok()
             .and_then(|s| serde_json::from_str(&s).ok())
-            .unwrap_or_default()
+            .unwrap_or_default();
+        tracing::debug!(path = %path.display(), clients = state.clients.len(), groups = state.groups.len(), "state loaded");
+        state
     }
 
     /// Save state to a JSON file.
@@ -109,12 +111,14 @@ impl ServerState {
         }
         let json = serde_json::to_string_pretty(self)?;
         std::fs::write(path, json)?;
+        tracing::debug!(path = %path.display(), "state saved");
         Ok(())
     }
 
     /// Get or create a client entry. Returns mutable reference.
     pub fn get_or_create_client(&mut self, id: &str, host_name: &str, mac: &str) -> &mut Client {
         if !self.clients.contains_key(id) {
+            tracing::debug!(client_id = id, host_name, mac, "client created");
             self.clients.insert(
                 id.to_string(),
                 Client {
@@ -164,6 +168,7 @@ impl ServerState {
 
     /// Move a client to a different group.
     pub fn move_client_to_group(&mut self, client_id: &str, group_id: &str) {
+        tracing::debug!(client_id, group_id, "moving client to group");
         self.remove_client_from_groups(client_id);
         if let Some(group) = self.groups.iter_mut().find(|g| g.id == group_id) {
             group.clients.push(client_id.to_string());

@@ -43,6 +43,11 @@ pub struct OpusDecoder {
 
 impl Decoder for OpusDecoder {
     fn set_header(&mut self, header: &CodecHeader) -> Result<SampleFormat> {
+        tracing::trace!(
+            codec = "opus",
+            payload_len = header.payload.len(),
+            "set_header"
+        );
         let sf = parse_opus_header(&header.payload)?;
         self.decoder = OpusDec::new(sf.rate(), sf.channels() as usize)
             .map_err(|e| anyhow::anyhow!("failed to create Opus decoder: {e}"))?;
@@ -56,13 +61,14 @@ impl Decoder for OpusDecoder {
         if data.is_empty() {
             return Ok(false);
         }
+        tracing::trace!(codec = "opus", input_bytes = data.len(), "decode");
         let decoded_samples = match self
             .decoder
             .decode(data.as_slice(), &mut self.pcm_buf, false)
         {
             Ok(n) => n,
             Err(e) => {
-                tracing::error!("Opus decode error: {e}");
+                tracing::warn!(codec = "opus", error = %e, "decode failed");
                 return Ok(false);
             }
         };

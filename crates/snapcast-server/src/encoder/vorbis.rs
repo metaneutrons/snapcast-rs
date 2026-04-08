@@ -49,8 +49,10 @@ impl Encoder for VorbisEncoder {
         let sample_size = self.format.sample_size() as usize;
         let total_samples = pcm.len() / sample_size;
         let frames = total_samples / channels;
+        tracing::trace!(codec = "vorbis", input_bytes = pcm.len(), frames, "encode");
 
         if channels == 0 {
+            tracing::warn!(codec = "vorbis", "channels must be > 0");
             bail!("channels must be > 0");
         }
 
@@ -59,7 +61,10 @@ impl Encoder for VorbisEncoder {
             1 => 1.0 / 128.0,
             2 => 1.0 / 32768.0,
             4 => 1.0 / 2_147_483_648.0,
-            _ => bail!("unsupported sample size: {sample_size}"),
+            _ => {
+                tracing::warn!(codec = "vorbis", sample_size, "unsupported sample size");
+                bail!("unsupported sample size: {sample_size}");
+            }
         };
 
         let mut channel_bufs: Vec<Vec<f32>> = vec![Vec::with_capacity(frames); channels];

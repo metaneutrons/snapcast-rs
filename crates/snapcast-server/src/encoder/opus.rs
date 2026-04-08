@@ -24,12 +24,18 @@ impl OpusEncoder {
             16000 => SampleRate::Hz16000,
             24000 => SampleRate::Hz24000,
             48000 => SampleRate::Hz48000,
-            r => bail!("Opus does not support sample rate {r}"),
+            r => {
+                tracing::warn!(codec = "opus", sample_rate = r, "unsupported sample rate");
+                bail!("Opus does not support sample rate {r}");
+            }
         };
         let channels = match format.channels() {
             1 => Channels::Mono,
             2 => Channels::Stereo,
-            c => bail!("Opus does not support {c} channels"),
+            c => {
+                tracing::warn!(codec = "opus", channels = c, "unsupported channel count");
+                bail!("Opus does not support {c} channels");
+            }
         };
 
         let encoder = OpusEnc::new(sample_rate, channels, Application::Audio)?;
@@ -70,6 +76,12 @@ impl Encoder for OpusEncoder {
         let frame_samples = self.frame_size * channels;
         let frame_bytes = frame_samples * 2; // 16-bit samples
         let total_frames = pcm.len() / (channels * 2);
+        tracing::trace!(
+            codec = "opus",
+            input_bytes = pcm.len(),
+            total_frames,
+            "encode"
+        );
 
         let mut output = Vec::new();
         let mut encode_buf = [0u8; 4096];
@@ -85,7 +97,10 @@ impl Encoder for OpusEncoder {
 
             match self.encoder.encode(&samples, &mut encode_buf) {
                 Ok(len) => output.extend_from_slice(&encode_buf[..len]),
-                Err(e) => bail!("Opus encode failed: {e}"),
+                Err(e) => {
+                    tracing::warn!(codec = "opus", error = %e, "encode failed");
+                    bail!("Opus encode failed: {e}");
+                }
             }
         }
 

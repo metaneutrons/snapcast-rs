@@ -82,6 +82,11 @@ fn parse_riff_header(payload: &[u8]) -> Result<SampleFormat> {
 
 impl Decoder for PcmDecoder {
     fn set_header(&mut self, header: &CodecHeader) -> Result<SampleFormat> {
+        tracing::trace!(
+            codec = "pcm",
+            payload_len = header.payload.len(),
+            "set_header"
+        );
         parse_riff_header(&header.payload)
     }
 

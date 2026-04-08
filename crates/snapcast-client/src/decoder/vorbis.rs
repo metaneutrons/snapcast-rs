@@ -79,6 +79,11 @@ impl VorbisDecoder {
 
 impl Decoder for VorbisDecoder {
     fn set_header(&mut self, header: &CodecHeader) -> Result<SampleFormat> {
+        tracing::trace!(
+            codec = "vorbis",
+            payload_len = header.payload.len(),
+            "set_header"
+        );
         let (sf, extra_data) = parse_vorbis_header(&header.payload)?;
 
         let mut params = CodecParameters::new();
@@ -100,13 +105,20 @@ impl Decoder for VorbisDecoder {
             return Ok(false);
         }
 
+        tracing::trace!(
+            codec = "vorbis",
+            input_bytes = data.len(),
+            packet_id = self.packet_id,
+            "decode"
+        );
+
         let packet = Packet::new_from_slice(0, self.packet_id, 0, data);
         self.packet_id += 1;
 
         let decoded = match self.decoder.decode(&packet) {
             Ok(buf) => buf,
             Err(e) => {
-                tracing::error!("Vorbis decode error: {e}");
+                tracing::warn!(codec = "vorbis", error = %e, "decode failed");
                 return Ok(false);
             }
         };

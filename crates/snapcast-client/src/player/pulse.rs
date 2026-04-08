@@ -63,7 +63,7 @@ impl Player for PulsePlayer {
         });
 
         self.thread = Some(handle);
-        tracing::info!("PulseAudio player started");
+        tracing::info!(server = ?self.server, "PulseAudio player started");
         Ok(())
     }
 
@@ -73,7 +73,7 @@ impl Player for PulsePlayer {
         if let Some(handle) = self.thread.take() {
             handle.join().ok();
         }
-        tracing::info!("PulseAudio player stopped");
+        tracing::info!(server = ?self.server, "PulseAudio player stopped");
         Ok(())
     }
 
@@ -114,6 +114,7 @@ fn pulse_worker(
     };
 
     if !spec.is_valid() {
+        tracing::warn!(?spec, "invalid PulseAudio sample spec");
         anyhow::bail!("invalid PulseAudio sample spec: {:?}", spec);
     }
 

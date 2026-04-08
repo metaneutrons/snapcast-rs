@@ -48,6 +48,7 @@ impl Encoder for FlacEncoder {
     fn encode(&mut self, pcm: &[u8]) -> Result<EncodedChunk> {
         let frames = pcm.len() / self.format.frame_size() as usize;
         let duration_ms = frames as f64 * 1000.0 / self.format.rate() as f64;
+        tracing::trace!(codec = "flac", input_bytes = pcm.len(), frames, "encode");
 
         let mut output = Cursor::new(Vec::new());
         let mut writer = FlacByteWriter::endian(

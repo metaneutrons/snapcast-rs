@@ -45,6 +45,7 @@ pub fn generate_token(config: &AuthConfig, subject: &str) -> Result<String> {
         &claims,
         &EncodingKey::from_secret(config.secret.as_bytes()),
     )?;
+    tracing::info!(subject, "auth token generated");
     Ok(token)
 }
 
@@ -54,7 +55,11 @@ pub fn validate_token(config: &AuthConfig, token: &str) -> Result<String> {
         token,
         &DecodingKey::from_secret(config.secret.as_bytes()),
         &Validation::default(),
-    )?;
+    )
+    .map_err(|e| {
+        tracing::warn!(error = %e, "auth token validation failed");
+        e
+    })?;
     Ok(data.claims.sub)
 }
 

@@ -92,7 +92,7 @@ impl Player for AlsaPlayer {
         if let Some(handle) = self.thread.take() {
             handle.join().ok();
         }
-        tracing::info!("ALSA player stopped");
+        tracing::info!(device = %self.device, "ALSA player stopped");
         Ok(())
     }
 

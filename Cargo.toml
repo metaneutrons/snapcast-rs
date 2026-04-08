@@ -13,7 +13,7 @@ authors = ["Fabian Schmieder"]
 [workspace.dependencies]
 # Internal
 snapcast-proto = { path = "crates/snapcast-proto" }
-snapcast-client = { path = "crates/snapcast-client" }
+snapcast-client = { path = "crates/snapcast-client", default-features = false }
 snapcast-server = { path = "crates/snapcast-server" }
 
 # Async runtime

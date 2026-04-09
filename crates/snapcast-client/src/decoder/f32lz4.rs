@@ -32,6 +32,7 @@ impl Decoder for F32Lz4Decoder {
         let channels = u16::from_le_bytes(header.payload[8..10].try_into().unwrap());
         let bits = u16::from_le_bytes(header.payload[10..12].try_into().unwrap());
         self.sample_format = SampleFormat::new(rate, bits, channels);
+        tracing::info!(rate, channels, bits, "F32LZ4 decoder initialized");
         Ok(self.sample_format)
     }
 
@@ -41,6 +42,11 @@ impl Decoder for F32Lz4Decoder {
         }
         match lz4_flex::decompress_size_prepended(data) {
             Ok(decompressed) => {
+                tracing::trace!(
+                    compressed = data.len(),
+                    decompressed = decompressed.len(),
+                    "F32LZ4 decoded"
+                );
                 *data = decompressed;
                 Ok(true)
             }

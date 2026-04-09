@@ -20,6 +20,11 @@ pub struct F32Lz4Encoder {
 impl F32Lz4Encoder {
     /// Create a new F32 LZ4 encoder.
     pub fn new(format: SampleFormat) -> Self {
+        tracing::info!(
+            rate = format.rate(),
+            channels = format.channels(),
+            "F32LZ4 encoder initialized"
+        );
         let mut header = Vec::with_capacity(12);
         header.extend_from_slice(MAGIC);
         header.extend_from_slice(&format.rate().to_le_bytes());
@@ -58,6 +63,7 @@ impl Encoder for F32Lz4Encoder {
         };
 
         let frames = f32_bytes.len() / (4 * channels);
+        tracing::trace!(input_bytes = f32_bytes.len(), frames, "F32LZ4 encoding");
         let compressed = lz4_flex::compress_prepend_size(&f32_bytes);
         let duration_ms = frames as f64 * 1000.0 / self.format.rate() as f64;
 

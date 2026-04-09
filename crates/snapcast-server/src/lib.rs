@@ -253,26 +253,13 @@ impl SnapServer {
         // Get codec header for client handshake
         let default_format = snapcast_proto::SampleFormat::new(48000, 16, 2);
         let first_stream = manager.stream_ids().into_iter().next().unwrap_or_default();
-        let (codec, header, _format) = manager.header(&first_stream).unwrap_or_else(|| {
+        let (codec, header) = if let Some((c, h, _)) = manager.header(&first_stream) {
+            (c.to_string(), h.to_vec())
+        } else {
             // No streams yet — generate header from config
-            let enc = encoder::create(&self.config.codec, default_format, "")
-                .expect("failed to create encoder for header");
-            // Leak the header to get a static reference (it's small and lives forever)
-            let header: &'static [u8] = Vec::leak(enc.header().to_vec());
-            (
-                match self.config.codec.as_str() {
-                    "f32lz4" => "f32lz4",
-                    "flac" => "flac",
-                    "opus" => "opus",
-                    "ogg" => "ogg",
-                    _ => "pcm",
-                },
-                header,
-                default_format,
-            )
-        });
-        let codec = codec.to_string();
-        let header = header.to_vec();
+            let enc = encoder::create(&self.config.codec, default_format, "")?;
+            (self.config.codec.clone(), enc.header().to_vec())
+        };
 
         let chunk_sender = manager.chunk_sender();
         let audio_chunk_sender = chunk_sender.clone();

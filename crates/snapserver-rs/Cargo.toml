@@ -29,3 +29,10 @@ jsonwebtoken = { version = "10.3", features = ["rust_crypto"] }
 tempfile = "3"
 axum = { version = "0.8.8", features = ["ws"] }
 tower-http = { version = "0.6.8", features = ["fs"] }
+
+[features]
+default = ["snapcast-server/default"]
+flac = ["snapcast-server/flac"]
+opus = ["snapcast-server/opus"]
+vorbis = ["snapcast-server/vorbis"]
+f32lz4 = ["snapcast-server/f32lz4"]

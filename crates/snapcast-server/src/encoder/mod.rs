@@ -1,5 +1,7 @@
 //! Audio encoders — PCM, FLAC, Opus, Vorbis.
 
+#[cfg(feature = "f32lz4")]
+pub mod f32lz4;
 #[cfg(feature = "flac")]
 pub mod flac;
 #[cfg(feature = "opus")]
@@ -41,6 +43,8 @@ pub fn create(codec: &str, format: SampleFormat, options: &str) -> Result<Box<dy
         "opus" => Ok(Box::new(opus::OpusEncoder::new(format, options)?)),
         #[cfg(feature = "vorbis")]
         "ogg" => Ok(Box::new(vorbis::VorbisEncoder::new(format, options)?)),
+        #[cfg(feature = "f32lz4")]
+        "f32lz4" => Ok(Box::new(f32lz4::F32Lz4Encoder::new(format))),
         other => anyhow::bail!("unsupported codec: {other} (check enabled features)"),
     }
 }

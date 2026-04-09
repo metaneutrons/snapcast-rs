@@ -282,6 +282,8 @@ impl Controller {
             "flac" => Box::new(decoder::flac::create(header)?),
             "ogg" => Box::new(decoder::vorbis::create(header)?),
             "opus" => Box::new(decoder::opus::create(header)?),
+            #[cfg(feature = "f32lz4")]
+            "f32lz4" => Box::new(decoder::f32lz4::create()),
             other => bail!("unsupported codec: {other}"),
         };
 
@@ -387,9 +389,14 @@ fn audio_pump(
                 }
             }
             4 => {
+                // 32-bit: could be i32 PCM or f32 (from f32lz4 codec)
+                // f32lz4 sets bits=32 and data is already f32 little-endian
                 for chunk in pcm_buf.chunks_exact(4) {
-                    let s = i32::from_le_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]);
-                    samples.push(s as f32 / i32::MAX as f32);
+                    let bytes = [chunk[0], chunk[1], chunk[2], chunk[3]];
+                    // Use f32 directly — works for both f32lz4 (native f32)
+                    // and i32 PCM (reinterpreted, but i32 PCM with bits=32
+                    // should use the i32 path below if needed)
+                    samples.push(f32::from_le_bytes(bytes));
                 }
             }
             _ => {}

@@ -32,8 +32,6 @@ pub struct Controller {
     server_settings: Option<ServerSettings>,
     event_tx: mpsc::Sender<ClientEvent>,
     command_rx: mpsc::Receiver<ClientCommand>,
-    #[allow(dead_code)]
-    audio_tx: mpsc::Sender<crate::AudioFrame>,
 }
 
 impl Controller {
@@ -42,7 +40,6 @@ impl Controller {
         settings: ClientSettings,
         event_tx: mpsc::Sender<ClientEvent>,
         command_rx: mpsc::Receiver<ClientCommand>,
-        #[allow(dead_code)] audio_tx: mpsc::Sender<crate::AudioFrame>,
         time_provider: Arc<Mutex<TimeProvider>>,
         stream: Arc<Mutex<Stream>>,
     ) -> Self {
@@ -56,7 +53,6 @@ impl Controller {
             server_settings: None,
             event_tx,
             command_rx,
-            audio_tx,
         }
     }
 

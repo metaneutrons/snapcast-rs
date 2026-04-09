@@ -73,15 +73,26 @@ pub struct AudioFrame {
     pub timestamp_usec: i64,
 }
 
-pub mod auth;
-pub mod control;
 pub mod encoder;
-pub mod http;
-pub mod jsonrpc;
 pub mod session;
 pub mod state;
 pub mod stream;
 pub mod time;
+
+/// Settings update pushed to a streaming client via binary protocol.
+#[derive(Debug, Clone)]
+pub struct ClientSettingsUpdate {
+    /// Target client ID.
+    pub client_id: String,
+    /// Buffer size in ms.
+    pub buffer_ms: i32,
+    /// Latency offset in ms.
+    pub latency: i32,
+    /// Volume (0–100).
+    pub volume: u16,
+    /// Mute state.
+    pub muted: bool,
+}
 
 /// Events emitted by the server to the consumer.
 #[derive(Debug)]
@@ -275,10 +286,6 @@ pub struct SnapServer {
     command_rx: Option<mpsc::Receiver<ServerCommand>>,
     audio_rx: Option<mpsc::Receiver<crate::AudioFrame>>,
     manager: Option<stream::manager::StreamManager>,
-    /// Registered custom JSON-RPC methods (app handles, waits for response).
-    registered_methods: std::collections::HashSet<String>,
-    /// Registered custom JSON-RPC notifications (app handles, no response).
-    registered_notifications: std::collections::HashSet<String>,
 }
 
 impl SnapServer {
@@ -303,8 +310,6 @@ impl SnapServer {
             command_rx: Some(command_rx),
             audio_rx: Some(audio_rx),
             manager: None,
-            registered_methods: std::collections::HashSet::new(),
-            registered_notifications: std::collections::HashSet::new(),
         };
         (server, event_rx, audio_tx)
     }
@@ -312,19 +317,6 @@ impl SnapServer {
     /// Set the stream manager (configured by the binary with stream readers).
     pub fn set_manager(&mut self, manager: stream::manager::StreamManager) {
         self.manager = Some(manager);
-    }
-
-    /// Register a custom JSON-RPC method. When received, the request is
-    /// forwarded to the app via `ServerEvent::JsonRpc` and the server waits
-    /// for the app to respond via `ServerCommand::SendJsonRpc`.
-    pub fn register_method(&mut self, method: &str) {
-        self.registered_methods.insert(method.to_string());
-    }
-
-    /// Register a custom JSON-RPC notification. When received, it's forwarded
-    /// to the app via `ServerEvent::JsonRpc`. No response is sent to the client.
-    pub fn register_notification(&mut self, method: &str) {
-        self.registered_notifications.insert(method.to_string());
     }
 
     /// Get a cloneable command sender.
@@ -351,38 +343,29 @@ impl SnapServer {
 
         let event_tx = self.event_tx.clone();
 
-        tracing::info!(
-            stream_port = self.config.stream_port,
-            http_port = self.config.http_port,
-            "Snapserver starting"
-        );
+        tracing::info!(stream_port = self.config.stream_port, "Snapserver starting");
 
-        // Advertise via mDNS
-
-        // The binary must set up the StreamManager and pass it via set_manager()
         let manager = self.manager.take().unwrap_or_default();
 
-        // Get codec header for client handshake
         let default_format = snapcast_proto::SampleFormat::new(48000, 16, 2);
         let first_stream = manager.stream_ids().into_iter().next().unwrap_or_default();
         let (codec, header) = if let Some((c, h, _)) = manager.header(&first_stream) {
             (c.to_string(), h.to_vec())
         } else {
-            // No streams yet — generate header from config
             let enc = encoder::create(&self.config.codec, default_format, "")?;
             (self.config.codec.clone(), enc.header().to_vec())
         };
 
         let chunk_sender = manager.chunk_sender();
         let audio_chunk_sender = chunk_sender.clone();
-        let session_event_tx = event_tx.clone();
 
-        // Start session server (shared for settings push)
+        // Start session server
         let session_srv = Arc::new(session::SessionServer::new(
             self.config.stream_port,
             self.config.buffer_ms as i32,
         ));
         let session_for_run = Arc::clone(&session_srv);
+        let session_event_tx = event_tx.clone();
         let session_handle = tokio::spawn(async move {
             if let Err(e) = session_for_run
                 .run(chunk_sender, codec, header, session_event_tx)
@@ -392,74 +375,10 @@ impl SnapServer {
             }
         });
 
-        // Start control server (JSON-RPC over TCP)
+        // Shared state for command handlers
         let shared_state = Arc::new(tokio::sync::Mutex::new(state::ServerState::default()));
-        let (notify_tx, _) = tokio::sync::broadcast::channel::<serde_json::Value>(256);
-        let (stream_ctrl_tx, mut stream_ctrl_rx) =
-            tokio::sync::mpsc::channel::<jsonrpc::StreamControlMsg>(64);
-        let (settings_push_tx, mut settings_push_rx) =
-            tokio::sync::mpsc::channel::<jsonrpc::ClientSettingsUpdate>(64);
-        let auth_cfg = Arc::new(auth::AuthConfig::default());
-        let control_state = Arc::clone(&shared_state);
-        let control_event_tx = event_tx.clone();
-        let control_notify_tx = notify_tx.clone();
-        let control_port = self.config.control_port;
-        let control_auth = Arc::clone(&auth_cfg);
-        let control_stream_tx = stream_ctrl_tx.clone();
-        let control_settings_tx = settings_push_tx.clone();
-        let control_buffer_ms = self.config.buffer_ms as i32;
-        let methods = Arc::new(self.registered_methods.clone());
-        let notifications = Arc::new(self.registered_notifications.clone());
 
-        let control_handle = tokio::spawn(async move {
-            if let Err(e) = control::run_tcp(control::ControlConfig {
-                port: control_port,
-                state: control_state,
-                event_tx: control_event_tx,
-                notify_tx: control_notify_tx,
-                auth_config: control_auth,
-                stream_control_tx: control_stream_tx,
-                settings_tx: control_settings_tx,
-                buffer_ms: control_buffer_ms,
-                registered_methods: Arc::clone(&methods),
-                registered_notifications: Arc::clone(&notifications),
-            })
-            .await
-            {
-                tracing::error!(error = %e, "Control server error");
-            }
-        });
-
-        // Start HTTP/WebSocket server + Snapweb
-        let http_state = Arc::clone(&shared_state);
-        let http_event_tx = event_tx.clone();
-        let http_notify_tx = notify_tx.clone();
-        let http_auth = Arc::clone(&auth_cfg);
-        let http_stream_tx = stream_ctrl_tx.clone();
-        let http_settings_tx = settings_push_tx.clone();
-        let http_port = self.config.http_port;
-        let http_doc_root = self.config.doc_root.clone();
-        let http_buffer_ms = self.config.buffer_ms as i32;
-
-        let http_handle = tokio::spawn(async move {
-            if let Err(e) = http::run_http(http::HttpConfig {
-                port: http_port,
-                doc_root: http_doc_root,
-                state: http_state,
-                event_tx: http_event_tx,
-                notify_tx: http_notify_tx,
-                auth_config: http_auth,
-                stream_control_tx: http_stream_tx,
-                settings_tx: http_settings_tx,
-                buffer_ms: http_buffer_ms,
-            })
-            .await
-            {
-                tracing::error!(error = %e, "HTTP server error");
-            }
-        });
-
-        // Main loop: handle commands, settings pushes, stream control
+        // Main loop
         loop {
             tokio::select! {
                 cmd = command_rx.recv() => {
@@ -467,12 +386,10 @@ impl SnapServer {
                         Some(ServerCommand::Stop) | None => {
                             tracing::info!("Server stopped");
                             session_handle.abort();
-                            control_handle.abort();
-                            http_handle.abort();
                             return Ok(());
                         }
-                        Some(ServerCommand::SendJsonRpc { message, .. }) => {
-                            let _ = notify_tx.send(message);
+                        Some(ServerCommand::SendJsonRpc { .. }) => {
+                            // JSON-RPC is handled by the binary, not the library
                         }
                         Some(ServerCommand::SetClientVolume { client_id, volume, muted }) => {
                             let mut s = shared_state.lock().await;
@@ -480,12 +397,10 @@ impl SnapServer {
                                 c.config.volume.percent = volume;
                                 c.config.volume.muted = muted;
                             }
-                            session_srv.push_settings(jsonrpc::ClientSettingsUpdate {
+                            session_srv.push_settings(ClientSettingsUpdate {
                                 client_id: client_id.clone(),
                                 buffer_ms: self.config.buffer_ms as i32,
-                                latency: 0,
-                                volume,
-                                muted,
+                                latency: 0, volume, muted,
                             }).await;
                             let _ = event_tx.try_send(ServerEvent::ClientVolumeChanged { client_id, volume, muted });
                         }
@@ -493,7 +408,7 @@ impl SnapServer {
                             let mut s = shared_state.lock().await;
                             if let Some(c) = s.clients.get_mut(&client_id) {
                                 c.config.latency = latency;
-                                session_srv.push_settings(jsonrpc::ClientSettingsUpdate {
+                                session_srv.push_settings(ClientSettingsUpdate {
                                     client_id: client_id.clone(),
                                     buffer_ms: self.config.buffer_ms as i32,
                                     latency,
@@ -547,25 +462,8 @@ impl SnapServer {
                         }
                     }
                 }
-                update = settings_push_rx.recv() => {
-                    if let Some(update) = update {
-                        session_srv.push_settings(update).await;
-                    }
-                }
-                ctrl = stream_ctrl_rx.recv() => {
-                    if let Some(ctrl) = ctrl {
-                        tracing::debug!(
-                            stream_id = %ctrl.stream_id,
-                            command = %ctrl.command,
-                            "Stream control (routing not yet implemented for process stdin)"
-                        );
-                    }
-                }
                 frame = audio_rx.recv() => {
                     if let Some(frame) = frame {
-                        // Convert f32 to raw bytes for the encoder
-                        // f32lz4: pass f32 bytes directly (zero conversion)
-                        // other codecs: convert f32 → i16 PCM
                         let data = if self.config.codec == "f32lz4" {
                             frame.samples.iter().flat_map(|s| s.to_le_bytes()).collect()
                         } else {

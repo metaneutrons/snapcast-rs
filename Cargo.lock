@@ -2284,8 +2284,6 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "audiopus",
- "axum",
- "jsonwebtoken",
  "libc",
  "libflac-sys",
  "lz4_flex",
@@ -2294,7 +2292,6 @@ dependencies = [
  "serde_json",
  "snapcast-proto",
  "tokio",
- "tower-http",
  "tracing",
  "vorbis_rs",
 ]
@@ -2321,6 +2318,7 @@ name = "snapserver-rs"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "axum",
  "clap",
  "hostname",
  "jsonwebtoken",
@@ -2332,6 +2330,7 @@ dependencies = [
  "snapcast-server",
  "tempfile",
  "tokio",
+ "tower-http",
  "tracing",
  "tracing-subscriber",
 ]

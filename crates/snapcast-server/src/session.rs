@@ -16,8 +16,8 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::{Mutex, broadcast, mpsc};
 
+use crate::ClientSettingsUpdate;
 use crate::ServerEvent;
-use crate::jsonrpc::ClientSettingsUpdate;
 use crate::stream::manager::WireChunkData;
 use crate::time::now_usec;
 

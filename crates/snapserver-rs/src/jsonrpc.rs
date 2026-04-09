@@ -1,3 +1,4 @@
+#![allow(dead_code, unused_imports)]
 //! JSON-RPC control API — method handlers for Snapcast control protocol.
 
 use std::sync::Arc;
@@ -6,7 +7,8 @@ use serde_json::{Value, json};
 use tokio::sync::Mutex;
 
 use crate::auth::{self, AuthConfig};
-use crate::state::ServerState;
+use snapcast_server::ClientSettingsUpdate;
+use snapcast_server::state::ServerState;
 
 /// JSON-RPC error codes.
 const INVALID_PARAMS: i64 = -32602;
@@ -34,21 +36,6 @@ pub struct StreamControlMsg {
     pub command: String,
     /// Command parameters.
     pub params: Value,
-}
-
-/// A settings update to push to a streaming client via binary protocol.
-#[derive(Debug, Clone)]
-pub struct ClientSettingsUpdate {
-    /// Target client ID.
-    pub client_id: String,
-    /// Buffer size in ms.
-    pub buffer_ms: i32,
-    /// Latency offset in ms.
-    pub latency: i32,
-    /// Volume (0–100).
-    pub volume: u16,
-    /// Mute state.
-    pub muted: bool,
 }
 
 /// Handle a JSON-RPC request against shared server state.
@@ -365,7 +352,7 @@ fn err(id: &Value, code: i64, msg: &str) -> RpcResult {
 
 fn client_settings_update(
     client_id: &str,
-    c: &crate::state::Client,
+    c: &snapcast_server::state::Client,
     buffer_ms: i32,
 ) -> ClientSettingsUpdate {
     ClientSettingsUpdate {
@@ -376,7 +363,7 @@ fn client_settings_update(
         muted: c.config.volume.muted,
     }
 }
-fn client_json(c: &crate::state::Client) -> Value {
+fn client_json(c: &snapcast_server::state::Client) -> Value {
     json!({
         "id": c.id,
         "host": {"name": c.host_name, "mac": c.mac},
@@ -389,7 +376,7 @@ fn client_json(c: &crate::state::Client) -> Value {
     })
 }
 
-fn group_json(g: &crate::state::Group, s: &crate::state::ServerState) -> Value {
+fn group_json(g: &snapcast_server::state::Group, s: &snapcast_server::state::ServerState) -> Value {
     let clients: Vec<Value> = g
         .clients
         .iter()
@@ -419,7 +406,7 @@ mod tests {
         s.get_or_create_client("c1", "host1", "mac1");
         s.clients.get_mut("c1").unwrap().connected = true;
         s.group_for_client("c1", "default");
-        s.streams.push(crate::state::StreamInfo {
+        s.streams.push(snapcast_server::state::StreamInfo {
             id: "default".into(),
             status: "playing".into(),
             uri: "pipe:///tmp/snapfifo".into(),

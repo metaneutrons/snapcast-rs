@@ -1,3 +1,4 @@
+#![allow(dead_code, unused_imports)]
 //! HTTP/WebSocket control server + Snapweb static file serving.
 
 use std::sync::Arc;
@@ -11,10 +12,11 @@ use axum::routing::get;
 use serde_json::Value;
 use tokio::sync::{Mutex, broadcast, mpsc};
 
-use crate::ServerEvent;
 use crate::auth::AuthConfig;
-use crate::jsonrpc::{self, ClientSettingsUpdate, RpcResult, StreamControlMsg};
-use crate::state::ServerState;
+use crate::jsonrpc::{self, RpcResult, StreamControlMsg};
+use snapcast_server::ClientSettingsUpdate;
+use snapcast_server::ServerEvent;
+use snapcast_server::state::ServerState;
 
 /// Shared state for axum handlers.
 #[derive(Clone)]

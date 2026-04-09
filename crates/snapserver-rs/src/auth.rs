@@ -1,3 +1,4 @@
+#![allow(dead_code, unused_imports)]
 //! Authentication — JWT token generation and validation.
 
 use anyhow::Result;

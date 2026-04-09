@@ -1,3 +1,4 @@
+#![allow(dead_code, unused_imports)]
 //! Control server — JSON-RPC over TCP for Snapcast control clients.
 
 use std::sync::Arc;
@@ -8,10 +9,11 @@ use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::net::TcpListener;
 use tokio::sync::{Mutex, broadcast, mpsc};
 
-use crate::ServerEvent;
 use crate::auth::AuthConfig;
-use crate::jsonrpc::{self, ClientSettingsUpdate, RpcResult, StreamControlMsg};
-use crate::state::ServerState;
+use crate::jsonrpc::{self, RpcResult, StreamControlMsg};
+use snapcast_server::ClientSettingsUpdate;
+use snapcast_server::ServerEvent;
+use snapcast_server::state::ServerState;
 
 /// Configuration for the control server.
 pub struct ControlConfig {

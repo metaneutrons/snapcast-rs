@@ -1,4 +1,8 @@
+mod auth;
 mod config;
+mod control;
+mod http;
+mod jsonrpc;
 mod mdns;
 mod stream;
 

@@ -1,4 +1,3 @@
-#![allow(dead_code, unused_imports)]
 //! Control server — JSON-RPC over TCP for Snapcast control clients.
 
 use std::sync::Arc;
@@ -10,8 +9,7 @@ use tokio::net::TcpListener;
 use tokio::sync::{Mutex, broadcast, mpsc};
 
 use crate::auth::AuthConfig;
-use crate::jsonrpc::{self, RpcResult, StreamControlMsg};
-use snapcast_server::ClientSettingsUpdate;
+use crate::jsonrpc::{self, RpcResult};
 use snapcast_server::ServerEvent;
 use snapcast_server::state::ServerState;
 
@@ -28,11 +26,8 @@ pub struct ControlConfig {
     /// Auth configuration.
     pub auth_config: Arc<AuthConfig>,
     /// Stream control sender.
-    pub stream_control_tx: mpsc::Sender<StreamControlMsg>,
     /// Client settings push sender.
-    pub settings_tx: mpsc::Sender<ClientSettingsUpdate>,
     /// Server buffer size in ms.
-    pub buffer_ms: i32,
     /// Server command sender.
     pub cmd_tx: tokio::sync::mpsc::Sender<snapcast_server::ServerCommand>,
     /// Registered custom JSON-RPC methods.
@@ -55,9 +50,6 @@ pub async fn run_tcp(cfg: ControlConfig) -> Result<()> {
         let notify_tx = cfg.notify_tx.clone();
         let mut notify_rx = cfg.notify_tx.subscribe();
         let auth_config = Arc::clone(&cfg.auth_config);
-        let _stream_control_tx = cfg.stream_control_tx.clone();
-        let _settings_tx = cfg.settings_tx.clone();
-        let _buffer_ms = cfg.buffer_ms;
         let cmd_tx = cfg.cmd_tx.clone();
         let registered_methods = Arc::clone(&cfg.registered_methods);
         let registered_notifications = Arc::clone(&cfg.registered_notifications);

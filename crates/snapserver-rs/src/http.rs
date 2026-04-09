@@ -1,4 +1,3 @@
-#![allow(dead_code, unused_imports)]
 //! HTTP/WebSocket control server + Snapweb static file serving.
 
 use std::sync::Arc;
@@ -13,8 +12,7 @@ use serde_json::Value;
 use tokio::sync::{Mutex, broadcast, mpsc};
 
 use crate::auth::AuthConfig;
-use crate::jsonrpc::{self, RpcResult, StreamControlMsg};
-use snapcast_server::ClientSettingsUpdate;
+use crate::jsonrpc::{self, RpcResult};
 use snapcast_server::ServerEvent;
 use snapcast_server::state::ServerState;
 
@@ -25,9 +23,6 @@ struct AppState {
     event_tx: mpsc::Sender<ServerEvent>,
     notify_tx: broadcast::Sender<Value>,
     auth_config: Arc<AuthConfig>,
-    stream_control_tx: mpsc::Sender<StreamControlMsg>,
-    settings_tx: mpsc::Sender<ClientSettingsUpdate>,
-    buffer_ms: i32,
     cmd_tx: tokio::sync::mpsc::Sender<snapcast_server::ServerCommand>,
 }
 
@@ -46,11 +41,8 @@ pub struct HttpConfig {
     /// Auth configuration.
     pub auth_config: Arc<AuthConfig>,
     /// Stream control sender.
-    pub stream_control_tx: mpsc::Sender<StreamControlMsg>,
     /// Client settings push sender.
-    pub settings_tx: mpsc::Sender<ClientSettingsUpdate>,
     /// Server buffer size in ms.
-    pub buffer_ms: i32,
     /// Server command sender.
     pub cmd_tx: tokio::sync::mpsc::Sender<snapcast_server::ServerCommand>,
 }
@@ -62,9 +54,6 @@ pub async fn run_http(cfg: HttpConfig) -> Result<()> {
         event_tx: cfg.event_tx,
         notify_tx: cfg.notify_tx,
         auth_config: cfg.auth_config,
-        stream_control_tx: cfg.stream_control_tx,
-        settings_tx: cfg.settings_tx,
-        buffer_ms: cfg.buffer_ms,
         cmd_tx: cfg.cmd_tx.clone(),
     };
 

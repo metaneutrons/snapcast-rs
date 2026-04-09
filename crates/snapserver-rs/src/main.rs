@@ -154,10 +154,6 @@ fn main() -> anyhow::Result<()> {
             snapcast_server::state::ServerState::default(),
         ));
         let (notify_tx, _) = tokio::sync::broadcast::channel::<serde_json::Value>(256);
-        let (stream_ctrl_tx, _stream_ctrl_rx) =
-            tokio::sync::mpsc::channel::<jsonrpc::StreamControlMsg>(64);
-        let (settings_tx, _settings_rx) =
-            tokio::sync::mpsc::channel::<snapcast_server::ClientSettingsUpdate>(64);
         let auth_cfg = std::sync::Arc::new(auth::AuthConfig::default());
         let methods = std::sync::Arc::new(std::collections::HashSet::<String>::new());
         let notifications = std::sync::Arc::new(std::collections::HashSet::<String>::new());
@@ -173,9 +169,6 @@ fn main() -> anyhow::Result<()> {
             event_tx: ctrl_event_tx.clone(),
             notify_tx: notify_tx.clone(),
             auth_config: std::sync::Arc::clone(&auth_cfg),
-            stream_control_tx: stream_ctrl_tx.clone(),
-            settings_tx: settings_tx.clone(),
-            buffer_ms: server_config.buffer_ms as i32,
             cmd_tx: server.command_sender(),
             registered_methods: std::sync::Arc::clone(&methods),
             registered_notifications: std::sync::Arc::clone(&notifications),
@@ -194,9 +187,6 @@ fn main() -> anyhow::Result<()> {
             event_tx: ctrl_event_tx.clone(),
             notify_tx: notify_tx.clone(),
             auth_config: std::sync::Arc::clone(&auth_cfg),
-            stream_control_tx: stream_ctrl_tx.clone(),
-            settings_tx: settings_tx.clone(),
-            buffer_ms: server_config.buffer_ms as i32,
             cmd_tx: server.command_sender(),
         };
         tokio::spawn(async move {

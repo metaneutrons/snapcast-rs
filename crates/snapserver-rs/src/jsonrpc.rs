@@ -1,4 +1,3 @@
-#![allow(dead_code, unused_imports)]
 //! JSON-RPC control API — method handlers for Snapcast control protocol.
 
 use std::sync::Arc;
@@ -7,7 +6,6 @@ use serde_json::{Value, json};
 use tokio::sync::Mutex;
 
 use crate::auth::{self, AuthConfig};
-use snapcast_server::ClientSettingsUpdate;
 use snapcast_server::state::ServerState;
 
 /// JSON-RPC error codes.
@@ -34,8 +32,6 @@ pub struct StreamControlMsg {
     pub stream_id: String,
     /// Command (e.g. "play", "pause", "next").
     pub command: String,
-    /// Command parameters.
-    pub params: Value,
 }
 
 /// Handle a JSON-RPC request against shared server state.
@@ -267,7 +263,6 @@ pub async fn handle_request(
             let msg = StreamControlMsg {
                 stream_id: stream_id.to_string(),
                 command: command.to_string(),
-                params: params["params"].clone(),
             };
             tracing::debug!(stream_id = %msg.stream_id, command = %msg.command, "Stream control");
             ok(id, json!({"id": stream_id}))
@@ -316,19 +311,6 @@ fn err(id: &Value, code: i64, msg: &str) -> RpcResult {
     }
 }
 
-fn client_settings_update(
-    client_id: &str,
-    c: &snapcast_server::state::Client,
-    buffer_ms: i32,
-) -> ClientSettingsUpdate {
-    ClientSettingsUpdate {
-        client_id: client_id.to_string(),
-        buffer_ms,
-        latency: c.config.latency,
-        volume: c.config.volume.percent,
-        muted: c.config.volume.muted,
-    }
-}
 fn client_json(c: &snapcast_server::state::Client) -> Value {
     json!({
         "id": c.id,
@@ -365,8 +347,7 @@ mod tests {
     async fn test_state() -> (
         Arc<Mutex<ServerState>>,
         AuthConfig,
-        tokio::sync::mpsc::Sender<StreamControlMsg>,
-        tokio::sync::mpsc::Sender<ClientSettingsUpdate>,
+        tokio::sync::mpsc::Sender<snapcast_server::ServerCommand>,
     ) {
         let mut s = ServerState::default();
         s.get_or_create_client("c1", "host1", "mac1");
@@ -378,17 +359,16 @@ mod tests {
             uri: "pipe:///tmp/snapfifo".into(),
             properties: Default::default(),
         });
-        let (tx, _rx) = tokio::sync::mpsc::channel(16);
-        let (stx, _srx) = tokio::sync::mpsc::channel(16);
-        (Arc::new(Mutex::new(s)), AuthConfig::default(), tx, stx)
+        let (cmd_tx, _cmd_rx) = tokio::sync::mpsc::channel(16);
+        (Arc::new(Mutex::new(s)), AuthConfig::default(), cmd_tx)
     }
 
     #[tokio::test]
     async fn server_get_status() {
-        let (state, auth_config, stream_tx, settings_tx) = test_state().await;
+        let (state, auth_config, cmd_tx) = test_state().await;
         let req = json!({"jsonrpc": "2.0", "id": 1, "method": "Server.GetStatus", "params": {}});
         let RpcResult::Response { response, .. } =
-            handle_request(&req, &state, &auth_config, &stream_tx, &settings_tx, 1000).await
+            handle_request(&req, &state, &auth_config, &cmd_tx).await
         else {
             panic!("expected response");
         };
@@ -397,7 +377,7 @@ mod tests {
 
     #[tokio::test]
     async fn client_set_volume() {
-        let (state, auth_config, stream_tx, settings_tx) = test_state().await;
+        let (state, auth_config, cmd_tx) = test_state().await;
         let req = json!({
             "jsonrpc": "2.0", "id": 2,
             "method": "Client.SetVolume",
@@ -406,7 +386,7 @@ mod tests {
         let RpcResult::Response {
             response,
             notification,
-        } = handle_request(&req, &state, &auth_config, &stream_tx, &settings_tx, 1000).await
+        } = handle_request(&req, &state, &auth_config, &cmd_tx).await
         else {
             panic!("expected response");
         };
@@ -421,17 +401,17 @@ mod tests {
 
     #[tokio::test]
     async fn unknown_method_returns_unknown() {
-        let (state, auth_config, stream_tx, settings_tx) = test_state().await;
+        let (state, auth_config, cmd_tx) = test_state().await;
         let req = json!({"jsonrpc": "2.0", "id": 3, "method": "Client.SetEq", "params": {}});
         assert!(matches!(
-            handle_request(&req, &state, &auth_config, &stream_tx, &settings_tx, 1000).await,
+            handle_request(&req, &state, &auth_config, &cmd_tx).await,
             RpcResult::Unknown
         ));
     }
 
     #[tokio::test]
     async fn group_set_stream() {
-        let (state, auth_config, stream_tx, settings_tx) = test_state().await;
+        let (state, auth_config, cmd_tx) = test_state().await;
         let gid = {
             let s = state.lock().await;
             s.groups[0].id.clone()
@@ -442,7 +422,7 @@ mod tests {
             "params": {"id": gid, "stream_id": "music"}
         });
         let RpcResult::Response { notification, .. } =
-            handle_request(&req, &state, &auth_config, &stream_tx, &settings_tx, 1000).await
+            handle_request(&req, &state, &auth_config, &cmd_tx).await
         else {
             panic!("expected response");
         };

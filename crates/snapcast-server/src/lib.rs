@@ -239,6 +239,16 @@ pub enum ServerCommand {
     Stop,
 }
 
+/// Default codec based on compiled features.
+fn default_codec() -> &'static str {
+    #[cfg(feature = "f32lz4")]
+    return "f32lz4";
+    #[cfg(all(feature = "flac", not(feature = "f32lz4")))]
+    return "flac";
+    #[cfg(not(any(feature = "f32lz4", feature = "flac")))]
+    return "pcm";
+}
+
 /// Server configuration.
 #[derive(Debug, Clone)]
 pub struct ServerConfig {
@@ -270,7 +280,7 @@ impl Default for ServerConfig {
             http_port: 1780,
             doc_root: None,
             buffer_ms: 1000,
-            codec: "f32lz4".into(),
+            codec: default_codec().into(),
             sample_format: "48000:16:2".into(),
             sources: vec!["pipe:///tmp/snapfifo?name=default".into()],
             state_file: Some("/var/lib/snapserver/server.json".into()),

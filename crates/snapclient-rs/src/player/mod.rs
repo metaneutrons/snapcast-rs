@@ -15,18 +15,16 @@ use tokio::sync::mpsc;
 /// Start audio output. The cpal callback reads from the shared Stream.
 /// AudioFrame channel is drained (for future SnapDog use).
 pub async fn play_audio(
-    mut rx: mpsc::Receiver<AudioFrame>,
+    rx: mpsc::Receiver<AudioFrame>,
     stream: Arc<Mutex<Stream>>,
     time_provider: Arc<Mutex<TimeProvider>>,
     format: SampleFormat,
 ) {
-    // Wait for first audio data to confirm stream is active
-    let Some(_first) = rx.recv().await else {
-        return;
-    };
-
     // Drain audio_rx in background (not used by this player)
-    tokio::spawn(async move { while rx.recv().await.is_some() {} });
+    tokio::spawn(async move {
+        let mut rx = rx;
+        while rx.recv().await.is_some() {}
+    });
 
     // Start cpal on dedicated thread
     std::thread::spawn(move || {

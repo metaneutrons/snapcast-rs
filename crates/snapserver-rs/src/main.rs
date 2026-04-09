@@ -109,12 +109,20 @@ fn main() -> anyhow::Result<()> {
 
             let (tx, rx) = tokio::sync::mpsc::channel(128);
 
+            // Chunk size matches codec block size:
+            // FLAC level 0-2: 1152 frames, level 3+: 4096 frames
+            // Others: 960 frames (20ms at 48kHz)
+            let chunk_frames = match server_config.codec.as_str() {
+                "flac" => 1152,
+                _ => (format.rate() as usize * 20) / 1000, // 20ms
+            };
+
             // Start stream reader
             let reader_handle = match parsed.scheme.as_str() {
-                "pipe" => stream::pipe::start(parsed, format, tx),
-                "file" => stream::file::start(parsed, format, tx),
-                "process" => stream::process::start(parsed, format, tx),
-                "tcp" => stream::tcp::start(parsed, format, tx),
+                "pipe" => stream::pipe::start(parsed, format, chunk_frames, tx),
+                "file" => stream::file::start(parsed, format, chunk_frames, tx),
+                "process" => stream::process::start(parsed, format, chunk_frames, tx),
+                "tcp" => stream::tcp::start(parsed, format, chunk_frames, tx),
                 "librespot" => {
                     let (meta_tx, _) = tokio::sync::mpsc::channel(32);
                     stream::librespot::start(parsed, format, tx, meta_tx)

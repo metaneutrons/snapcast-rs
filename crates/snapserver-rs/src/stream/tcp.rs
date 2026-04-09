@@ -15,6 +15,7 @@ use snapcast_server::time::ChunkTimestamper;
 pub fn start(
     uri: StreamUri,
     format: SampleFormat,
+    chunk_frames: usize,
     tx: mpsc::Sender<PcmChunk>,
 ) -> Result<JoinHandle<()>> {
     let host = if uri.host.is_empty() {
@@ -24,8 +25,7 @@ pub fn start(
     };
     let port = if uri.port == 0 { 4953 } else { uri.port };
     let addr = format!("{host}:{port}");
-    let chunk_ms = 20;
-    let chunk_bytes = (format.rate() as usize * format.frame_size() as usize * chunk_ms) / 1000;
+    let chunk_bytes = chunk_frames * format.frame_size() as usize;
     let chunk_frames = chunk_bytes / format.frame_size() as usize;
 
     Ok(tokio::spawn(async move {

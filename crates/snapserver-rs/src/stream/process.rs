@@ -15,11 +15,12 @@ use snapcast_server::time::ChunkTimestamper;
 pub fn start(
     uri: StreamUri,
     format: SampleFormat,
+    chunk_frames: usize,
     tx: mpsc::Sender<PcmChunk>,
 ) -> Result<JoinHandle<()>> {
     let path = uri.path.clone();
     let params = uri.param("params").unwrap_or("").to_string();
-    let chunk_bytes = (format.rate() as usize * format.frame_size() as usize * 20) / 1000;
+    let chunk_bytes = chunk_frames * format.frame_size() as usize;
     let chunk_frames = chunk_bytes / format.frame_size() as usize;
 
     Ok(tokio::spawn(async move {

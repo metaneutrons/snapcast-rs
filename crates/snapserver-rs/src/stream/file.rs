@@ -14,13 +14,13 @@ use snapcast_server::time::ChunkTimestamper;
 pub fn start(
     uri: StreamUri,
     format: SampleFormat,
+    chunk_frames: usize,
     tx: mpsc::Sender<PcmChunk>,
 ) -> Result<JoinHandle<()>> {
     let path = uri.path.clone();
-    let chunk_ms: u64 = 20;
-    let chunk_bytes =
-        (format.rate() as usize * format.frame_size() as usize * chunk_ms as usize) / 1000;
-    let chunk_duration = std::time::Duration::from_millis(chunk_ms);
+    let chunk_bytes = chunk_frames * format.frame_size() as usize;
+    let chunk_duration =
+        std::time::Duration::from_micros((chunk_frames as u64 * 1_000_000) / format.rate() as u64);
 
     let chunk_frames = chunk_bytes / format.frame_size() as usize;
 

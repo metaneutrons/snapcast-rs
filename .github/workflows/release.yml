@@ -22,6 +22,8 @@ jobs:
             os: macos-latest
           - target: aarch64-apple-darwin
             os: macos-latest
+          - target: x86_64-pc-windows-msvc
+            os: windows-latest
     steps:
       - uses: actions/checkout@v6
       - uses: dtolnay/rust-toolchain@stable
@@ -31,15 +33,27 @@ jobs:
       - name: Install cross-compilation tools
         if: matrix.target == 'aarch64-unknown-linux-gnu'
         run: sudo apt-get update && sudo apt-get install -y gcc-aarch64-linux-gnu
+      - name: Install FLAC (Linux)
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y libflac-dev
+      - name: Install FLAC (macOS)
+        if: runner.os == 'macOS'
+        run: brew install flac
       - name: Build release
-        run: cargo build --release --target ${{ matrix.target }} -p snapclient-rs
+        run: |
+          cargo build --release --target ${{ matrix.target }} -p snapclient-rs
+          cargo build --release --target ${{ matrix.target }} -p snapserver-rs --features flac
         env:
           CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER: aarch64-linux-gnu-gcc
-      - name: Upload artifact
+      - name: Upload artifacts
         uses: actions/upload-artifact@v7
         with:
-          name: snapclient-rs-${{ matrix.target }}
-          path: target/${{ matrix.target }}/release/snapclient-rs
+          name: snapcast-rs-${{ matrix.target }}
+          path: |
+            target/${{ matrix.target }}/release/snapclient-rs
+            target/${{ matrix.target }}/release/snapclient-rs.exe
+            target/${{ matrix.target }}/release/snapserver-rs
+            target/${{ matrix.target }}/release/snapserver-rs.exe
 
   upload-release-artifacts:
     name: Upload Release Artifacts
@@ -52,4 +66,19 @@ jobs:
       - name: Upload to GitHub Release
         uses: softprops/action-gh-release@v2
         with:
-          files: snapclient-rs-*/snapclient-rs*
+          files: snapcast-rs-*/snapclient-rs*,snapcast-rs-*/snapserver-rs*
+
+  crates-io:
+    name: Publish to crates.io
+    runs-on: ubuntu-latest
+    needs: [build]
+    steps:
+      - uses: actions/checkout@v6
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Publish (order matters — proto first)
+        run: |
+          cargo publish -p snapcast-proto --token ${{ secrets.CRATES_IO_TOKEN }}
+          sleep 30
+          cargo publish -p snapcast-client --token ${{ secrets.CRATES_IO_TOKEN }}
+          sleep 30
+          cargo publish -p snapcast-server --token ${{ secrets.CRATES_IO_TOKEN }}

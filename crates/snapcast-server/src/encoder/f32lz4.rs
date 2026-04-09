@@ -41,31 +41,23 @@ impl Encoder for F32Lz4Encoder {
     fn encode(&mut self, pcm: &[u8]) -> Result<EncodedChunk> {
         let sample_size = self.format.sample_size() as usize;
         let channels = self.format.channels() as usize;
-        let frames = pcm.len() / (sample_size * channels);
 
-        // Convert PCM bytes to f32
-        let mut f32_bytes = Vec::with_capacity(frames * channels * 4);
-        match sample_size {
-            2 => {
-                for chunk in pcm.chunks_exact(2) {
-                    let s = i16::from_le_bytes([chunk[0], chunk[1]]) as f32 / i16::MAX as f32;
-                    f32_bytes.extend_from_slice(&s.to_le_bytes());
-                }
+        // If input is already f32 bytes (4 bytes/sample, from audio_tx), compress directly
+        // If input is i16 PCM (from pipe readers), convert first
+        let f32_bytes = if sample_size == 4 {
+            // Already f32 — zero conversion
+            pcm.to_vec()
+        } else {
+            // Convert i16 PCM to f32
+            let mut buf = Vec::with_capacity(pcm.len() * 2);
+            for chunk in pcm.chunks_exact(2) {
+                let s = i16::from_le_bytes([chunk[0], chunk[1]]) as f32 / i16::MAX as f32;
+                buf.extend_from_slice(&s.to_le_bytes());
             }
-            4 => {
-                // Already 32-bit — just reinterpret as f32
-                for chunk in pcm.chunks_exact(4) {
-                    let s = i32::from_le_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]) as f32
-                        / i32::MAX as f32;
-                    f32_bytes.extend_from_slice(&s.to_le_bytes());
-                }
-            }
-            _ => {
-                // Pass through raw bytes
-                f32_bytes = pcm.to_vec();
-            }
-        }
+            buf
+        };
 
+        let frames = f32_bytes.len() / (4 * channels);
         let compressed = lz4_flex::compress_prepend_size(&f32_bytes);
         let duration_ms = frames as f64 * 1000.0 / self.format.rate() as f64;
 

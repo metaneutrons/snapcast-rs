@@ -376,17 +376,23 @@ impl SnapServer {
                 }
                 frame = audio_rx.recv() => {
                     if let Some(frame) = frame {
-                        // Convert f32 to i16 PCM bytes
-                        let mut pcm = Vec::with_capacity(frame.samples.len() * 2);
-                        for &s in &frame.samples {
-                            let i = (s * i16::MAX as f32) as i16;
-                            pcm.extend_from_slice(&i.to_le_bytes());
-                        }
-                        // Broadcast as raw WireChunkData (bypasses encoder for now)
+                        // Convert f32 to raw bytes for the encoder
+                        // f32lz4: pass f32 bytes directly (zero conversion)
+                        // other codecs: convert f32 → i16 PCM
+                        let data = if self.config.codec == "f32lz4" {
+                            frame.samples.iter().flat_map(|s| s.to_le_bytes()).collect()
+                        } else {
+                            let mut pcm = Vec::with_capacity(frame.samples.len() * 2);
+                            for &s in &frame.samples {
+                                let i = (s * i16::MAX as f32) as i16;
+                                pcm.extend_from_slice(&i.to_le_bytes());
+                            }
+                            pcm
+                        };
                         let wire = stream::manager::WireChunkData {
                             stream_id: "external".into(),
                             timestamp_usec: frame.timestamp_usec,
-                            data: pcm,
+                            data,
                         };
                         let _ = audio_chunk_sender.send(wire);
                     }

@@ -98,11 +98,19 @@ pub async fn run_tcp(cfg: ControlConfig) -> Result<()> {
                                 }
                             }
                             RpcResult::Unknown => {
-                                // Extension point: forward to embedding app
+                                // Forward to embedding app for custom handling
                                 let _ = event_tx.send(ServerEvent::JsonRpc {
                                     client_id: client_id.clone(),
-                                    request,
+                                    request: request.clone(),
                                 }).await;
+                                // Return error immediately — if the app handles it,
+                                // it sends the response via SendJsonRpc
+                                let err = serde_json::json!({
+                                    "jsonrpc": "2.0",
+                                    "id": request["id"],
+                                    "error": {"code": -32601, "message": "Method not found"}
+                                });
+                                let _ = send_json(&mut writer, &err).await;
                             }
                         }
                     }

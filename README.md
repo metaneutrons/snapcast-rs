@@ -147,6 +147,28 @@ f32lz4 path (zero conversion, full precision):
 f32 → LZ4 compress → network → LZ4 decompress → f32
 ```
 
+### Bandwidth Comparison
+
+**48 kHz, 16-bit, stereo:**
+
+| Codec  | Precision | Bandwidth | vs PCM |
+|--------|-----------|-----------|--------|
+| PCM    | 16-bit    | 1,536 kbit/s | 100% |
+| FLAC   | 16-bit    | ~700 kbit/s | ~45% |
+| f32lz4 | 32-bit float | ~1,800 kbit/s | ~120% |
+
+**96 kHz, 24-bit, stereo:**
+
+| Codec  | Precision | Bandwidth | vs PCM |
+|--------|-----------|-----------|--------|
+| PCM    | 24-bit    | 4,608 kbit/s | 100% |
+| FLAC   | 24-bit    | ~2,500 kbit/s | ~55% |
+| f32lz4 | 32-bit float | ~3,600 kbit/s | ~78% |
+
+f32lz4 trades bandwidth for precision (32-bit float) and zero conversion latency. On a LAN (100+ Mbit/s) the extra bandwidth is negligible. On WiFi it's still fine.
+
+For bandwidth-constrained networks: use FLAC. For quality + simplicity: f32lz4.
+
 > ⚠️ **f32lz4 is not compatible with the original C++ Snapcast.** C++ clients/servers do not recognize this codec. Use `--codec flac` or `--codec pcm` for interoperability with C++ Snapcast.
 
 ## Building

@@ -31,6 +31,9 @@ Prefer sensible defaults and predictable project structure. Follow Rust ecosyste
 ### Fail Fast, Recover Gracefully
 Validate inputs early. Return errors immediately rather than propagating invalid state. Use `Result` and `?` — don't `unwrap()` in library code. Provide clear, actionable error messages that help the user fix the problem.
 
+### No Dead Code Exemptions
+Never add `#![allow(dead_code)]` or `#[allow(unused)]` to "fix later." If code is unused after a refactor, remove it in the same commit. Blanket allows hide real issues and accumulate technical debt. Fix it now or don't commit.
+
 ### Test-Driven Development
 Write tests first, then implementation. Every protocol message, every decoder, every state machine must have tests before the implementation is written. Use test vectors derived from the original C++ snapcast code to ensure byte-level compatibility.
 

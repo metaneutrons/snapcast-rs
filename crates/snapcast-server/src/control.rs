@@ -31,6 +31,10 @@ pub struct ControlConfig {
     pub settings_tx: mpsc::Sender<ClientSettingsUpdate>,
     /// Server buffer size in ms.
     pub buffer_ms: i32,
+    /// Registered custom JSON-RPC methods.
+    pub registered_methods: Arc<std::collections::HashSet<String>>,
+    /// Registered custom JSON-RPC notifications.
+    pub registered_notifications: Arc<std::collections::HashSet<String>>,
 }
 
 /// Runs the JSON-RPC control server on a TCP port.
@@ -50,6 +54,8 @@ pub async fn run_tcp(cfg: ControlConfig) -> Result<()> {
         let stream_control_tx = cfg.stream_control_tx.clone();
         let settings_tx = cfg.settings_tx.clone();
         let buffer_ms = cfg.buffer_ms;
+        let registered_methods = Arc::clone(&cfg.registered_methods);
+        let registered_notifications = Arc::clone(&cfg.registered_notifications);
 
         tokio::spawn(async move {
             let (reader, mut writer) = stream.into_split();
@@ -98,19 +104,45 @@ pub async fn run_tcp(cfg: ControlConfig) -> Result<()> {
                                 }
                             }
                             RpcResult::Unknown => {
-                                // Forward to embedding app for custom handling
-                                let _ = event_tx.send(ServerEvent::JsonRpc {
-                                    client_id: client_id.clone(),
-                                    request: request.clone(),
-                                }).await;
-                                // Return error immediately — if the app handles it,
-                                // it sends the response via SendJsonRpc
-                                let err = serde_json::json!({
-                                    "jsonrpc": "2.0",
-                                    "id": request["id"],
-                                    "error": {"code": -32601, "message": "Method not found"}
-                                });
-                                let _ = send_json(&mut writer, &err).await;
+                                let method_str = method.to_string();
+                                if registered_methods.contains(&method_str) {
+                                    // Registered method: forward and wait for response
+                                    let (resp_tx, resp_rx) = tokio::sync::oneshot::channel();
+                                    let _ = event_tx.send(ServerEvent::JsonRpc {
+                                        client_id: client_id.clone(),
+                                        request,
+                                        response_tx: Some(resp_tx),
+                                    }).await;
+                                    match tokio::time::timeout(
+                                        std::time::Duration::from_secs(5),
+                                        resp_rx,
+                                    ).await {
+                                        Ok(Ok(response)) => {
+                                            let _ = send_json(&mut writer, &response).await;
+                                        }
+                                        _ => {
+                                            let err = serde_json::json!({
+                                                "jsonrpc": "2.0", "id": null,
+                                                "error": {"code": -32603, "message": "Handler timeout"}
+                                            });
+                                            let _ = send_json(&mut writer, &err).await;
+                                        }
+                                    }
+                                } else if registered_notifications.contains(&method_str) {
+                                    // Registered notification: forward, no response
+                                    let _ = event_tx.send(ServerEvent::JsonRpc {
+                                        client_id: client_id.clone(),
+                                        request,
+                                        response_tx: None,
+                                    }).await;
+                                } else {
+                                    // Unknown method
+                                    let err = serde_json::json!({
+                                        "jsonrpc": "2.0", "id": request["id"],
+                                        "error": {"code": -32601, "message": "Method not found"}
+                                    });
+                                    let _ = send_json(&mut writer, &err).await;
+                                }
                             }
                         }
                     }

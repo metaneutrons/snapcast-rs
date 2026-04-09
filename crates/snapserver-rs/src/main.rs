@@ -162,7 +162,9 @@ fn main() -> anyhow::Result<()> {
                     ServerEvent::StreamStatus { stream_id, status } => {
                         tracing::info!(stream_id, status, "Stream status");
                     }
-                    ServerEvent::JsonRpc { client_id, request } => {
+                    ServerEvent::JsonRpc {
+                        client_id, request, ..
+                    } => {
                         tracing::debug!(client_id, ?request, "Unhandled JSON-RPC");
                     }
                 }

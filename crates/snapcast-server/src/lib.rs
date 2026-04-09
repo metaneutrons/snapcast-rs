@@ -34,18 +34,16 @@
 //! tokio::spawn(async move {
 //!     while let Some(event) = events.recv().await {
 //!         match event {
-//!             ServerEvent::JsonRpc { client_id, request } => {
+//!             ServerEvent::JsonRpc { client_id, request, response_tx } => {
 //!                 if request["method"] == "Client.SetEq" {
-//!                     // Handle custom EQ method
 //!                     let response = serde_json::json!({
 //!                         "jsonrpc": "2.0",
 //!                         "id": request["id"],
 //!                         "result": { "ok": true }
 //!                     });
-//!                     cmd.send(ServerCommand::SendJsonRpc {
-//!                         client_id: Some(client_id),
-//!                         message: response,
-//!                     }).await.ok();
+//!                     if let Some(tx) = response_tx {
+//!                         tx.send(response).ok();
+//!                     }
 //!                 }
 //!             }
 //!             _ => {}
@@ -63,7 +61,7 @@ use std::sync::Arc;
 use tokio::sync::mpsc;
 
 /// Interleaved f32 audio frame for server input.
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct AudioFrame {
     /// Interleaved f32 samples.
     pub samples: Vec<f32>,
@@ -86,7 +84,7 @@ pub mod stream;
 pub mod time;
 
 /// Events emitted by the server to the consumer.
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub enum ServerEvent {
     /// A client connected via the binary protocol.
     ClientConnected {
@@ -107,20 +105,23 @@ pub enum ServerEvent {
         /// New status.
         status: String,
     },
-    /// Unrecognized JSON-RPC request — extension point for custom methods.
+    /// Custom JSON-RPC request from a registered method or notification.
     ///
-    /// The embedding application should handle this and respond via
-    /// [`ServerCommand::SendJsonRpc`].
+    /// For registered methods: respond via the `response_tx` channel.
+    /// For registered notifications: `response_tx` is `None`.
+    /// For unregistered methods: not emitted (client gets -32601 error).
     JsonRpc {
         /// Control client that sent the request.
         client_id: String,
         /// The full JSON-RPC request object.
         request: serde_json::Value,
+        /// Response channel (Some for methods, None for notifications).
+        response_tx: Option<tokio::sync::oneshot::Sender<serde_json::Value>>,
     },
 }
 
 /// Commands the consumer sends to the server.
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub enum ServerCommand {
     /// Send a JSON-RPC response or notification to control client(s).
     ///
@@ -182,6 +183,10 @@ pub struct SnapServer {
     command_rx: Option<mpsc::Receiver<ServerCommand>>,
     audio_rx: Option<mpsc::Receiver<crate::AudioFrame>>,
     manager: Option<stream::manager::StreamManager>,
+    /// Registered custom JSON-RPC methods (app handles, waits for response).
+    registered_methods: std::collections::HashSet<String>,
+    /// Registered custom JSON-RPC notifications (app handles, no response).
+    registered_notifications: std::collections::HashSet<String>,
 }
 
 impl SnapServer {
@@ -206,6 +211,8 @@ impl SnapServer {
             command_rx: Some(command_rx),
             audio_rx: Some(audio_rx),
             manager: None,
+            registered_methods: std::collections::HashSet::new(),
+            registered_notifications: std::collections::HashSet::new(),
         };
         (server, event_rx, audio_tx)
     }
@@ -213,6 +220,19 @@ impl SnapServer {
     /// Set the stream manager (configured by the binary with stream readers).
     pub fn set_manager(&mut self, manager: stream::manager::StreamManager) {
         self.manager = Some(manager);
+    }
+
+    /// Register a custom JSON-RPC method. When received, the request is
+    /// forwarded to the app via `ServerEvent::JsonRpc` and the server waits
+    /// for the app to respond via `ServerCommand::SendJsonRpc`.
+    pub fn register_method(&mut self, method: &str) {
+        self.registered_methods.insert(method.to_string());
+    }
+
+    /// Register a custom JSON-RPC notification. When received, it's forwarded
+    /// to the app via `ServerEvent::JsonRpc`. No response is sent to the client.
+    pub fn register_notification(&mut self, method: &str) {
+        self.registered_notifications.insert(method.to_string());
     }
 
     /// Get a cloneable command sender.
@@ -296,6 +316,8 @@ impl SnapServer {
         let control_stream_tx = stream_ctrl_tx.clone();
         let control_settings_tx = settings_push_tx.clone();
         let control_buffer_ms = self.config.buffer_ms as i32;
+        let methods = Arc::new(self.registered_methods.clone());
+        let notifications = Arc::new(self.registered_notifications.clone());
 
         let control_handle = tokio::spawn(async move {
             if let Err(e) = control::run_tcp(control::ControlConfig {
@@ -307,6 +329,8 @@ impl SnapServer {
                 stream_control_tx: control_stream_tx,
                 settings_tx: control_settings_tx,
                 buffer_ms: control_buffer_ms,
+                registered_methods: Arc::clone(&methods),
+                registered_notifications: Arc::clone(&notifications),
             })
             .await
             {

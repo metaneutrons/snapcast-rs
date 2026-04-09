@@ -179,9 +179,9 @@ pub struct SnapClient {
     command_rx: Option<mpsc::Receiver<ClientCommand>>,
     audio_tx: Option<mpsc::Sender<AudioFrame>>,
     /// Shared time provider — accessible by the binary for audio output.
-    pub time_provider: std::sync::Arc<std::sync::Mutex<time_provider::TimeProvider>>,
+    time_provider: std::sync::Arc<std::sync::Mutex<time_provider::TimeProvider>>,
     /// Shared stream — accessible by the binary for audio output.
-    pub stream: std::sync::Arc<std::sync::Mutex<stream::Stream>>,
+    stream: std::sync::Arc<std::sync::Mutex<stream::Stream>>,
 }
 
 impl SnapClient {

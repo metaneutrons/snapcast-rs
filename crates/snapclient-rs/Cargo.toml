@@ -14,7 +14,6 @@ path = "src/main.rs"
 
 [dependencies]
 snapcast-client = { workspace = true }
-snapcast-proto = { workspace = true }
 tokio = { workspace = true }
 clap = { workspace = true }
 tracing = { workspace = true }
@@ -25,11 +24,7 @@ base64 = { workspace = true }
 libc = { workspace = true }
 cpal = "0.15"
 
-[target.'cfg(target_os = "macos")'.dependencies]
-coreaudio-rs = { workspace = true }
 
-[target.'cfg(target_os = "linux")'.dependencies]
-alsa = { workspace = true }
 
 [features]
 default = ["mdns"]

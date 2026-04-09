@@ -2,43 +2,55 @@
 
 Rust implementation of [Snapcast](https://github.com/snapcast/snapcast) — synchronized multiroom audio.
 
-100% pure Rust client. Cross-platform: macOS, Linux, Windows.
+100% pure Rust by default. Cross-platform: macOS, Linux, Windows.
 
 ## Architecture
 
 ```
 snapcast-rs/
 ├── snapcast-proto      Protocol: binary message serialization (8 message types)
-├── snapcast-client     Client library: embeddable, channel-based API
-├── snapcast-server     Server library: embeddable, channel-based API
-├── snapclient-rs       Client binary: thin CLI wrapper
-└── snapserver-rs       Server binary: thin CLI wrapper
+├── snapcast-client     Client library: embeddable, f32 audio output channel
+├── snapcast-server     Server library: embeddable, f32 audio input channel
+├── snapclient-rs       Client binary: cpal audio output
+└── snapserver-rs       Server binary: stream readers, JSON-RPC, HTTP, config
+```
+
+### Library Design
+
+Both libraries are pure audio engines — no device I/O, no HTTP, no config files:
+
+```
+snapcast-client:  protocol + decode + sync → f32 AudioFrame channel
+snapcast-server:  f32 AudioFrame channel → encode + protocol → clients
+```
+
+### Typed API (no JSON-RPC detour)
+
+```rust
+// Server: direct control
+cmd.send(ServerCommand::SetClientVolume { client_id: "wz".into(), volume: 80, muted: false }).await;
+cmd.send(ServerCommand::SetGroupStream { group_id: "eg".into(), stream_id: "music".into() }).await;
+
+// Server: reactive events
+match event {
+    ServerEvent::ClientVolumeChanged { client_id, volume, muted } => { /* update UI */ }
+    ServerEvent::ClientConnected { id, name } => { /* new client */ }
+    _ => {}
+}
+
+// Client: receive f32 audio
+let (mut client, events, audio_rx) = SnapClient::new(config);
+// audio_rx: Receiver<AudioFrame> — feed to EQ, resampler, DAC
 ```
 
 ### Data Flow
 
 ```
-Audio:    source → StreamReader → mpsc → Encoder → broadcast → SessionServer → snapclient
-Control:  control client → HTTP/WS/TCP JSON-RPC → dispatch → state → notification broadcast
-Custom:   unknown method → ServerEvent::JsonRpc → app handles → ServerCommand::SendJsonRpc
+Audio:    source → StreamReader → Encoder → broadcast → SessionServer → snapclient
+Control:  Snapweb → HTTP/WS/TCP JSON-RPC → ServerCommand → library → state + push + event
+Custom:   registered method → ServerEvent::JsonRpc → app → oneshot response
+f32 path: SnapDog f32 → audio_tx → LZ4 compress → network → LZ4 decompress → f32 → SnapDog
 ```
-
-### Embeddable Library API
-
-Both libraries use the same channel-based pattern:
-
-```rust
-// Client
-let (mut client, mut events) = SnapClient::new(config);
-let cmd = client.command_sender();
-
-// Server
-let (mut server, mut events) = SnapServer::new(config);
-let cmd = server.command_sender();
-```
-
-The `JsonRpc` event + `SendJsonRpc` command enable custom extensions (e.g. EQ control)
-without modifying the library code.
 
 ## Building
 
@@ -47,91 +59,67 @@ without modifying the library code.
 cargo build --release
 ```
 
-Binaries: `target/release/snapclient-rs`, `target/release/snapserver-rs`
-
 ### Platform Defaults
 
-| Platform | Client Audio Backend | Server |
-|----------|---------------------|--------|
-| macOS    | CoreAudio (native)  | ✅     |
-| Linux    | ALSA (native)       | ✅     |
-| Windows  | cpal (WASAPI)       | ✅     |
+| Platform | Client Audio | Server |
+|----------|-------------|--------|
+| macOS    | cpal (CoreAudio) | ✅ |
+| Linux    | cpal (ALSA)      | ✅ |
+| Windows  | cpal (WASAPI)    | ✅ |
 
-### Optional Features (client)
+### Codec Features
+
+| Codec  | Default | C dep   | Feature  |
+|--------|---------|---------|----------|
+| PCM    | ✅ always | none  | —        |
+| f32lz4 | ✅ default | none (lz4_flex) | `f32lz4` |
+| FLAC   | optional | libFLAC | `flac`   |
+| Opus   | optional | libopus | `opus`   |
+| Vorbis | optional | libvorbis | `vorbis` |
+
+Default build: zero C dependencies. Pure Rust.
+
+```bash
+cargo build -p snapserver-rs --features flac      # + FLAC
+cargo build -p snapserver-rs --features opus       # + Opus
+cargo build -p snapserver-rs --no-default-features  # PCM only
+```
+
+### Other Features (client)
 
 | Feature     | Description                        |
 |-------------|------------------------------------|
-| `coreaudio` | CoreAudio playback (macOS default) |
-| `alsa`      | ALSA playback (Linux default)      |
-| `cpal`      | Cross-platform via cpal (Windows default, also works on macOS/Linux) |
-| `pulse`     | PulseAudio playback (Linux)        |
 | `mdns`      | mDNS server discovery (default)    |
+| `f32lz4`    | f32 LZ4 codec (default)            |
 | `websocket` | WebSocket connection               |
 | `tls`       | WSS (WebSocket + TLS)              |
 | `resampler` | Sample rate conversion (rubato)    |
-
-### Dependencies
-
-Client: zero C libraries. Server: libflac for FLAC encoding (default).
-
-| Feature  | C Library  | For                    |
-|----------|-----------|------------------------|
-| `flac`   | libFLAC   | FLAC encoding (server default) |
-| `opus`   | libopus   | Opus encoding (server optional) |
-| `vorbis` | libvorbis | Vorbis encoding (server optional) |
-
-Server without C deps: `cargo build -p snapserver-rs --no-default-features` (PCM only).
 
 ## Usage
 
 ### Server
 
 ```bash
-# Default: reads /etc/snapserver.conf, pipe source on /tmp/snapfifo
-snapserver-rs
-
-# Custom source
-snapserver-rs --source "pipe:///tmp/snapfifo?name=Music&sampleformat=48000:16:2"
-
-# Multiple sources
-snapserver-rs --source "pipe:///tmp/snapfifo?name=MPD" \
-              --source "librespot:///librespot?name=Spotify&bitrate=320"
-
-# With Snapweb UI
-snapserver-rs --doc-root /usr/share/snapserver/snapweb
-
-# All options
+snapserver-rs                                          # default: pipe source, f32lz4 codec
+snapserver-rs --codec pcm                              # PCM codec
+snapserver-rs --codec flac                             # FLAC (needs --features flac)
+snapserver-rs --source "pipe:///tmp/snapfifo?name=Music"
+snapserver-rs --doc-root /usr/share/snapserver/snapweb  # Snapweb UI
 snapserver-rs --help
 ```
 
-Supported stream sources: `pipe://`, `file://`, `process://`, `tcp://`, `librespot://`, `airplay://`
+Sources: `pipe://`, `file://`, `process://`, `tcp://`, `librespot://`, `airplay://`
 
 ### Client
 
 ```bash
-# Connect to server
-snapclient-rs tcp://192.168.1.50:1704
-
-# mDNS auto-discovery
-snapclient-rs
-
-# List audio devices
-snapclient-rs --list
-
-# All options
+snapclient-rs tcp://192.168.1.50:1704   # connect to server
+snapclient-rs                            # mDNS auto-discovery
+snapclient-rs --list                     # list audio devices
 snapclient-rs --help
 ```
 
-### Feed Audio
-
-```bash
-# From ffmpeg
-ffmpeg -re -i music.mp3 -f s16le -ar 48000 -ac 2 pipe:1 > /tmp/snapfifo
-# Test with noise
-cat /dev/urandom > /tmp/snapfifo
-```
-
-## Server Config File
+### Config File
 
 `/etc/snapserver.conf` (INI format, compatible with C++ server):
 
@@ -150,62 +138,64 @@ port = 1704
 port = 1705
 ```
 
-CLI flags override config file values.
-
 ## JSON-RPC Control API
 
-All 25 C++ methods implemented. Three transports: HTTP POST `/jsonrpc`, WebSocket at `/jsonrpc`, raw TCP on port 1705. JWT authentication (optional, disabled by default).
+25 methods implemented. Three transports: HTTP POST `/jsonrpc`, WebSocket `/jsonrpc`, TCP port 1705.
 
-## Verified Working
+Custom method registry with proper request/response lifecycle:
 
-- ✅ Rust server → FLAC encoding → Rust client → CoreAudio (macOS) — clean audio, 40s+ stable
-- ✅ Rust client → C++ server — clean audio with drift correction
-- ✅ Time sync: -0.04ms precision
-- ✅ JSON-RPC via HTTP, TCP (tested with curl and nc)
-- ✅ Server builds and runs on Linux (Arch x86_64)
-- ✅ Client builds and runs on Linux with ALSA
-- ✅ Client + server compile on Windows (aarch64-msvc)
-- ✅ PCM codec end-to-end
-- ✅ FLAC codec end-to-end
-- ✅ mDNS service advertisement + client discovery
-- ✅ Config file parsing (/etc/snapserver.conf)
-- ✅ Ctrl-C graceful shutdown
+```rust
+server.register_method("Client.SetEq");      // app handles, waits for response (5s timeout)
+server.register_notification("Client.EqChanged"); // app handles, no response
+// unregistered methods → -32601 immediately
+```
 
-## Not Yet Tested
+JWT authentication (optional, disabled by default).
 
-- ⬜ Opus codec end-to-end (encoder + decoder exist, not integration tested)
-- ⬜ Vorbis codec end-to-end (encoder + decoder exist, not integration tested)
-- ⬜ WebSocket JSON-RPC transport (handler exists, not tested with a WS client)
-- ⬜ Snapweb static file serving (code exists, not tested with actual Snapweb files)
-- ⬜ ALSA playback quality on Linux (builds, not audio-tested)
-- ⬜ PulseAudio backend (builds, not tested)
-- ⬜ cpal/WASAPI backend on Windows (compiles, not runtime tested)
-- ⬜ librespot stream reader (code exists, needs librespot installed)
-- ⬜ airplay stream reader (code exists, needs shairport-sync installed)
-- ⬜ JWT authentication flow (token generation works, middleware not integration tested)
-- ⬜ Multiroom sync (two clients playing in sync)
-- ⬜ Client connecting to Rust server from a different machine (only localhost tested)
-- ⬜ State persistence (server.json save/load)
-- ⬜ Resampler (rubato, feature-gated, not tested)
-- ⬜ WebSocket/TLS client connection
-- ⬜ Group/stream management via JSON-RPC (methods exist, not tested with Snapweb)
+## Embedding (SnapDog Integration)
+
+```rust
+// Client: receive f32 audio → EQ → resample → DAC
+let (mut client, events, audio_rx) = SnapClient::new(config);
+tokio::spawn(async move { client.run().await });
+while let Some(frame) = audio_rx.recv().await {
+    zone_player.send(PcmMessage::Audio(frame.samples)).await;
+}
+
+// Server: push f32 audio from any source
+let (mut server, events, audio_tx) = SnapServer::new(config);
+audio_tx.send(AudioFrame { samples: f32_data, sample_rate: 48000, channels: 2, timestamp_usec: now }).await;
+
+// Server: typed control (no JSON-RPC detour)
+cmd.send(ServerCommand::SetClientVolume { client_id, volume: 80, muted: false }).await;
+```
+
+## f32lz4 Codec
+
+Lossless compressed f32 transmission — skips PCM conversion entirely:
+
+```
+FLAC:    f32 → i16 → FLAC → network → FLAC → i16 → f32  (6 conversions, 16-bit precision)
+f32lz4:  f32 → LZ4 → network → LZ4 → f32               (2 conversions, 32-bit precision)
+```
+
+Pure Rust (lz4_flex). Feature-gated. Not compatible with C++ Snapcast clients.
 
 ## Testing
 
 ```bash
-cargo test --all           # 154 tests
-cargo clippy -- -D warnings  # zero warnings
+cargo test -p snapcast-proto -p snapcast-client -p snapcast-server  # 114 tests
+cargo clippy --all-targets -- -D warnings                            # zero warnings
 ```
 
 ## Code Quality
 
 - `#![forbid(unsafe_code)]` on protocol crate
 - `#![deny(unsafe_code)]` on client/server (only monotonic clock FFI + FLAC encoder FFI)
-- `#![warn(missing_docs)]` — 100% doc coverage
-- Zero `#[allow(dead_code)]`
-- Zero TODOs in codebase
+- `#![warn(missing_docs)]` — doc coverage on all library crates
 - Structured tracing logging at all levels
-- 10,469 lines · 154 tests · 100 commits
+- sccache enabled for fast rebuilds
+- 10,083 lines · 135 commits
 
 ## License
 

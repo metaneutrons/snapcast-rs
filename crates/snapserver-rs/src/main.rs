@@ -71,7 +71,7 @@ fn main() -> anyhow::Result<()> {
 
     let rt = tokio::runtime::Runtime::new()?;
     rt.block_on(async {
-        let (mut server, mut events) = SnapServer::new(config);
+        let (mut server, mut events, _audio_tx) = SnapServer::new(config);
         let cmd = server.command_sender();
 
         tokio::spawn(async move {

@@ -27,7 +27,7 @@
 //!
 //! # async fn example() -> anyhow::Result<()> {
 //! let config = ServerConfig::default();
-//! let (mut server, mut events) = SnapServer::new(config);
+//! let (mut server, mut events, _audio_tx) = SnapServer::new(config);
 //! let cmd = server.command_sender();
 //!
 //! // Handle events (including custom JSON-RPC)
@@ -61,6 +61,19 @@
 use std::sync::Arc;
 
 use tokio::sync::mpsc;
+
+/// Interleaved f32 audio frame for server input.
+#[derive(Debug, Clone)]
+pub struct AudioFrame {
+    /// Interleaved f32 samples.
+    pub samples: Vec<f32>,
+    /// Sample rate in Hz.
+    pub sample_rate: u32,
+    /// Number of channels.
+    pub channels: u16,
+    /// Timestamp in microseconds.
+    pub timestamp_usec: i64,
+}
 
 pub mod auth;
 pub mod config;
@@ -169,20 +182,32 @@ pub struct SnapServer {
     event_tx: mpsc::Sender<ServerEvent>,
     command_tx: mpsc::Sender<ServerCommand>,
     command_rx: Option<mpsc::Receiver<ServerCommand>>,
+    audio_rx: Option<mpsc::Receiver<crate::AudioFrame>>,
 }
 
 impl SnapServer {
-    /// Create a new server. Returns the server and a receiver for events.
-    pub fn new(config: ServerConfig) -> (Self, mpsc::Receiver<ServerEvent>) {
+    /// Create a new server. Returns the server, event receiver, and audio input sender.
+    ///
+    /// The `audio_tx` sender allows the embedding app to push PCM audio directly
+    /// into the server as an alternative to pipe/file/process stream readers.
+    pub fn new(
+        config: ServerConfig,
+    ) -> (
+        Self,
+        mpsc::Receiver<ServerEvent>,
+        mpsc::Sender<crate::AudioFrame>,
+    ) {
         let (event_tx, event_rx) = mpsc::channel(256);
         let (command_tx, command_rx) = mpsc::channel(64);
+        let (audio_tx, audio_rx) = mpsc::channel(256);
         let server = Self {
             config,
             event_tx,
             command_tx,
             command_rx: Some(command_rx),
+            audio_rx: Some(audio_rx),
         };
-        (server, event_rx)
+        (server, event_rx, audio_tx)
     }
 
     /// Get a cloneable command sender.
@@ -199,6 +224,11 @@ impl SnapServer {
     pub async fn run(&mut self) -> anyhow::Result<()> {
         let mut command_rx = self
             .command_rx
+            .take()
+            .ok_or_else(|| anyhow::anyhow!("run() already called"))?;
+
+        let mut audio_rx = self
+            .audio_rx
             .take()
             .ok_or_else(|| anyhow::anyhow!("run() already called"))?;
 
@@ -240,6 +270,7 @@ impl SnapServer {
         let header = header.to_vec();
 
         let chunk_sender = manager.chunk_sender();
+        let audio_chunk_sender = chunk_sender.clone();
         let session_event_tx = event_tx.clone();
 
         // Start session server (shared for settings push)
@@ -351,6 +382,23 @@ impl SnapServer {
                             command = %ctrl.command,
                             "Stream control (routing not yet implemented for process stdin)"
                         );
+                    }
+                }
+                frame = audio_rx.recv() => {
+                    if let Some(frame) = frame {
+                        // Convert f32 to i16 PCM bytes
+                        let mut pcm = Vec::with_capacity(frame.samples.len() * 2);
+                        for &s in &frame.samples {
+                            let i = (s * i16::MAX as f32) as i16;
+                            pcm.extend_from_slice(&i.to_le_bytes());
+                        }
+                        // Broadcast as raw WireChunkData (bypasses encoder for now)
+                        let wire = stream::manager::WireChunkData {
+                            stream_id: "external".into(),
+                            timestamp_usec: frame.timestamp_usec,
+                            data: pcm,
+                        };
+                        let _ = audio_chunk_sender.send(wire);
                     }
                 }
             }

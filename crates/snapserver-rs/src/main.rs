@@ -77,6 +77,18 @@ fn main() -> anyhow::Result<()> {
     rt.block_on(async {
         let (mut server, mut events, _audio_tx) = SnapServer::new(server_config.clone());
 
+        // Ctrl-C handler — must be first so it works even if setup fails
+        let cmd = server.command_sender();
+        tokio::spawn(async move {
+            tokio::signal::ctrl_c().await.ok();
+            tracing::info!("Received Ctrl-C, shutting down");
+            cmd.send(ServerCommand::Stop).await.ok();
+            std::thread::spawn(|| {
+                std::thread::sleep(std::time::Duration::from_secs(2));
+                std::process::exit(0);
+            });
+        });
+
         // Set up stream manager with configured sources
         let default_format: snapcast_proto::SampleFormat = server_config
             .sample_format
@@ -137,8 +149,6 @@ fn main() -> anyhow::Result<()> {
             .map_err(|e| tracing::warn!(error = %e, "mDNS failed"))
             .ok();
 
-        let cmd = server.command_sender();
-
         // Log events
         tokio::spawn(async move {
             while let Some(event) = events.recv().await {
@@ -157,17 +167,6 @@ fn main() -> anyhow::Result<()> {
                     }
                 }
             }
-        });
-
-        // Ctrl-C
-        tokio::spawn(async move {
-            tokio::signal::ctrl_c().await.ok();
-            tracing::info!("Received Ctrl-C, shutting down");
-            cmd.send(ServerCommand::Stop).await.ok();
-            std::thread::spawn(|| {
-                std::thread::sleep(std::time::Duration::from_secs(2));
-                std::process::exit(0);
-            });
         });
 
         server.run().await

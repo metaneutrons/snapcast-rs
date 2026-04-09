@@ -180,6 +180,22 @@ ffmpeg -re -i music.mp3 -f s16le -ar 48000 -ac 2 pipe:1 > /tmp/snapfifo
 - Structured tracing logging
 - sccache enabled
 
+## Releases
+
+Pre-built binaries for every release:
+
+| Platform | Client | Server | FLAC |
+|----------|--------|--------|------|
+| Linux x86_64 | ✅ | ✅ | ✅ |
+| Linux aarch64 | ✅ | ✅ | ✅ |
+| macOS x86_64 | ✅ | ✅ | ✅ |
+| macOS aarch64 | ✅ | ✅ | ✅ |
+| Windows x86_64 | ✅ | ✅ | — |
+
+Download from [GitHub Releases](https://github.com/metaneutrons/snapcast-rs/releases).
+
+Library crates published to [crates.io](https://crates.io): `snapcast-proto`, `snapcast-client`, `snapcast-server`.
+
 ## License
 
 GPL-3.0-only — same as the original Snapcast.

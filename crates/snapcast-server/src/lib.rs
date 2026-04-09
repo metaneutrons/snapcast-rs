@@ -148,7 +148,7 @@ pub struct ServerConfig {
     pub doc_root: Option<String>,
     /// Audio buffer size in milliseconds. Default: 1000.
     pub buffer_ms: u32,
-    /// Default codec: "flac", "pcm", "opus", "ogg". Default: "flac".
+    /// Default codec: "f32lz4", "pcm", "opus", "ogg". Default: "f32lz4".
     pub codec: String,
     /// Default sample format. Default: 48000:16:2.
     pub sample_format: String,
@@ -166,7 +166,7 @@ impl Default for ServerConfig {
             http_port: 1780,
             doc_root: None,
             buffer_ms: 1000,
-            codec: "flac".into(),
+            codec: "f32lz4".into(),
             sample_format: "48000:16:2".into(),
             sources: vec!["pipe:///tmp/snapfifo?name=default".into()],
             state_file: Some("/var/lib/snapserver/server.json".into()),

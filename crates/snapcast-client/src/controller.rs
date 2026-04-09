@@ -42,14 +42,15 @@ impl Controller {
         settings: ClientSettings,
         event_tx: mpsc::Sender<ClientEvent>,
         command_rx: mpsc::Receiver<ClientCommand>,
-        #[allow(dead_code)] // TODO: wire in step 1
         audio_tx: mpsc::Sender<crate::AudioFrame>,
+        time_provider: Arc<Mutex<TimeProvider>>,
+        stream: Arc<Mutex<Stream>>,
     ) -> Self {
         Self {
             connection: TcpConnection::new(&settings.server.host, settings.server.port),
             settings,
-            time_provider: Arc::new(Mutex::new(TimeProvider::new())),
-            stream: None,
+            time_provider,
+            stream: Some(stream),
             decoder: None,
             sample_format: SampleFormat::default(),
             server_settings: None,

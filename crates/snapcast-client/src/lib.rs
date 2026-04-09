@@ -178,6 +178,10 @@ pub struct SnapClient {
     command_tx: mpsc::Sender<ClientCommand>,
     command_rx: Option<mpsc::Receiver<ClientCommand>>,
     audio_tx: Option<mpsc::Sender<AudioFrame>>,
+    /// Shared time provider — accessible by the binary for audio output.
+    pub time_provider: std::sync::Arc<std::sync::Mutex<time_provider::TimeProvider>>,
+    /// Shared stream — accessible by the binary for audio output.
+    pub stream: std::sync::Arc<std::sync::Mutex<stream::Stream>>,
 }
 
 impl SnapClient {
@@ -192,12 +196,19 @@ impl SnapClient {
         let (event_tx, event_rx) = mpsc::channel(256);
         let (command_tx, command_rx) = mpsc::channel(64);
         let (audio_tx, audio_rx) = mpsc::channel(256);
+        let time_provider =
+            std::sync::Arc::new(std::sync::Mutex::new(time_provider::TimeProvider::new()));
+        let stream = std::sync::Arc::new(std::sync::Mutex::new(stream::Stream::new(
+            SampleFormat::default(),
+        )));
         let client = Self {
             config,
             event_tx,
             command_tx,
             command_rx: Some(command_rx),
             audio_tx: Some(audio_tx),
+            time_provider,
+            stream,
         };
         (client, event_rx, audio_rx)
     }
@@ -229,8 +240,14 @@ impl SnapClient {
             .take()
             .ok_or_else(|| anyhow::anyhow!("run() already called"))?;
 
-        let mut ctrl =
-            controller::Controller::new(settings, self.event_tx.clone(), command_rx, audio_tx);
+        let mut ctrl = controller::Controller::new(
+            settings,
+            self.event_tx.clone(),
+            command_rx,
+            audio_tx,
+            std::sync::Arc::clone(&self.time_provider),
+            std::sync::Arc::clone(&self.stream),
+        );
         ctrl.run().await
     }
 }

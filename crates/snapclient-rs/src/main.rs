@@ -37,10 +37,13 @@ fn main() -> anyhow::Result<()> {
     rt.block_on(async {
         let (mut client, mut events, audio_rx) = SnapClient::new(config);
         let cmd = client.command_sender();
+        let stream = std::sync::Arc::clone(&client.stream);
+        let time_provider = std::sync::Arc::clone(&client.time_provider);
+        let format = snapcast_proto::SampleFormat::new(48000, 16, 2); // updated on StreamStarted
 
-        // Audio output: read f32 from library, write to device
+        // Audio output: cpal callback pulls from Stream directly
         tokio::spawn(async move {
-            player::play_audio(audio_rx).await;
+            player::play_audio(audio_rx, stream, time_provider, format).await;
         });
 
         // Log events

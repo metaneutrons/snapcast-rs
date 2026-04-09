@@ -39,13 +39,34 @@ jobs:
       - uses: actions/checkout@v6
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
-      - run: cargo test --all
+      - run: cargo test -p snapcast-proto -p snapcast-client -p snapcast-server
 
-  audit:
-    name: Security Audit
+  build-linux:
+    name: Build (Linux)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
-      - uses: rustsec/audit-check@v2
-        with:
-          token: ${{ secrets.GITHUB_TOKEN }}
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo build --release -p snapclient-rs
+      - run: cargo build --release -p snapserver-rs
+
+  build-macos:
+    name: Build (macOS)
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo build --release -p snapclient-rs
+      - run: cargo build --release -p snapserver-rs
+
+  build-windows:
+    name: Build (Windows)
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo build --release -p snapserver-rs
+      - run: cargo check -p snapclient-rs

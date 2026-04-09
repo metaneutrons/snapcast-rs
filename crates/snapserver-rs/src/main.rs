@@ -167,6 +167,7 @@ fn main() -> anyhow::Result<()> {
                     } => {
                         tracing::debug!(client_id, ?request, "Unhandled JSON-RPC");
                     }
+                    _ => {}
                 }
             }
         });

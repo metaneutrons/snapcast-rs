@@ -98,6 +98,43 @@ pub enum ServerEvent {
         /// Unique client identifier.
         id: String,
     },
+    /// A client's volume changed (from JSON-RPC or typed API).
+    ClientVolumeChanged {
+        /// Client ID.
+        client_id: String,
+        /// New volume (0–100).
+        volume: u16,
+        /// Mute state.
+        muted: bool,
+    },
+    /// A client's latency changed.
+    ClientLatencyChanged {
+        /// Client ID.
+        client_id: String,
+        /// New latency in ms.
+        latency: i32,
+    },
+    /// A client's name changed.
+    ClientNameChanged {
+        /// Client ID.
+        client_id: String,
+        /// New name.
+        name: String,
+    },
+    /// A group's stream assignment changed.
+    GroupStreamChanged {
+        /// Group ID.
+        group_id: String,
+        /// New stream ID.
+        stream_id: String,
+    },
+    /// A group's mute state changed.
+    GroupMuteChanged {
+        /// Group ID.
+        group_id: String,
+        /// Mute state.
+        muted: bool,
+    },
     /// A stream's status changed (playing, idle, unknown).
     StreamStatus {
         /// Stream identifier.
@@ -106,10 +143,6 @@ pub enum ServerEvent {
         status: String,
     },
     /// Custom JSON-RPC request from a registered method or notification.
-    ///
-    /// For registered methods: respond via the `response_tx` channel.
-    /// For registered notifications: `response_tx` is `None`.
-    /// For unregistered methods: not emitted (client gets -32601 error).
     JsonRpc {
         /// Control client that sent the request.
         client_id: String,
@@ -448,40 +481,45 @@ impl SnapServer {
                                 c.config.volume.muted = muted;
                             }
                             session_srv.push_settings(jsonrpc::ClientSettingsUpdate {
-                                client_id,
+                                client_id: client_id.clone(),
                                 buffer_ms: self.config.buffer_ms as i32,
                                 latency: 0,
                                 volume,
                                 muted,
                             }).await;
+                            let _ = event_tx.try_send(ServerEvent::ClientVolumeChanged { client_id, volume, muted });
                         }
                         Some(ServerCommand::SetClientLatency { client_id, latency }) => {
                             let mut s = shared_state.lock().await;
                             if let Some(c) = s.clients.get_mut(&client_id) {
                                 c.config.latency = latency;
                                 session_srv.push_settings(jsonrpc::ClientSettingsUpdate {
-                                    client_id,
+                                    client_id: client_id.clone(),
                                     buffer_ms: self.config.buffer_ms as i32,
                                     latency,
                                     volume: c.config.volume.percent,
                                     muted: c.config.volume.muted,
                                 }).await;
                             }
+                            let _ = event_tx.try_send(ServerEvent::ClientLatencyChanged { client_id, latency });
                         }
                         Some(ServerCommand::SetClientName { client_id, name }) => {
                             let mut s = shared_state.lock().await;
                             if let Some(c) = s.clients.get_mut(&client_id) {
-                                c.config.name = name;
+                                c.config.name = name.clone();
                             }
+                            let _ = event_tx.try_send(ServerEvent::ClientNameChanged { client_id, name });
                         }
                         Some(ServerCommand::SetGroupStream { group_id, stream_id }) => {
                             shared_state.lock().await.set_group_stream(&group_id, &stream_id);
+                            let _ = event_tx.try_send(ServerEvent::GroupStreamChanged { group_id, stream_id });
                         }
                         Some(ServerCommand::SetGroupMute { group_id, muted }) => {
                             let mut s = shared_state.lock().await;
                             if let Some(g) = s.groups.iter_mut().find(|g| g.id == group_id) {
                                 g.muted = muted;
                             }
+                            let _ = event_tx.try_send(ServerEvent::GroupMuteChanged { group_id, muted });
                         }
                         Some(ServerCommand::SetGroupName { group_id, name }) => {
                             let mut s = shared_state.lock().await;

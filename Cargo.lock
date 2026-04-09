@@ -2309,6 +2309,7 @@ dependencies = [
  "cpal",
  "libc",
  "snapcast-client",
+ "snapcast-proto",
  "tokio",
  "tracing",
  "tracing-appender",

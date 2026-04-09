@@ -16,6 +16,8 @@ serde_json = { workspace = true }
 tracing = { workspace = true }
 anyhow = { workspace = true }
 libc = { workspace = true }
+hostname = { workspace = true }
+mdns-sd = { workspace = true }
 
 # Encoders — all optional
 libflac-sys = { version = "0.3", optional = true }

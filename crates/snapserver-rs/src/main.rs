@@ -3,7 +3,6 @@ mod config;
 mod control;
 mod http;
 mod jsonrpc;
-mod mdns;
 mod stream;
 
 use clap::Parser;
@@ -149,9 +148,6 @@ fn main() -> anyhow::Result<()> {
         server.set_manager(manager);
 
         // mDNS
-        let _mdns = mdns::MdnsAdvertiser::new(server_config.stream_port)
-            .map_err(|e| tracing::warn!(error = %e, "mDNS failed"))
-            .ok();
 
         // JSON-RPC control servers
         let shared_state = std::sync::Arc::new(tokio::sync::Mutex::new(

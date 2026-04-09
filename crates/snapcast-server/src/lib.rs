@@ -74,6 +74,7 @@ pub struct AudioFrame {
 }
 
 pub mod encoder;
+pub mod mdns;
 pub mod session;
 pub mod state;
 pub mod stream;
@@ -354,6 +355,11 @@ impl SnapServer {
         let event_tx = self.event_tx.clone();
 
         tracing::info!(stream_port = self.config.stream_port, "Snapserver starting");
+
+        // Advertise via mDNS (protocol-level discovery)
+        let _mdns = mdns::MdnsAdvertiser::new(self.config.stream_port)
+            .map_err(|e| tracing::warn!(error = %e, "mDNS advertisement failed"))
+            .ok();
 
         let manager = self.manager.take().unwrap_or_default();
 

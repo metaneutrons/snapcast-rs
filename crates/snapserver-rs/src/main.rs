@@ -97,8 +97,11 @@ fn main() -> anyhow::Result<()> {
             tokio::signal::ctrl_c().await.ok();
             tracing::info!("Received Ctrl-C, shutting down");
             cmd.send(ServerCommand::Stop).await.ok();
-            tokio::time::sleep(std::time::Duration::from_secs(1)).await;
-            std::process::exit(0);
+            // Force exit on OS thread — tokio may be blocked by mDNS shutdown
+            std::thread::spawn(|| {
+                std::thread::sleep(std::time::Duration::from_secs(2));
+                std::process::exit(0);
+            });
         });
 
         server.run().await

@@ -2,7 +2,7 @@
 
 use ini::Ini;
 
-use crate::ServerConfig;
+use snapcast_server::ServerConfig;
 
 /// Parse a snapserver.conf INI file into a [`ServerConfig`].
 pub fn parse_config_file(path: &str) -> ServerConfig {

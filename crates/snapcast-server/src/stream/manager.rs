@@ -8,7 +8,7 @@ use tokio::sync::{broadcast, mpsc};
 use tokio::task::JoinHandle;
 
 use crate::encoder::{self, Encoder};
-use crate::stream::{self, StreamReader};
+use crate::stream;
 
 /// An encoded chunk ready to be sent to clients as a WireChunk.
 #[derive(Debug, Clone)]
@@ -26,7 +26,6 @@ struct ManagedStream {
     format: SampleFormat,
     header: Vec<u8>,
     codec: String,
-    _reader: StreamReader,
     _encode_handle: JoinHandle<()>,
 }
 
@@ -63,33 +62,25 @@ impl StreamManager {
         self.chunk_tx.subscribe()
     }
 
-    /// Add a stream from a source URI. Starts reading and encoding immediately.
-    pub fn add_stream(
+    /// Add a stream from a PCM chunk receiver. The caller owns the reader.
+    pub fn add_stream_from_receiver(
         &mut self,
-        source_uri: &str,
-        default_format: SampleFormat,
+        name: &str,
+        format: SampleFormat,
         codec: &str,
         codec_options: &str,
+        reader_rx: mpsc::Receiver<super::PcmChunk>,
     ) -> Result<()> {
-        let mut reader = stream::create(source_uri, default_format)?;
-        let name = reader.name.clone();
-        let format = reader.format;
-
-        // Create encoder to capture header
         let enc = encoder::create(codec, format, codec_options)?;
         let header = enc.header().to_vec();
         let codec_name = enc.name().to_string();
-        drop(enc); // Don't move across threads — recreate on encode thread
+        drop(enc);
 
-        let stream_id = name.clone();
+        let stream_id = name.to_string();
         let chunk_tx = self.chunk_tx.clone();
         let codec_str = codec.to_string();
         let opts_str = codec_options.to_string();
 
-        // Take the receiver from the reader
-        let reader_rx = std::mem::replace(&mut reader.rx, mpsc::channel(1).1);
-
-        // Encoder may be !Send (FLAC/libflac), so create + run on a dedicated OS thread
         let encode_handle = {
             let (done_tx, done_rx) = tokio::sync::oneshot::channel::<()>();
             std::thread::spawn(move || {
@@ -105,12 +96,11 @@ impl StreamManager {
         };
 
         self.streams.insert(
-            name.clone(),
+            name.to_string(),
             ManagedStream {
                 format,
                 header,
                 codec: codec_name.clone(),
-                _reader: reader,
                 _encode_handle: encode_handle,
             },
         );

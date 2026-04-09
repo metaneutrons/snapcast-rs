@@ -7,9 +7,9 @@ use tokio::process::Command;
 use tokio::sync::mpsc;
 use tokio::task::JoinHandle;
 
-use super::PcmChunk;
 use super::uri::StreamUri;
-use crate::time::ChunkTimestamper;
+use snapcast_server::stream::PcmChunk;
+use snapcast_server::time::ChunkTimestamper;
 
 /// Start a child process and read PCM from its stdout.
 pub fn start(

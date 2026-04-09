@@ -76,12 +76,10 @@ pub struct AudioFrame {
 }
 
 pub mod auth;
-pub mod config;
 pub mod control;
 pub mod encoder;
 pub mod http;
 pub mod jsonrpc;
-pub mod mdns;
 pub mod session;
 pub mod state;
 pub mod stream;
@@ -183,6 +181,7 @@ pub struct SnapServer {
     command_tx: mpsc::Sender<ServerCommand>,
     command_rx: Option<mpsc::Receiver<ServerCommand>>,
     audio_rx: Option<mpsc::Receiver<crate::AudioFrame>>,
+    manager: Option<stream::manager::StreamManager>,
 }
 
 impl SnapServer {
@@ -206,8 +205,14 @@ impl SnapServer {
             command_tx,
             command_rx: Some(command_rx),
             audio_rx: Some(audio_rx),
+            manager: None,
         };
         (server, event_rx, audio_tx)
+    }
+
+    /// Set the stream manager (configured by the binary with stream readers).
+    pub fn set_manager(&mut self, manager: stream::manager::StreamManager) {
+        self.manager = Some(manager);
     }
 
     /// Get a cloneable command sender.
@@ -241,27 +246,13 @@ impl SnapServer {
         );
 
         // Advertise via mDNS
-        let mut mdns = mdns::MdnsAdvertiser::new(self.config.stream_port)
-            .map_err(|e| tracing::warn!(error = %e, "mDNS advertisement failed"))
-            .ok();
 
-        // Parse default sample format
-        let default_format: snapcast_proto::SampleFormat = self
-            .config
-            .sample_format
-            .parse()
-            .unwrap_or_else(|_| snapcast_proto::SampleFormat::new(48000, 16, 2));
-
-        // Start stream manager with configured sources
-        let mut manager = stream::manager::StreamManager::new();
-        for source in &self.config.sources {
-            if let Err(e) = manager.add_stream(source, default_format, &self.config.codec, "") {
-                tracing::error!(source, error = %e, "Failed to add stream");
-            }
-        }
+        // The binary must set up the StreamManager and pass it via set_manager()
+        let manager = self.manager.take().unwrap_or_default();
 
         // Get codec header from first stream for client handshake
         let first_stream = manager.stream_ids().into_iter().next().unwrap_or_default();
+        let default_format = snapcast_proto::SampleFormat::new(48000, 16, 2);
         let (codec, header, _format) =
             manager
                 .header(&first_stream)
@@ -358,7 +349,6 @@ impl SnapServer {
                     match cmd {
                         Some(ServerCommand::Stop) | None => {
                             // Shut down mDNS first (daemon thread still alive)
-                            drop(mdns.take());
                             tracing::info!("Server stopped");
                             session_handle.abort();
                             control_handle.abort();

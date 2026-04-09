@@ -6,9 +6,9 @@ use tokio::io::AsyncReadExt;
 use tokio::sync::mpsc;
 use tokio::task::JoinHandle;
 
-use super::PcmChunk;
 use super::uri::StreamUri;
-use crate::time::ChunkTimestamper;
+use snapcast_server::stream::PcmChunk;
+use snapcast_server::time::ChunkTimestamper;
 
 /// Start reading PCM from a named pipe.
 pub fn start(

@@ -7,9 +7,9 @@ use tokio::net::TcpListener;
 use tokio::sync::mpsc;
 use tokio::task::JoinHandle;
 
-use super::PcmChunk;
 use super::uri::StreamUri;
-use crate::time::ChunkTimestamper;
+use snapcast_server::stream::PcmChunk;
+use snapcast_server::time::ChunkTimestamper;
 
 /// Start a TCP listener that reads PCM from connecting clients.
 pub fn start(

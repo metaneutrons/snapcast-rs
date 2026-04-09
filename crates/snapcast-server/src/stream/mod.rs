@@ -1,15 +1,7 @@
-//! Stream readers — async PCM audio sources.
+//! Stream management — encoding and distribution.
 
-pub mod airplay;
-pub mod file;
-pub mod librespot;
 pub mod manager;
-pub mod pipe;
-pub mod process;
-pub mod tcp;
-pub mod uri;
 
-use anyhow::Result;
 use snapcast_proto::SampleFormat;
 use tokio::sync::mpsc;
 use tokio::task::JoinHandle;
@@ -21,14 +13,6 @@ pub struct PcmChunk {
     pub timestamp_usec: i64,
     /// Raw PCM audio data.
     pub data: Vec<u8>,
-}
-
-/// Common properties parsed from a stream URI.
-pub struct StreamProps {
-    /// Stream name (from `?name=` parameter).
-    pub name: String,
-    /// Sample format (from `?sampleformat=` or default).
-    pub format: SampleFormat,
 }
 
 /// A running stream reader that produces PCM chunks.
@@ -44,6 +28,21 @@ pub struct StreamReader {
 }
 
 impl StreamReader {
+    /// Create a StreamReader from components.
+    pub fn new(
+        name: String,
+        format: SampleFormat,
+        rx: mpsc::Receiver<PcmChunk>,
+        handle: JoinHandle<()>,
+    ) -> Self {
+        Self {
+            name,
+            format,
+            rx,
+            handle,
+        }
+    }
+
     /// Stop the reader.
     pub fn stop(&self) {
         self.handle.abort();
@@ -54,35 +53,4 @@ impl Drop for StreamReader {
     fn drop(&mut self) {
         self.handle.abort();
     }
-}
-
-/// Create and start a stream reader from a URI string.
-pub fn create(source_uri: &str, default_format: SampleFormat) -> Result<StreamReader> {
-    let parsed = uri::StreamUri::parse(source_uri)?;
-    let name = parsed.param("name").unwrap_or("default").to_string();
-    let format = parsed
-        .param("sampleformat")
-        .and_then(|s| s.parse().ok())
-        .unwrap_or(default_format);
-
-    let (tx, rx) = mpsc::channel(128);
-    // Metadata channel for librespot/airplay (ignored for other schemes)
-    let (meta_tx, _meta_rx) = mpsc::channel::<(String, String)>(32);
-
-    let handle = match parsed.scheme.as_str() {
-        "pipe" => pipe::start(parsed, format, tx)?,
-        "file" => file::start(parsed, format, tx)?,
-        "process" => process::start(parsed, format, tx)?,
-        "tcp" => tcp::start(parsed, format, tx)?,
-        "librespot" => librespot::start(parsed, format, tx, meta_tx)?,
-        "airplay" => airplay::start(parsed, format, tx, meta_tx)?,
-        other => anyhow::bail!("unsupported stream scheme: {other}"),
-    };
-
-    Ok(StreamReader {
-        name,
-        format,
-        rx,
-        handle,
-    })
 }

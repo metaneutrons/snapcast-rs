@@ -1,3 +1,7 @@
+mod config;
+mod mdns;
+mod stream;
+
 use clap::Parser;
 use snapcast_server::{ServerCommand, ServerEvent, SnapServer};
 
@@ -54,10 +58,10 @@ fn main() -> anyhow::Result<()> {
         .init();
 
     // Load config file, then merge CLI overrides
-    let file_config = snapcast_server::config::parse_config_file(&cli.config);
-    let config = snapcast_server::config::merge_cli(
+    let file_config = config::parse_config_file(&cli.config);
+    let server_config = config::merge_cli(
         file_config,
-        snapcast_server::config::CliOverrides {
+        config::CliOverrides {
             stream_port: cli.stream_port,
             control_port: cli.control_port,
             http_port: cli.http_port,
@@ -71,9 +75,71 @@ fn main() -> anyhow::Result<()> {
 
     let rt = tokio::runtime::Runtime::new()?;
     rt.block_on(async {
-        let (mut server, mut events, _audio_tx) = SnapServer::new(config);
+        let (mut server, mut events, _audio_tx) = SnapServer::new(server_config.clone());
+
+        // Set up stream manager with configured sources
+        let default_format: snapcast_proto::SampleFormat = server_config
+            .sample_format
+            .parse()
+            .unwrap_or_else(|_| snapcast_proto::SampleFormat::new(48000, 16, 2));
+
+        let mut manager = snapcast_server::stream::manager::StreamManager::new();
+        for source in &server_config.sources {
+            let parsed = stream::uri::StreamUri::parse(source).unwrap();
+            let name = parsed.param("name").unwrap_or("default").to_string();
+            let format = parsed
+                .param("sampleformat")
+                .and_then(|s| s.parse().ok())
+                .unwrap_or(default_format);
+
+            let (tx, rx) = tokio::sync::mpsc::channel(128);
+
+            // Start stream reader
+            let reader_handle = match parsed.scheme.as_str() {
+                "pipe" => stream::pipe::start(parsed, format, tx),
+                "file" => stream::file::start(parsed, format, tx),
+                "process" => stream::process::start(parsed, format, tx),
+                "tcp" => stream::tcp::start(parsed, format, tx),
+                "librespot" => {
+                    let (meta_tx, _) = tokio::sync::mpsc::channel(32);
+                    stream::librespot::start(parsed, format, tx, meta_tx)
+                }
+                "airplay" => {
+                    let (meta_tx, _) = tokio::sync::mpsc::channel(32);
+                    stream::airplay::start(parsed, format, tx, meta_tx)
+                }
+                other => {
+                    tracing::error!(scheme = other, "Unsupported stream scheme");
+                    continue;
+                }
+            };
+
+            match reader_handle {
+                Ok(_handle) => {
+                    if let Err(e) = manager.add_stream_from_receiver(
+                        &name,
+                        format,
+                        &server_config.codec,
+                        "",
+                        rx,
+                    ) {
+                        tracing::error!(name, error = %e, "Failed to add stream");
+                    }
+                }
+                Err(e) => tracing::error!(source, error = %e, "Failed to start stream reader"),
+            }
+        }
+
+        server.set_manager(manager);
+
+        // mDNS
+        let _mdns = mdns::MdnsAdvertiser::new(server_config.stream_port)
+            .map_err(|e| tracing::warn!(error = %e, "mDNS failed"))
+            .ok();
+
         let cmd = server.command_sender();
 
+        // Log events
         tokio::spawn(async move {
             while let Some(event) = events.recv().await {
                 match event {
@@ -93,11 +159,11 @@ fn main() -> anyhow::Result<()> {
             }
         });
 
+        // Ctrl-C
         tokio::spawn(async move {
             tokio::signal::ctrl_c().await.ok();
             tracing::info!("Received Ctrl-C, shutting down");
             cmd.send(ServerCommand::Stop).await.ok();
-            // Force exit on OS thread — tokio may be blocked by mDNS shutdown
             std::thread::spawn(|| {
                 std::thread::sleep(std::time::Duration::from_secs(2));
                 std::process::exit(0);

@@ -153,6 +153,63 @@ fn main() -> anyhow::Result<()> {
             .map_err(|e| tracing::warn!(error = %e, "mDNS failed"))
             .ok();
 
+        // JSON-RPC control servers
+        let shared_state = std::sync::Arc::new(tokio::sync::Mutex::new(
+            snapcast_server::state::ServerState::default(),
+        ));
+        let (notify_tx, _) = tokio::sync::broadcast::channel::<serde_json::Value>(256);
+        let (stream_ctrl_tx, _stream_ctrl_rx) =
+            tokio::sync::mpsc::channel::<jsonrpc::StreamControlMsg>(64);
+        let (settings_tx, _settings_rx) =
+            tokio::sync::mpsc::channel::<snapcast_server::ClientSettingsUpdate>(64);
+        let auth_cfg = std::sync::Arc::new(auth::AuthConfig::default());
+        let methods = std::sync::Arc::new(std::collections::HashSet::<String>::new());
+        let notifications = std::sync::Arc::new(std::collections::HashSet::<String>::new());
+
+        // Event channel for control servers (separate from library events)
+        let (ctrl_event_tx, mut ctrl_event_rx) =
+            tokio::sync::mpsc::channel::<snapcast_server::ServerEvent>(256);
+
+        // TCP JSON-RPC control
+        let control_cfg = control::ControlConfig {
+            port: server_config.control_port,
+            state: std::sync::Arc::clone(&shared_state),
+            event_tx: ctrl_event_tx.clone(),
+            notify_tx: notify_tx.clone(),
+            auth_config: std::sync::Arc::clone(&auth_cfg),
+            stream_control_tx: stream_ctrl_tx.clone(),
+            settings_tx: settings_tx.clone(),
+            buffer_ms: server_config.buffer_ms as i32,
+            registered_methods: std::sync::Arc::clone(&methods),
+            registered_notifications: std::sync::Arc::clone(&notifications),
+        };
+        tokio::spawn(async move {
+            if let Err(e) = control::run_tcp(control_cfg).await {
+                tracing::error!(error = %e, "Control server error");
+            }
+        });
+
+        // HTTP/WebSocket + Snapweb
+        let http_cfg = http::HttpConfig {
+            port: server_config.http_port,
+            doc_root: server_config.doc_root.clone(),
+            state: std::sync::Arc::clone(&shared_state),
+            event_tx: ctrl_event_tx.clone(),
+            notify_tx: notify_tx.clone(),
+            auth_config: std::sync::Arc::clone(&auth_cfg),
+            stream_control_tx: stream_ctrl_tx.clone(),
+            settings_tx: settings_tx.clone(),
+            buffer_ms: server_config.buffer_ms as i32,
+        };
+        tokio::spawn(async move {
+            if let Err(e) = http::run_http(http_cfg).await {
+                tracing::error!(error = %e, "HTTP server error");
+            }
+        });
+
+        // Drain control events (JSON-RPC extension point)
+        tokio::spawn(async move { while let Some(_event) = ctrl_event_rx.recv().await {} });
+
         // Log events
         tokio::spawn(async move {
             while let Some(event) = events.recv().await {

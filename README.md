@@ -9,193 +9,176 @@ Rust implementation of [Snapcast](https://github.com/snapcast/snapcast) — sync
 ```
 snapcast-rs/
 ├── snapcast-proto      Protocol: binary message serialization (8 message types)
-├── snapcast-client     Client library: embeddable, f32 audio output channel
-├── snapcast-server     Server library: embeddable, f32 audio input channel
+├── snapcast-client     Client library: embeddable, f32 audio output
+├── snapcast-server     Server library: embeddable, f32 audio input
 ├── snapclient-rs       Client binary: cpal audio output
-└── snapserver-rs       Server binary: stream readers, JSON-RPC, HTTP, config
+└── snapserver-rs       Server binary: stream readers, JSON-RPC, HTTP
 ```
 
-### Library Design
+Both libraries are pure audio engines — no device I/O, no HTTP, no config files.
 
-Both libraries are pure audio engines — no device I/O, no HTTP, no config files:
-
-```
-snapcast-client:  protocol + decode + sync → f32 AudioFrame channel
-snapcast-server:  f32 AudioFrame channel → encode + protocol → clients
-```
-
-### Typed API (no JSON-RPC detour)
+## Client Library API
 
 ```rust
-// Server: direct control
-cmd.send(ServerCommand::SetClientVolume { client_id: "wz".into(), volume: 80, muted: false }).await;
-cmd.send(ServerCommand::SetGroupStream { group_id: "eg".into(), stream_id: "music".into() }).await;
+use snapcast_client::{SnapClient, ClientConfig, ClientEvent, ClientCommand, AudioFrame};
 
-// Server: reactive events
+// Create client — returns event receiver and audio output receiver
+let (mut client, events, audio_rx) = SnapClient::new(config);
+
+// Shared state for direct audio device access
+let stream = Arc::clone(&client.stream);           // time-synced PCM buffer
+let time_provider = Arc::clone(&client.time_provider); // server clock sync
+
+// Run (blocks, reconnects on error)
+tokio::spawn(async move { client.run().await });
+
+// Events
 match event {
-    ServerEvent::ClientVolumeChanged { client_id, volume, muted } => { /* update UI */ }
-    ServerEvent::ClientConnected { id, name } => { /* new client */ }
-    _ => {}
+    ClientEvent::Connected { host, port } => {}
+    ClientEvent::Disconnected { reason } => {}
+    ClientEvent::StreamStarted { codec, format } => {}
+    ClientEvent::ServerSettings { buffer_ms, latency, volume, muted } => {}
+    ClientEvent::VolumeChanged { volume, muted } => {}
+    ClientEvent::TimeSyncComplete { diff_ms } => {}
+    ClientEvent::JsonRpc(value) => {}
 }
 
-// Client: receive f32 audio
-let (mut client, events, audio_rx) = SnapClient::new(config);
-// audio_rx: Receiver<AudioFrame> — feed to EQ, resampler, DAC
+// Commands
+cmd.send(ClientCommand::SetVolume { volume: 80, muted: false }).await;
+cmd.send(ClientCommand::Stop).await;
 ```
 
-### Data Flow
+### Client Features
 
+| Feature     | Default | C dep | Description |
+|-------------|---------|-------|-------------|
+| `f32lz4`    | ✅      | none  | f32 LZ4 codec (lz4_flex) |
+| `mdns`      | ✅      | none  | mDNS server discovery |
+| `websocket` | —       | none  | WebSocket connection |
+| `tls`       | —       | none  | WSS (WebSocket + TLS) |
+| `resampler` | —       | none  | Sample rate conversion (rubato) |
+
+## Server Library API
+
+```rust
+use snapcast_server::{SnapServer, ServerConfig, ServerEvent, ServerCommand, AudioFrame};
+
+// Create server — returns event receiver and audio input sender
+let (mut server, events, audio_tx) = SnapServer::new(config);
+
+// Configure stream manager (binary creates readers, passes to library)
+let mut manager = StreamManager::new();
+manager.add_stream_from_receiver("music", format, "flac", "", rx)?;
+server.set_manager(manager);
+
+// Register custom JSON-RPC methods (binary handles dispatch)
+// Library handles: session protocol, encoding, mDNS, state
+
+// Run (blocks until Stop)
+tokio::spawn(async move { server.run().await });
+
+// Typed commands (no JSON-RPC detour)
+cmd.send(ServerCommand::SetClientVolume { client_id, volume: 80, muted: false }).await;
+cmd.send(ServerCommand::SetClientLatency { client_id, latency: 50 }).await;
+cmd.send(ServerCommand::SetClientName { client_id, name }).await;
+cmd.send(ServerCommand::SetGroupStream { group_id, stream_id }).await;
+cmd.send(ServerCommand::SetGroupMute { group_id, muted: true }).await;
+cmd.send(ServerCommand::SetGroupName { group_id, name }).await;
+cmd.send(ServerCommand::SetGroupClients { group_id, clients: vec![...] }).await;
+cmd.send(ServerCommand::DeleteClient { client_id }).await;
+let (tx, rx) = oneshot::channel();
+cmd.send(ServerCommand::GetStatus { response_tx: tx }).await;
+let status = rx.await?;
+
+// Push f32 audio directly (alternative to stream readers)
+audio_tx.send(AudioFrame { samples, sample_rate: 48000, channels: 2, timestamp_usec }).await;
+
+// Reactive events
+match event {
+    ServerEvent::ClientConnected { id, name } => {}
+    ServerEvent::ClientDisconnected { id } => {}
+    ServerEvent::ClientVolumeChanged { client_id, volume, muted } => {}
+    ServerEvent::ClientLatencyChanged { client_id, latency } => {}
+    ServerEvent::ClientNameChanged { client_id, name } => {}
+    ServerEvent::GroupStreamChanged { group_id, stream_id } => {}
+    ServerEvent::GroupMuteChanged { group_id, muted } => {}
+    ServerEvent::StreamStatus { stream_id, status } => {}
+    ServerEvent::JsonRpc { client_id, request, response_tx } => {
+        // Custom method — respond via oneshot
+        if let Some(tx) = response_tx {
+            tx.send(json!({"jsonrpc": "2.0", "id": request["id"], "result": "ok"})).ok();
+        }
+    }
+}
 ```
-Audio:    source → StreamReader → Encoder → broadcast → SessionServer → snapclient
-Control:  Snapweb → HTTP/WS/TCP JSON-RPC → ServerCommand → library → state + push + event
-Custom:   registered method → ServerEvent::JsonRpc → app → oneshot response
-f32 path: SnapDog f32 → audio_tx → LZ4 compress → network → LZ4 decompress → f32 → SnapDog
+
+### Server Features
+
+| Feature  | Default | C dep     | Description |
+|----------|---------|-----------|-------------|
+| `f32lz4` | ✅      | none      | f32 LZ4 codec (lz4_flex) |
+| `mdns`   | ✅      | none      | mDNS service advertisement |
+| `flac`   | —       | libFLAC   | FLAC encoding |
+| `opus`   | —       | libopus   | Opus encoding |
+| `vorbis` | —       | libvorbis | Vorbis encoding |
+
+### Network Ports
+
+| Port | Protocol | Owner | Purpose |
+|------|----------|-------|---------|
+| 1704 | TCP | Library | Binary protocol (audio + time sync) |
+| 1705 | TCP | Binary | JSON-RPC control |
+| 1780 | HTTP/WS | Binary | JSON-RPC + Snapweb UI |
+
+Libraries open only port 1704. JSON-RPC/HTTP are binary-only.
+
+## Codecs
+
+| Codec  | Default | C dep | Precision | Latency |
+|--------|---------|-------|-----------|---------|
+| PCM    | ✅ always | none | 16/24/32-bit | zero |
+| f32lz4 | ✅ default | none | 32-bit float | zero |
+| FLAC   | optional | libFLAC | 16/24-bit | 24ms (block size) |
+| Opus   | optional | libopus | lossy | 20ms |
+| Vorbis | optional | libvorbis | lossy | variable |
+
+f32lz4 path (zero conversion, full precision):
+```
+f32 → LZ4 compress → network → LZ4 decompress → f32
 ```
 
 ## Building
 
 ```bash
-# Just works on macOS, Linux, and Windows — no flags needed
-cargo build --release
+cargo build --release                                    # default: f32lz4 + mdns
+cargo build --release --features flac                    # + FLAC
+cargo build --release --no-default-features --features f32lz4  # minimal, no mdns
 ```
-
-### Platform Defaults
-
-| Platform | Client Audio | Server |
-|----------|-------------|--------|
-| macOS    | cpal (CoreAudio) | ✅ |
-| Linux    | cpal (ALSA)      | ✅ |
-| Windows  | cpal (WASAPI)    | ✅ |
-
-### Codec Features
-
-| Codec  | Default | C dep   | Feature  |
-|--------|---------|---------|----------|
-| PCM    | ✅ always | none  | —        |
-| f32lz4 | ✅ default | none (lz4_flex) | `f32lz4` |
-| FLAC   | optional | libFLAC | `flac`   |
-| Opus   | optional | libopus | `opus`   |
-| Vorbis | optional | libvorbis | `vorbis` |
-
-Default build: zero C dependencies. Pure Rust.
-
-```bash
-cargo build -p snapserver-rs --features flac      # + FLAC
-cargo build -p snapserver-rs --features opus       # + Opus
-cargo build -p snapserver-rs --no-default-features  # PCM only
-```
-
-### Other Features (client)
-
-| Feature     | Description                        |
-|-------------|------------------------------------|
-| `mdns`      | mDNS server discovery (default)    |
-| `f32lz4`    | f32 LZ4 codec (default)            |
-| `websocket` | WebSocket connection               |
-| `tls`       | WSS (WebSocket + TLS)              |
-| `resampler` | Sample rate conversion (rubato)    |
 
 ## Usage
 
-### Server
-
 ```bash
-snapserver-rs                                          # default: pipe source, f32lz4 codec
-snapserver-rs --codec pcm                              # PCM codec
-snapserver-rs --codec flac                             # FLAC (needs --features flac)
+# Server
 snapserver-rs --source "pipe:///tmp/snapfifo?name=Music"
-snapserver-rs --doc-root /usr/share/snapserver/snapweb  # Snapweb UI
+snapserver-rs --codec flac --features flac
 snapserver-rs --help
-```
 
-Sources: `pipe://`, `file://`, `process://`, `tcp://`, `librespot://`, `airplay://`
-
-### Client
-
-```bash
-snapclient-rs tcp://192.168.1.50:1704   # connect to server
+# Client
+snapclient-rs tcp://192.168.1.50:1704
 snapclient-rs                            # mDNS auto-discovery
-snapclient-rs --list                     # list audio devices
 snapclient-rs --help
-```
 
-### Config File
-
-`/etc/snapserver.conf` (INI format, compatible with C++ server):
-
-```ini
-[stream]
-source = pipe:///tmp/snapfifo?name=default
-
-[http]
-port = 1780
-doc_root = /usr/share/snapserver/snapweb
-
-[tcp-streaming]
-port = 1704
-
-[tcp-control]
-port = 1705
-```
-
-## JSON-RPC Control API
-
-25 methods implemented. Three transports: HTTP POST `/jsonrpc`, WebSocket `/jsonrpc`, TCP port 1705.
-
-Custom method registry with proper request/response lifecycle:
-
-```rust
-server.register_method("Client.SetEq");      // app handles, waits for response (5s timeout)
-server.register_notification("Client.EqChanged"); // app handles, no response
-// unregistered methods → -32601 immediately
-```
-
-JWT authentication (optional, disabled by default).
-
-## Embedding (SnapDog Integration)
-
-```rust
-// Client: receive f32 audio → EQ → resample → DAC
-let (mut client, events, audio_rx) = SnapClient::new(config);
-tokio::spawn(async move { client.run().await });
-while let Some(frame) = audio_rx.recv().await {
-    zone_player.send(PcmMessage::Audio(frame.samples)).await;
-}
-
-// Server: push f32 audio from any source
-let (mut server, events, audio_tx) = SnapServer::new(config);
-audio_tx.send(AudioFrame { samples: f32_data, sample_rate: 48000, channels: 2, timestamp_usec: now }).await;
-
-// Server: typed control (no JSON-RPC detour)
-cmd.send(ServerCommand::SetClientVolume { client_id, volume: 80, muted: false }).await;
-```
-
-## f32lz4 Codec
-
-Lossless compressed f32 transmission — skips PCM conversion entirely:
-
-```
-FLAC:    f32 → i16 → FLAC → network → FLAC → i16 → f32  (6 conversions, 16-bit precision)
-f32lz4:  f32 → LZ4 → network → LZ4 → f32               (2 conversions, 32-bit precision)
-```
-
-Pure Rust (lz4_flex). Feature-gated. Not compatible with C++ Snapcast clients.
-
-## Testing
-
-```bash
-cargo test -p snapcast-proto -p snapcast-client -p snapcast-server  # 114 tests
-cargo clippy --all-targets -- -D warnings                            # zero warnings
+# Feed audio
+ffmpeg -re -i music.mp3 -f s16le -ar 48000 -ac 2 pipe:1 > /tmp/snapfifo
 ```
 
 ## Code Quality
 
 - `#![forbid(unsafe_code)]` on protocol crate
-- `#![deny(unsafe_code)]` on client/server (only monotonic clock FFI + FLAC encoder FFI)
-- `#![warn(missing_docs)]` — doc coverage on all library crates
-- Structured tracing logging at all levels
-- sccache enabled for fast rebuilds
-- 10,083 lines · 135 commits
+- `#![deny(unsafe_code)]` on client/server libraries
+- Zero `#[allow(dead_code)]`, zero TODOs, zero `#![allow]` blankets
+- Structured tracing logging
+- sccache enabled
 
 ## License
 

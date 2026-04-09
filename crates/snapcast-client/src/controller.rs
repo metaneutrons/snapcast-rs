@@ -293,15 +293,14 @@ impl Controller {
         });
 
         // Reinitialize the shared stream (binary's player holds the same Arc)
-        {
-            let mut s = self.stream.as_ref().unwrap().lock().unwrap();
+        if let Some(ref stream) = self.stream {
+            let mut s = stream.lock().unwrap();
             *s = Stream::new(self.sample_format);
             if let Some(ref ss) = self.server_settings {
                 let buf_ms = (ss.buffer_ms - ss.latency - self.settings.player.latency).max(0);
                 s.set_buffer_ms(buf_ms as i64);
             }
         }
-        let _stream = Arc::clone(self.stream.as_ref().unwrap());
 
         self.decoder = Some(dec);
         Ok(())
@@ -314,7 +313,7 @@ impl Controller {
     }
 
     fn cleanup(&mut self) {
-        self.stream = None;
+        // Don't clear self.stream — it's shared with the binary's player
         self.decoder = None;
         self.connection.disconnect();
     }

@@ -147,6 +147,8 @@ f32lz4 path (zero conversion, full precision):
 f32 → LZ4 compress → network → LZ4 decompress → f32
 ```
 
+> ⚠️ **f32lz4 is not compatible with the original C++ Snapcast.** C++ clients/servers do not recognize this codec. Use `--codec flac` or `--codec pcm` for interoperability with C++ Snapcast.
+
 ## Building
 
 ```bash

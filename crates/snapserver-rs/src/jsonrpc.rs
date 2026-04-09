@@ -43,9 +43,7 @@ pub async fn handle_request(
     request: &Value,
     state: &Arc<Mutex<ServerState>>,
     auth_config: &AuthConfig,
-    stream_control_tx: &tokio::sync::mpsc::Sender<StreamControlMsg>,
-    settings_tx: &tokio::sync::mpsc::Sender<ClientSettingsUpdate>,
-    buffer_ms: i32,
+    cmd_tx: &tokio::sync::mpsc::Sender<snapcast_server::ServerCommand>,
 ) -> RpcResult {
     let id = &request["id"];
     let method = request["method"].as_str().unwrap_or("");
@@ -55,22 +53,25 @@ pub async fn handle_request(
         // --- Server ---
         "Server.GetRPCVersion" => ok(id, json!({"major": 2, "minor": 0, "patch": 0})),
         "Server.GetStatus" => {
-            let s = state.lock().await;
-            ok(id, s.to_status_json())
+            let (tx, rx) = tokio::sync::oneshot::channel();
+            let _ = cmd_tx
+                .send(snapcast_server::ServerCommand::GetStatus { response_tx: tx })
+                .await;
+            match rx.await {
+                Ok(status) => ok(id, status),
+                Err(_) => err(id, INVALID_PARAMS, "status unavailable"),
+            }
         }
         "Server.DeleteClient" => {
             let Some(client_id) = params["id"].as_str() else {
                 return err(id, INVALID_PARAMS, "missing 'id'");
             };
-            let mut s = state.lock().await;
-            s.remove_client_from_groups(client_id);
-            s.clients.remove(client_id);
-            ok_with_notify(
-                id,
-                json!({"id": client_id}),
-                "Server.OnUpdate",
-                s.to_status_json(),
-            )
+            let _ = cmd_tx
+                .send(snapcast_server::ServerCommand::DeleteClient {
+                    client_id: client_id.to_string(),
+                })
+                .await;
+            ok(id, json!({"id": client_id}))
         }
 
         // --- Client ---
@@ -88,21 +89,16 @@ pub async fn handle_request(
             let Some(client_id) = params["id"].as_str() else {
                 return err(id, INVALID_PARAMS, "missing 'id'");
             };
-            let mut s = state.lock().await;
-            let Some(c) = s.clients.get_mut(client_id) else {
-                return err(id, INVALID_PARAMS, "client not found");
-            };
-            if let Some(vol) = params["volume"]["percent"].as_u64() {
-                c.config.volume.percent = vol.min(100) as u16;
-            }
-            if let Some(muted) = params["volume"]["muted"].as_bool() {
-                c.config.volume.muted = muted;
-            }
-            let vol = json!({"percent": c.config.volume.percent, "muted": c.config.volume.muted});
-            // Push to streaming client via binary protocol
-            let _ = settings_tx
-                .send(client_settings_update(client_id, c, buffer_ms))
+            let volume = params["volume"]["percent"].as_u64().unwrap_or(100).min(100) as u16;
+            let muted = params["volume"]["muted"].as_bool().unwrap_or(false);
+            let _ = cmd_tx
+                .send(snapcast_server::ServerCommand::SetClientVolume {
+                    client_id: client_id.to_string(),
+                    volume,
+                    muted,
+                })
                 .await;
+            let vol = json!({"percent": volume, "muted": muted});
             ok_with_notify(
                 id,
                 json!({"volume": &vol}),
@@ -114,40 +110,36 @@ pub async fn handle_request(
             let Some(client_id) = params["id"].as_str() else {
                 return err(id, INVALID_PARAMS, "missing 'id'");
             };
-            let mut s = state.lock().await;
-            let Some(c) = s.clients.get_mut(client_id) else {
-                return err(id, INVALID_PARAMS, "client not found");
-            };
-            if let Some(lat) = params["latency"].as_i64() {
-                c.config.latency = lat as i32;
-            }
-            // Push to streaming client via binary protocol
-            let _ = settings_tx
-                .send(client_settings_update(client_id, c, buffer_ms))
+            let latency = params["latency"].as_i64().unwrap_or(0) as i32;
+            let _ = cmd_tx
+                .send(snapcast_server::ServerCommand::SetClientLatency {
+                    client_id: client_id.to_string(),
+                    latency,
+                })
                 .await;
             ok_with_notify(
                 id,
-                json!({"latency": c.config.latency}),
+                json!({"latency": latency}),
                 "Client.OnLatencyChanged",
-                json!({"id": client_id, "latency": c.config.latency}),
+                json!({"id": client_id, "latency": latency}),
             )
         }
         "Client.SetName" => {
             let Some(client_id) = params["id"].as_str() else {
                 return err(id, INVALID_PARAMS, "missing 'id'");
             };
-            let mut s = state.lock().await;
-            let Some(c) = s.clients.get_mut(client_id) else {
-                return err(id, INVALID_PARAMS, "client not found");
-            };
-            if let Some(name) = params["name"].as_str() {
-                c.config.name = name.to_string();
-            }
+            let name = params["name"].as_str().unwrap_or("").to_string();
+            let _ = cmd_tx
+                .send(snapcast_server::ServerCommand::SetClientName {
+                    client_id: client_id.to_string(),
+                    name: name.clone(),
+                })
+                .await;
             ok_with_notify(
                 id,
-                json!({"name": &c.config.name}),
+                json!({"name": &name}),
                 "Client.OnNameChanged",
-                json!({"id": client_id, "name": &c.config.name}),
+                json!({"id": client_id, "name": name}),
             )
         }
 
@@ -166,18 +158,18 @@ pub async fn handle_request(
             let Some(group_id) = params["id"].as_str() else {
                 return err(id, INVALID_PARAMS, "missing 'id'");
             };
-            let mut s = state.lock().await;
-            let Some(g) = s.groups.iter_mut().find(|g| g.id == group_id) else {
-                return err(id, INVALID_PARAMS, "group not found");
-            };
-            if let Some(mute) = params["mute"].as_bool() {
-                g.muted = mute;
-            }
+            let muted = params["mute"].as_bool().unwrap_or(false);
+            let _ = cmd_tx
+                .send(snapcast_server::ServerCommand::SetGroupMute {
+                    group_id: group_id.to_string(),
+                    muted,
+                })
+                .await;
             ok_with_notify(
                 id,
-                json!({"mute": g.muted}),
+                json!({"mute": muted}),
                 "Group.OnMute",
-                json!({"id": group_id, "mute": g.muted}),
+                json!({"id": group_id, "mute": muted}),
             )
         }
         "Group.SetStream" => {
@@ -187,8 +179,12 @@ pub async fn handle_request(
             let Some(stream_id) = params["stream_id"].as_str() else {
                 return err(id, INVALID_PARAMS, "missing 'stream_id'");
             };
-            let mut s = state.lock().await;
-            s.set_group_stream(group_id, stream_id);
+            let _ = cmd_tx
+                .send(snapcast_server::ServerCommand::SetGroupStream {
+                    group_id: group_id.to_string(),
+                    stream_id: stream_id.to_string(),
+                })
+                .await;
             ok_with_notify(
                 id,
                 json!({"stream_id": stream_id}),
@@ -207,66 +203,36 @@ pub async fn handle_request(
                 .iter()
                 .filter_map(|v| v.as_str().map(String::from))
                 .collect();
-            let mut s = state.lock().await;
-            // Remove clients from other groups, add to target
-            for cid in &client_ids {
-                s.remove_client_from_groups(cid);
-            }
-            if let Some(g) = s.groups.iter_mut().find(|g| g.id == group_id) {
-                g.clients = client_ids;
-            }
-            ok_with_notify(
-                id,
-                s.to_status_json(),
-                "Server.OnUpdate",
-                s.to_status_json(),
-            )
+            let _ = cmd_tx
+                .send(snapcast_server::ServerCommand::SetGroupClients {
+                    group_id: group_id.to_string(),
+                    clients: client_ids,
+                })
+                .await;
+            // Return full status after group change
+            let (tx, rx) = tokio::sync::oneshot::channel();
+            let _ = cmd_tx
+                .send(snapcast_server::ServerCommand::GetStatus { response_tx: tx })
+                .await;
+            let status = rx.await.unwrap_or_default();
+            ok_with_notify(id, status.clone(), "Server.OnUpdate", status)
         }
         "Group.SetName" => {
             let Some(group_id) = params["id"].as_str() else {
                 return err(id, INVALID_PARAMS, "missing 'id'");
             };
-            let mut s = state.lock().await;
-            let Some(g) = s.groups.iter_mut().find(|g| g.id == group_id) else {
-                return err(id, INVALID_PARAMS, "group not found");
-            };
-            if let Some(name) = params["name"].as_str() {
-                g.name = name.to_string();
-            }
+            let name = params["name"].as_str().unwrap_or("").to_string();
+            let _ = cmd_tx
+                .send(snapcast_server::ServerCommand::SetGroupName {
+                    group_id: group_id.to_string(),
+                    name: name.clone(),
+                })
+                .await;
             ok_with_notify(
                 id,
-                json!({"name": &g.name}),
+                json!({"name": &name}),
                 "Group.OnNameChanged",
-                json!({"id": group_id, "name": &g.name}),
-            )
-        }
-
-        // --- Stream ---
-        "Stream.AddStream" => {
-            let Some(uri) = params["streamUri"].as_str() else {
-                return err(id, INVALID_PARAMS, "missing 'streamUri'");
-            };
-            let s = state.lock().await;
-            // Stream creation is handled by StreamManager, not state.
-            // For now, just acknowledge.
-            ok_with_notify(
-                id,
-                json!({"id": uri}),
-                "Server.OnUpdate",
-                s.to_status_json(),
-            )
-        }
-        "Stream.RemoveStream" => {
-            let Some(stream_id) = params["id"].as_str() else {
-                return err(id, INVALID_PARAMS, "missing 'id'");
-            };
-            let mut s = state.lock().await;
-            s.streams.retain(|st| st.id != stream_id);
-            ok_with_notify(
-                id,
-                json!({"id": stream_id}),
-                "Server.OnUpdate",
-                s.to_status_json(),
+                json!({"id": group_id, "name": name}),
             )
         }
         "Stream.SetProperty" => {
@@ -303,7 +269,7 @@ pub async fn handle_request(
                 command: command.to_string(),
                 params: params["params"].clone(),
             };
-            let _ = stream_control_tx.send(msg).await;
+            tracing::debug!(stream_id = %msg.stream_id, command = %msg.command, "Stream control");
             ok(id, json!({"id": stream_id}))
         }
 

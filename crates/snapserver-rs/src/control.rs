@@ -33,6 +33,8 @@ pub struct ControlConfig {
     pub settings_tx: mpsc::Sender<ClientSettingsUpdate>,
     /// Server buffer size in ms.
     pub buffer_ms: i32,
+    /// Server command sender.
+    pub cmd_tx: tokio::sync::mpsc::Sender<snapcast_server::ServerCommand>,
     /// Registered custom JSON-RPC methods.
     pub registered_methods: Arc<std::collections::HashSet<String>>,
     /// Registered custom JSON-RPC notifications.
@@ -53,9 +55,10 @@ pub async fn run_tcp(cfg: ControlConfig) -> Result<()> {
         let notify_tx = cfg.notify_tx.clone();
         let mut notify_rx = cfg.notify_tx.subscribe();
         let auth_config = Arc::clone(&cfg.auth_config);
-        let stream_control_tx = cfg.stream_control_tx.clone();
-        let settings_tx = cfg.settings_tx.clone();
-        let buffer_ms = cfg.buffer_ms;
+        let _stream_control_tx = cfg.stream_control_tx.clone();
+        let _settings_tx = cfg.settings_tx.clone();
+        let _buffer_ms = cfg.buffer_ms;
+        let cmd_tx = cfg.cmd_tx.clone();
         let registered_methods = Arc::clone(&cfg.registered_methods);
         let registered_notifications = Arc::clone(&cfg.registered_notifications);
 
@@ -94,7 +97,7 @@ pub async fn run_tcp(cfg: ControlConfig) -> Result<()> {
                             continue;
                         }
 
-                        match jsonrpc::handle_request(&request, &state, &auth_config, &stream_control_tx, &settings_tx, buffer_ms).await {
+                        match jsonrpc::handle_request(&request, &state, &auth_config, &cmd_tx).await {
                             RpcResult::Response { response, notification } => {
                                 // Mark as authenticated if Server.Authenticate succeeded
                                 if method == "Server.Authenticate" && response["result"]["ok"] == true {

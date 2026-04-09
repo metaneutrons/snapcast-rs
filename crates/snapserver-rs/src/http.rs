@@ -28,6 +28,7 @@ struct AppState {
     stream_control_tx: mpsc::Sender<StreamControlMsg>,
     settings_tx: mpsc::Sender<ClientSettingsUpdate>,
     buffer_ms: i32,
+    cmd_tx: tokio::sync::mpsc::Sender<snapcast_server::ServerCommand>,
 }
 
 /// Configuration for the HTTP server.
@@ -50,6 +51,8 @@ pub struct HttpConfig {
     pub settings_tx: mpsc::Sender<ClientSettingsUpdate>,
     /// Server buffer size in ms.
     pub buffer_ms: i32,
+    /// Server command sender.
+    pub cmd_tx: tokio::sync::mpsc::Sender<snapcast_server::ServerCommand>,
 }
 
 /// Start the HTTP server with JSON-RPC + WebSocket + optional Snapweb.
@@ -62,6 +65,7 @@ pub async fn run_http(cfg: HttpConfig) -> Result<()> {
         stream_control_tx: cfg.stream_control_tx,
         settings_tx: cfg.settings_tx,
         buffer_ms: cfg.buffer_ms,
+        cmd_tx: cfg.cmd_tx.clone(),
     };
 
     let mut app = Router::new()
@@ -107,16 +111,7 @@ async fn http_jsonrpc_handler(
         }));
     };
 
-    match jsonrpc::handle_request(
-        &request,
-        &app.state,
-        &app.auth_config,
-        &app.stream_control_tx,
-        &app.settings_tx,
-        app.buffer_ms,
-    )
-    .await
-    {
+    match jsonrpc::handle_request(&request, &app.state, &app.auth_config, &app.cmd_tx).await {
         RpcResult::Response {
             response,
             notification,
@@ -168,7 +163,7 @@ async fn handle_ws(mut socket: WebSocket, app: AppState) {
 
                 match jsonrpc::handle_request(
                     &request, &app.state, &app.auth_config,
-                    &app.stream_control_tx, &app.settings_tx, app.buffer_ms,
+                    &app.cmd_tx,
                 ).await {
                     RpcResult::Response { response, notification } => {
                         if socket.send(Message::Text(response.to_string().into())).await.is_err() { break }

@@ -180,6 +180,7 @@ fn main() -> anyhow::Result<()> {
             stream_control_tx: stream_ctrl_tx.clone(),
             settings_tx: settings_tx.clone(),
             buffer_ms: server_config.buffer_ms as i32,
+            cmd_tx: server.command_sender(),
             registered_methods: std::sync::Arc::clone(&methods),
             registered_notifications: std::sync::Arc::clone(&notifications),
         };
@@ -200,6 +201,7 @@ fn main() -> anyhow::Result<()> {
             stream_control_tx: stream_ctrl_tx.clone(),
             settings_tx: settings_tx.clone(),
             buffer_ms: server_config.buffer_ms as i32,
+            cmd_tx: server.command_sender(),
         };
         tokio::spawn(async move {
             if let Err(e) = http::run_http(http_cfg).await {

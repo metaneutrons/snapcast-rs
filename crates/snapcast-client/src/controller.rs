@@ -275,8 +275,6 @@ impl Controller {
     }
 
     fn init_audio_pipeline(&mut self, header: &CodecHeader) -> Result<()> {
-        self.stream = None;
-
         let mut dec: Box<dyn Decoder> = match header.codec.as_str() {
             "pcm" => Box::new(PcmDecoder::new()),
             "flac" => Box::new(decoder::flac::create(header)?),
@@ -295,12 +293,16 @@ impl Controller {
             format: self.sample_format,
         });
 
-        let stream = Arc::new(Mutex::new(Stream::new(self.sample_format)));
-        if let Some(ref ss) = self.server_settings {
-            let buf_ms = (ss.buffer_ms - ss.latency - self.settings.player.latency).max(0);
-            stream.lock().unwrap().set_buffer_ms(buf_ms as i64);
+        // Reinitialize the shared stream (binary's player holds the same Arc)
+        {
+            let mut s = self.stream.as_ref().unwrap().lock().unwrap();
+            *s = Stream::new(self.sample_format);
+            if let Some(ref ss) = self.server_settings {
+                let buf_ms = (ss.buffer_ms - ss.latency - self.settings.player.latency).max(0);
+                s.set_buffer_ms(buf_ms as i64);
+            }
         }
-        self.stream = Some(Arc::clone(&stream));
+        let stream = Arc::clone(self.stream.as_ref().unwrap());
 
         // Start audio pump — reads time-synced PCM from Stream, converts to f32, sends via channel
         if let Some(handle) = self.audio_pump_handle.take() {

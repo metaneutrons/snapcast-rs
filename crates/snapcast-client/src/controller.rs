@@ -189,8 +189,12 @@ impl Controller {
                             tracing::debug!(volume, muted, "Volume change (applied by binary)");
                         }
                         Some(ClientCommand::SendJsonRpc(_msg)) => {
-                            // JSON-RPC is handled server-side; client binary protocol
-                            // does not support JSON-RPC. This is reserved for future use.
+                            // JSON-RPC is handled server-side
+                        }
+                        #[cfg(feature = "custom-protocol")]
+                        Some(ClientCommand::SendCustom { type_id, payload }) => {
+                            tracing::debug!(type_id, bytes = payload.len(), "Custom message to server");
+                            // TODO: send via binary protocol
                         }
                     }
                 }

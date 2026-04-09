@@ -86,3 +86,13 @@ mod tests {
         assert_eq!(MessageType::from_u16(u16::MAX), None);
     }
 }
+
+/// Custom message for application-defined protocol extensions.
+#[cfg(feature = "custom-protocol")]
+#[derive(Debug, Clone)]
+pub struct CustomMessage {
+    /// Message type ID (8+).
+    pub type_id: u16,
+    /// Raw payload bytes.
+    pub payload: Vec<u8>,
+}

@@ -155,6 +155,16 @@ pub enum ServerEvent {
         /// New status.
         status: String,
     },
+    /// Custom binary protocol message from a streaming client.
+    #[cfg(feature = "custom-protocol")]
+    CustomMessage {
+        /// Client ID.
+        client_id: String,
+        /// Message type ID (8+).
+        type_id: u16,
+        /// Raw payload.
+        payload: Vec<u8>,
+    },
     /// Custom JSON-RPC request from a registered method or notification.
     JsonRpc {
         /// Control client that sent the request.
@@ -236,6 +246,16 @@ pub enum ServerCommand {
     GetStatus {
         /// Response channel.
         response_tx: tokio::sync::oneshot::Sender<serde_json::Value>,
+    },
+    /// Send a custom binary protocol message to a streaming client.
+    #[cfg(feature = "custom-protocol")]
+    SendToClient {
+        /// Target client ID.
+        client_id: String,
+        /// Message type ID (8+).
+        type_id: u16,
+        /// Raw payload.
+        payload: Vec<u8>,
     },
     /// Stop the server gracefully.
     Stop,
@@ -477,6 +497,11 @@ impl SnapServer {
                         Some(ServerCommand::GetStatus { response_tx }) => {
                             let s = shared_state.lock().await;
                             let _ = response_tx.send(s.to_status_json());
+                        }
+                        #[cfg(feature = "custom-protocol")]
+                        Some(ServerCommand::SendToClient { client_id, type_id, payload }) => {
+                            tracing::debug!(client_id, type_id, bytes = payload.len(), "Custom message to client");
+                            // TODO: route to session server
                         }
                     }
                 }

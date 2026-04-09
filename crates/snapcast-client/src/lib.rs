@@ -117,6 +117,14 @@ pub enum ClientEvent {
         diff_ms: f64,
     },
     /// Raw JSON-RPC message from server — extension point.
+    #[cfg(feature = "custom-protocol")]
+    /// Custom message received from server.
+    CustomMessage {
+        /// Message type ID.
+        type_id: u16,
+        /// Raw payload.
+        payload: Vec<u8>,
+    },
     JsonRpc(serde_json::Value),
 }
 
@@ -132,6 +140,14 @@ pub enum ClientCommand {
     },
     /// Send arbitrary JSON-RPC to the server — extension point.
     SendJsonRpc(serde_json::Value),
+    /// Send a custom message to the server.
+    #[cfg(feature = "custom-protocol")]
+    SendCustom {
+        /// Message type ID (8+).
+        type_id: u16,
+        /// Raw payload.
+        payload: Vec<u8>,
+    },
     /// Stop the client gracefully.
     Stop,
 }

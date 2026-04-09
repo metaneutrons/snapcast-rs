@@ -33,5 +33,6 @@ opus = ["dep:audiopus"]
 vorbis = ["dep:vorbis_rs", "dep:ogg"]
 f32lz4 = ["dep:lz4_flex"]
 mdns = ["dep:mdns-sd", "dep:hostname"]
+custom-protocol = ["snapcast-proto/custom-protocol"]
 
 [dev-dependencies]

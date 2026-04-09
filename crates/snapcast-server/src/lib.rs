@@ -124,13 +124,72 @@ pub enum ServerEvent {
 #[derive(Debug)]
 pub enum ServerCommand {
     /// Send a JSON-RPC response or notification to control client(s).
-    ///
-    /// If `client_id` is `None`, broadcasts to all control clients.
     SendJsonRpc {
         /// Target control client, or `None` for broadcast.
         client_id: Option<String>,
         /// The JSON-RPC message to send.
         message: serde_json::Value,
+    },
+    /// Set a client's volume.
+    SetClientVolume {
+        /// Client ID.
+        client_id: String,
+        /// Volume (0–100).
+        volume: u16,
+        /// Mute state.
+        muted: bool,
+    },
+    /// Set a client's latency offset.
+    SetClientLatency {
+        /// Client ID.
+        client_id: String,
+        /// Latency in milliseconds.
+        latency: i32,
+    },
+    /// Set a client's display name.
+    SetClientName {
+        /// Client ID.
+        client_id: String,
+        /// New name.
+        name: String,
+    },
+    /// Assign a stream to a group.
+    SetGroupStream {
+        /// Group ID.
+        group_id: String,
+        /// Stream ID.
+        stream_id: String,
+    },
+    /// Mute/unmute a group.
+    SetGroupMute {
+        /// Group ID.
+        group_id: String,
+        /// Mute state.
+        muted: bool,
+    },
+    /// Set a group's display name.
+    SetGroupName {
+        /// Group ID.
+        group_id: String,
+        /// New name.
+        name: String,
+    },
+    /// Move clients to a group.
+    SetGroupClients {
+        /// Group ID.
+        group_id: String,
+        /// Client IDs.
+        clients: Vec<String>,
+    },
+    /// Delete a client from the server.
+    DeleteClient {
+        /// Client ID.
+        client_id: String,
+    },
+    /// Get full server status.
+    GetStatus {
+        /// Response channel.
+        response_tx: tokio::sync::oneshot::Sender<serde_json::Value>,
     },
     /// Stop the server gracefully.
     Stop,
@@ -373,7 +432,6 @@ impl SnapServer {
                 cmd = command_rx.recv() => {
                     match cmd {
                         Some(ServerCommand::Stop) | None => {
-                            // Shut down mDNS first (daemon thread still alive)
                             tracing::info!("Server stopped");
                             session_handle.abort();
                             control_handle.abort();
@@ -382,6 +440,72 @@ impl SnapServer {
                         }
                         Some(ServerCommand::SendJsonRpc { message, .. }) => {
                             let _ = notify_tx.send(message);
+                        }
+                        Some(ServerCommand::SetClientVolume { client_id, volume, muted }) => {
+                            let mut s = shared_state.lock().await;
+                            if let Some(c) = s.clients.get_mut(&client_id) {
+                                c.config.volume.percent = volume;
+                                c.config.volume.muted = muted;
+                            }
+                            session_srv.push_settings(jsonrpc::ClientSettingsUpdate {
+                                client_id,
+                                buffer_ms: self.config.buffer_ms as i32,
+                                latency: 0,
+                                volume,
+                                muted,
+                            }).await;
+                        }
+                        Some(ServerCommand::SetClientLatency { client_id, latency }) => {
+                            let mut s = shared_state.lock().await;
+                            if let Some(c) = s.clients.get_mut(&client_id) {
+                                c.config.latency = latency;
+                                session_srv.push_settings(jsonrpc::ClientSettingsUpdate {
+                                    client_id,
+                                    buffer_ms: self.config.buffer_ms as i32,
+                                    latency,
+                                    volume: c.config.volume.percent,
+                                    muted: c.config.volume.muted,
+                                }).await;
+                            }
+                        }
+                        Some(ServerCommand::SetClientName { client_id, name }) => {
+                            let mut s = shared_state.lock().await;
+                            if let Some(c) = s.clients.get_mut(&client_id) {
+                                c.config.name = name;
+                            }
+                        }
+                        Some(ServerCommand::SetGroupStream { group_id, stream_id }) => {
+                            shared_state.lock().await.set_group_stream(&group_id, &stream_id);
+                        }
+                        Some(ServerCommand::SetGroupMute { group_id, muted }) => {
+                            let mut s = shared_state.lock().await;
+                            if let Some(g) = s.groups.iter_mut().find(|g| g.id == group_id) {
+                                g.muted = muted;
+                            }
+                        }
+                        Some(ServerCommand::SetGroupName { group_id, name }) => {
+                            let mut s = shared_state.lock().await;
+                            if let Some(g) = s.groups.iter_mut().find(|g| g.id == group_id) {
+                                g.name = name;
+                            }
+                        }
+                        Some(ServerCommand::SetGroupClients { group_id, clients }) => {
+                            let mut s = shared_state.lock().await;
+                            for cid in &clients {
+                                s.remove_client_from_groups(cid);
+                            }
+                            if let Some(g) = s.groups.iter_mut().find(|g| g.id == group_id) {
+                                g.clients = clients;
+                            }
+                        }
+                        Some(ServerCommand::DeleteClient { client_id }) => {
+                            let mut s = shared_state.lock().await;
+                            s.remove_client_from_groups(&client_id);
+                            s.clients.remove(&client_id);
+                        }
+                        Some(ServerCommand::GetStatus { response_tx }) => {
+                            let s = shared_state.lock().await;
+                            let _ = response_tx.send(s.to_status_json());
                         }
                     }
                 }

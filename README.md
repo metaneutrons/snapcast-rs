@@ -7,6 +7,8 @@
 [![docs.rs](https://docs.rs/snapcast-server/badge.svg)](https://docs.rs/snapcast-server)
 [![License: GPL-3.0](https://img.shields.io/badge/license-GPL--3.0-blue.svg)](LICENSE)
 
+> **⚠️ Pre-1.0 — APIs may break on minor version bumps.** Until version 1.0, minor releases (e.g. 0.3 → 0.4) may contain breaking changes to the public API. Pin your dependency to a specific minor version if you need stability.
+
 A Rust reimplementation of [Snapcast](https://github.com/snapcast/snapcast), the excellent multiroom audio system created by [Johannes Pohl (badaix)](https://github.com/badaix). Snapcast synchronizes audio playback across multiple devices with sub-millisecond precision — turning any collection of speakers into a perfectly synced whole-home audio system.
 
 This project exists primarily to serve as a native Rust dependency for [SnapDog](https://github.com/metaneutrons/SnapDogRust), a multiroom audio appliance. Rather than shelling out to C++ binaries or bridging through FFI, SnapDog embeds the Snapcast protocol directly as a library — receiving audio, encoding it, distributing it to clients, and controlling playback, all within a single Rust process.

@@ -242,7 +242,7 @@ fn main() -> anyhow::Result<()> {
         tokio::spawn(async move {
             while let Some(event) = events.recv().await {
                 match event {
-                    ServerEvent::ClientConnected { id, name } => {
+                    ServerEvent::ClientConnected { id, name, .. } => {
                         tracing::info!(id, name, "Client connected");
                     }
                     ServerEvent::ClientDisconnected { id } => {

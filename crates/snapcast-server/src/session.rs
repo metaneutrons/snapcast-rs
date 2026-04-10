@@ -251,6 +251,7 @@ async fn handle_client(
         .send(ServerEvent::ClientConnected {
             id: client_id.clone(),
             name: hello.host_name.clone(),
+            mac: hello.mac.clone(),
         })
         .await;
 

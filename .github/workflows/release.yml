@@ -2,7 +2,7 @@ name: Release
 
 on:
   push:
-    tags: ["v*"]
+    tags: ["v*", "snapcast-rs-v*"]
 
 env:
   CARGO_TERM_COLOR: always

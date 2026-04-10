@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.5.0](https://github.com/metaneutrons/snapcast-rs/compare/v0.4.0...v0.5.0) (2026-04-10)
+
+
+### Features
+
+* **server:** re-export DEFAULT_ENCRYPTION_PSK for embedders ([edfb9f8](https://github.com/metaneutrons/snapcast-rs/commit/edfb9f86b4075807daec426d4f3e96a9d6ad5a13))
+
 ## [0.4.0](https://github.com/metaneutrons/snapcast-rs/compare/v0.3.1...v0.4.0) (2026-04-10)
 
 

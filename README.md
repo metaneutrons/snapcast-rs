@@ -88,6 +88,7 @@ ClientConfig {
     latency: i32,              // additional latency offset (ms)
     mdns_service_type: String, // default: "_snapcast._tcp.local."
     client_name: String,       // default: "Snapclient"
+    encryption_psk: Option<String>, // f32lz4 encryption (feature: encryption)
 }
 ```
 
@@ -101,6 +102,7 @@ ClientConfig {
 | `tls`       | —       | none  | WSS (WebSocket + TLS) |
 | `resampler` | —       | none  | Sample rate conversion (rubato) |
 | `custom-protocol` | — | none | Custom binary messages (type 9+) |
+| `encryption` | — | none | ChaCha20-Poly1305 encrypted f32lz4 |
 
 ## Server Library API
 
@@ -155,6 +157,7 @@ ServerConfig {
     sample_format: String,     // default: "48000:16:2"
     mdns_service_type: String, // default: "_snapcast._tcp.local."
     auth: Option<Arc<dyn AuthValidator>>, // default: None (no auth)
+    encryption_psk: Option<String>, // f32lz4 encryption (feature: encryption)
 }
 ```
 
@@ -168,6 +171,7 @@ ServerConfig {
 | `opus`   | —       | libopus   | Opus encoding |
 | `vorbis` | —       | libvorbis | Vorbis encoding |
 | `custom-protocol` | — | none | Custom binary messages (type 9+) |
+| `encryption` | — | none | ChaCha20-Poly1305 encrypted f32lz4 |
 
 ### Authentication
 
@@ -289,6 +293,29 @@ match event {
 ```
 
 Message types 0–8 are reserved by the Snapcast protocol. Types 9+ are available for application use. The payload format is opaque — the library passes raw bytes, the application chooses JSON, bincode, protobuf, or any other format.
+
+## Encryption (`--features encryption`)
+
+Optional ChaCha20-Poly1305 authenticated encryption for f32lz4 audio chunks. Pure Rust (RustCrypto), zero C dependencies.
+
+```rust
+// Server
+let config = ServerConfig {
+    encryption_psk: Some("my-secret-key".into()),
+    ..ServerConfig::default()
+};
+
+// Client
+let config = ClientConfig {
+    encryption_psk: Some("my-secret-key".into()),
+    ..ClientConfig::default()
+};
+```
+
+- Key derivation: HKDF-SHA256 from PSK + random session salt
+- Per-chunk: 12-byte nonce (counter) + 16-byte auth tag = 28 bytes overhead (~0.6%)
+- Protects audio content and integrity — metadata (time sync, settings) stays plaintext
+- Wrong key: client connects but audio chunks are silently dropped
 
 ## Documentation
 

@@ -22,8 +22,6 @@ pub fn start(
     let chunk_duration =
         std::time::Duration::from_micros((chunk_frames as u64 * 1_000_000) / format.rate() as u64);
 
-    let chunk_frames = chunk_bytes / format.frame_size() as usize;
-
     Ok(tokio::spawn(async move {
         let mut ts = ChunkTimestamper::new(format.rate());
         loop {

@@ -21,7 +21,6 @@ pub fn start(
     let path = uri.path.clone();
     let params = uri.param("params").unwrap_or("").to_string();
     let chunk_bytes = chunk_frames * format.frame_size() as usize;
-    let chunk_frames = chunk_bytes / format.frame_size() as usize;
 
     Ok(tokio::spawn(async move {
         let mut ts = ChunkTimestamper::new(format.rate());

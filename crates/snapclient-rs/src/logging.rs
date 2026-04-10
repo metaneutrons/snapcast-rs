@@ -52,7 +52,7 @@ fn convert_filter(filter: &str) -> String {
 /// Initialize logging from CLI options.
 ///
 /// Falls back to `RUST_LOG` env var if set, otherwise uses the provided filter.
-pub fn init(sink: &str, filter: &str) -> Result<()> {
+pub(crate) fn init(sink: &str, filter: &str) -> Result<()> {
     let env_filter = if std::env::var("RUST_LOG").is_ok() {
         EnvFilter::from_default_env()
     } else {

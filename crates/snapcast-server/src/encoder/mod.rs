@@ -34,11 +34,15 @@ pub trait Encoder {
 }
 
 /// Create an encoder by codec name.
-pub fn create(codec: &str, format: SampleFormat, _options: &str) -> Result<Box<dyn Encoder>> {
+pub fn create(
+    codec: &str,
+    format: SampleFormat,
+    #[allow(unused_variables)] options: &str,
+) -> Result<Box<dyn Encoder>> {
     match codec {
         "pcm" => Ok(Box::new(pcm::PcmEncoder::new(format))),
         #[cfg(feature = "flac")]
-        "flac" => Ok(Box::new(flac::FlacEncoder::new(format, _options)?)),
+        "flac" => Ok(Box::new(flac::FlacEncoder::new(format, options)?)),
         #[cfg(feature = "opus")]
         "opus" => Ok(Box::new(opus::OpusEncoder::new(format, options)?)),
         #[cfg(feature = "vorbis")]

@@ -130,7 +130,7 @@ impl ServerState {
                 },
             );
         }
-        self.clients.get_mut(id).unwrap()
+        self.clients.get_mut(id).expect("just inserted")
     }
 
     /// Find which group a client belongs to, or create a new group.
@@ -154,7 +154,7 @@ impl ServerState {
             clients: vec![client_id.to_string()],
         };
         self.groups.push(group);
-        self.groups.last_mut().unwrap()
+        self.groups.last_mut().expect("just pushed")
     }
 
     /// Remove a client from all groups.

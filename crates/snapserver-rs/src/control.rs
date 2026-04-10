@@ -13,7 +13,7 @@ use crate::jsonrpc::{self, RpcResult};
 use snapcast_server::state::ServerState;
 
 /// Configuration for the control server.
-pub struct ControlConfig {
+pub(crate) struct ControlConfig {
     /// TCP port.
     pub port: u16,
     /// Shared server state.
@@ -24,9 +24,6 @@ pub struct ControlConfig {
     pub notify_tx: broadcast::Sender<Value>,
     /// Auth configuration.
     pub auth_config: Arc<AuthConfig>,
-    /// Stream control sender.
-    /// Client settings push sender.
-    /// Server buffer size in ms.
     /// Server command sender.
     pub cmd_tx: tokio::sync::mpsc::Sender<snapcast_server::ServerCommand>,
     /// Registered custom JSON-RPC methods.
@@ -36,7 +33,7 @@ pub struct ControlConfig {
 }
 
 /// Runs the JSON-RPC control server on a TCP port.
-pub async fn run_tcp(cfg: ControlConfig) -> Result<()> {
+pub(crate) async fn run_tcp(cfg: ControlConfig) -> Result<()> {
     let listener = TcpListener::bind(format!("0.0.0.0:{}", cfg.port)).await?;
     tracing::info!(port = cfg.port, "Control server (TCP) listening");
 
@@ -107,7 +104,7 @@ pub async fn run_tcp(cfg: ControlConfig) -> Result<()> {
                                     let _ = event_tx.send(crate::ControlEvent::JsonRpc {
                                         client_id: client_id.clone(),
                                         request,
-                                        _response_tx: Some(resp_tx),
+                                        response_tx: Some(resp_tx),
                                     }).await;
                                     match tokio::time::timeout(
                                         std::time::Duration::from_secs(5),
@@ -129,7 +126,7 @@ pub async fn run_tcp(cfg: ControlConfig) -> Result<()> {
                                     let _ = event_tx.send(crate::ControlEvent::JsonRpc {
                                         client_id: client_id.clone(),
                                         request,
-                                        _response_tx: None,
+                                        response_tx: None,
                                     }).await;
                                 } else {
                                     // Unknown method

@@ -5,7 +5,7 @@ use ini::Ini;
 use snapcast_server::ServerConfig;
 
 /// Binary-specific configuration (not part of the library).
-pub struct BinaryConfig {
+pub(crate) struct BinaryConfig {
     /// Library server config.
     pub server: ServerConfig,
     /// TCP port for JSON-RPC control. Default: 1705.
@@ -31,7 +31,7 @@ impl Default for BinaryConfig {
 }
 
 /// Parse a snapserver.conf INI file into a [`BinaryConfig`].
-pub fn parse_config_file(path: &str) -> BinaryConfig {
+pub(crate) fn parse_config_file(path: &str) -> BinaryConfig {
     let mut config = BinaryConfig::default();
 
     let ini = match Ini::load_from_file(path) {
@@ -91,7 +91,7 @@ fn get_u32<F: FnOnce(u32)>(section: &ini::Properties, key: &str, f: F) {
 }
 
 /// CLI overrides.
-pub struct CliOverrides {
+pub(crate) struct CliOverrides {
     pub stream_port: Option<u16>,
     pub control_port: Option<u16>,
     pub http_port: Option<u16>,
@@ -103,7 +103,7 @@ pub struct CliOverrides {
 }
 
 /// Merge CLI overrides into config.
-pub fn merge_cli(mut config: BinaryConfig, cli: CliOverrides) -> BinaryConfig {
+pub(crate) fn merge_cli(mut config: BinaryConfig, cli: CliOverrides) -> BinaryConfig {
     if let Some(v) = cli.stream_port {
         config.server.stream_port = v;
     }

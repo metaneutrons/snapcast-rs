@@ -26,7 +26,7 @@ struct AppState {
 }
 
 /// Configuration for the HTTP server.
-pub struct HttpConfig {
+pub(crate) struct HttpConfig {
     /// HTTP port.
     pub port: u16,
     /// Snapweb document root (None = disabled).
@@ -39,15 +39,12 @@ pub struct HttpConfig {
     pub notify_tx: broadcast::Sender<Value>,
     /// Auth configuration.
     pub auth_config: Arc<AuthConfig>,
-    /// Stream control sender.
-    /// Client settings push sender.
-    /// Server buffer size in ms.
     /// Server command sender.
     pub cmd_tx: tokio::sync::mpsc::Sender<snapcast_server::ServerCommand>,
 }
 
 /// Start the HTTP server with JSON-RPC + WebSocket + optional Snapweb.
-pub async fn run_http(cfg: HttpConfig) -> Result<()> {
+pub(crate) async fn run_http(cfg: HttpConfig) -> Result<()> {
     let app_state = AppState {
         state: cfg.state,
         event_tx: cfg.event_tx,
@@ -113,7 +110,7 @@ async fn http_jsonrpc_handler(
             let _ = app
                 .event_tx
                 .send(crate::ControlEvent::JsonRpc {
-                    _response_tx: None,
+                    response_tx: None,
                     client_id: "http".into(),
                     request,
                 })
@@ -160,7 +157,7 @@ async fn handle_ws(mut socket: WebSocket, app: AppState) {
                         }
                     }
                     RpcResult::Unknown => {
-                        let _ = app.event_tx.send(crate::ControlEvent::JsonRpc { _response_tx: None,
+                        let _ = app.event_tx.send(crate::ControlEvent::JsonRpc { response_tx: None,
                             client_id: "websocket".into(),
                             request,
                         }).await;

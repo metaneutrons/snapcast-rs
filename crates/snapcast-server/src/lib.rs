@@ -236,7 +236,6 @@ fn default_codec() -> &'static str {
     return "pcm";
 }
 
-/// Server configuration.
 /// Server configuration for the embeddable library.
 pub struct ServerConfig {
     /// TCP port for binary protocol (client connections). Default: 1704.

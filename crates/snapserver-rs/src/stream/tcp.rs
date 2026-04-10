@@ -26,7 +26,6 @@ pub fn start(
     let port = if uri.port == 0 { 4953 } else { uri.port };
     let addr = format!("{host}:{port}");
     let chunk_bytes = chunk_frames * format.frame_size() as usize;
-    let chunk_frames = chunk_bytes / format.frame_size() as usize;
 
     Ok(tokio::spawn(async move {
         let listener = match TcpListener::bind(&addr).await {

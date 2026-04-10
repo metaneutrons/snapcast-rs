@@ -206,7 +206,7 @@ impl Controller {
                         .await
                         .ok();
                     if quick_syncs_remaining == 0 {
-                        let diff = self.time_provider.lock().unwrap().diff_to_server_usec();
+                        let diff = self.time_provider.lock().unwrap_or_else(|e| e.into_inner()).diff_to_server_usec();
                         let diff_ms = diff as f64 / 1000.0;
                         tracing::info!(diff_ms, "Time sync complete");
                         self.emit(ClientEvent::TimeSyncComplete { diff_ms });
@@ -230,7 +230,10 @@ impl Controller {
                     if dec.decode(&mut data)? {
                         let chunk = PcmChunk::new(wc.timestamp, data, self.sample_format);
                         if let Some(ref stream) = self.stream {
-                            stream.lock().unwrap().add_chunk(chunk);
+                            stream
+                                .lock()
+                                .unwrap_or_else(|e| e.into_inner())
+                                .add_chunk(chunk);
                         }
                     }
                 }
@@ -278,7 +281,10 @@ impl Controller {
     fn apply_server_settings(&mut self, ss: &ServerSettings) {
         if let Some(ref stream) = self.stream {
             let buf_ms = (ss.buffer_ms - ss.latency - self.settings.latency).max(0);
-            stream.lock().unwrap().set_buffer_ms(buf_ms as i64);
+            stream
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .set_buffer_ms(buf_ms as i64);
         }
     }
 
@@ -303,7 +309,7 @@ impl Controller {
 
         // Reinitialize the shared stream (binary's player holds the same Arc)
         if let Some(ref stream) = self.stream {
-            let mut s = stream.lock().unwrap();
+            let mut s = stream.lock().unwrap_or_else(|e| e.into_inner());
             *s = Stream::new(self.sample_format);
             if let Some(ref ss) = self.server_settings {
                 let buf_ms = (ss.buffer_ms - ss.latency - self.settings.latency).max(0);
@@ -332,7 +338,6 @@ impl Controller {
     }
 }
 
-/// Timer-driven audio pump: reads time-synced PCM from Stream, converts to f32, sends via channel.
 fn hostname() -> String {
     hostname::get()
         .map(|h| h.to_string_lossy().into_owned())

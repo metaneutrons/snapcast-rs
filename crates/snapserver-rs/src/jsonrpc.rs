@@ -12,7 +12,7 @@ use snapcast_server::state::ServerState;
 const INVALID_PARAMS: i64 = -32602;
 
 /// Result of handling a JSON-RPC request.
-pub enum RpcResult {
+pub(crate) enum RpcResult {
     /// Handled: response JSON + optional notification to broadcast.
     Response {
         /// JSON-RPC response.
@@ -25,7 +25,7 @@ pub enum RpcResult {
 }
 
 /// Handle a JSON-RPC request against shared server state.
-pub async fn handle_request(
+pub(crate) async fn handle_request(
     request: &Value,
     state: &Arc<Mutex<ServerState>>,
     auth_config: &AuthConfig,

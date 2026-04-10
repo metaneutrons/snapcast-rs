@@ -18,7 +18,7 @@ pub(crate) enum ControlEvent {
         /// The full JSON-RPC request object.
         request: serde_json::Value,
         /// Response channel (`Some` for methods, `None` for notifications).
-        _response_tx: Option<tokio::sync::oneshot::Sender<serde_json::Value>>,
+        response_tx: Option<tokio::sync::oneshot::Sender<serde_json::Value>>,
     },
 }
 
@@ -172,8 +172,6 @@ fn main() -> anyhow::Result<()> {
 
         server.set_manager(manager);
 
-        // mDNS
-
         // JSON-RPC control servers
         let shared_state = std::sync::Arc::new(tokio::sync::Mutex::new(
             snapcast_server::state::ServerState::default(),
@@ -224,9 +222,12 @@ fn main() -> anyhow::Result<()> {
             while let Some(event) = ctrl_event_rx.recv().await {
                 match event {
                     ControlEvent::JsonRpc {
-                        client_id, request, ..
+                        client_id,
+                        request,
+                        response_tx,
                     } => {
                         tracing::debug!(client_id, ?request, "Unhandled JSON-RPC");
+                        drop(response_tx); // explicitly drop — handler will see channel closed
                     }
                 }
             }

@@ -3,7 +3,7 @@
 //! Must use the same clock as the client (`mach_continuous_time` on macOS,
 //! `CLOCK_MONOTONIC` on Linux) for time sync to work.
 
-/// Current wall-clock time in microseconds since Unix epoch.
+/// Current monotonic time in microseconds.
 pub fn now_usec() -> i64 {
     monotonic_usec()
 }

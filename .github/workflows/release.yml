@@ -17,7 +17,7 @@ jobs:
           - target: x86_64-unknown-linux-gnu
             os: ubuntu-latest
           - target: aarch64-unknown-linux-gnu
-            os: ubuntu-latest
+            os: ubuntu-24.04-arm
           - target: x86_64-apple-darwin
             os: macos-latest
           - target: aarch64-apple-darwin
@@ -27,37 +27,27 @@ jobs:
     steps:
       - uses: actions/checkout@v6
       - uses: dtolnay/rust-toolchain@stable
-        with:
-          targets: ${{ matrix.target }}
       - uses: Swatinem/rust-cache@v2
-      - name: Install cross-compilation tools
-        if: matrix.target == 'aarch64-unknown-linux-gnu'
-        run: sudo apt-get update && sudo apt-get install -y gcc-aarch64-linux-gnu
-      - name: Install system deps (Linux native)
-        if: runner.os == 'Linux' && matrix.target != 'aarch64-unknown-linux-gnu'
+      - name: Install system deps (Linux)
+        if: runner.os == 'Linux'
         run: sudo apt-get update && sudo apt-get install -y libasound2-dev libflac-dev
       - name: Install FLAC (macOS)
         if: runner.os == 'macOS'
         run: brew install flac
       - name: Build release
         run: |
-          if [ "${{ matrix.target }}" = "aarch64-unknown-linux-gnu" ]; then
-            cargo build --release --target ${{ matrix.target }} -p snapserver-rs
-          else
-            cargo build --release --target ${{ matrix.target }} -p snapclient-rs
-            cargo build --release --target ${{ matrix.target }} -p snapserver-rs --features flac
-          fi
+          cargo build --release -p snapclient-rs
+          cargo build --release -p snapserver-rs --features flac
         env:
-          CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER: aarch64-linux-gnu-gcc
       - name: Upload artifacts
         uses: actions/upload-artifact@v7
         with:
           name: snapcast-rs-${{ matrix.target }}
           path: |
-            target/${{ matrix.target }}/release/snapclient-rs
-            target/${{ matrix.target }}/release/snapclient-rs.exe
-            target/${{ matrix.target }}/release/snapserver-rs
-            target/${{ matrix.target }}/release/snapserver-rs.exe
+            target/release/snapclient-rs
+            target/release/snapclient-rs.exe
+            target/release/snapserver-rs
+            target/release/snapserver-rs.exe
 
   upload-release-artifacts:
     name: Upload Release Artifacts

@@ -388,7 +388,7 @@ Pre-built binaries for every release:
 | Platform | Client | Server | FLAC |
 |----------|--------|--------|------|
 | Linux x86_64 | ✅ | ✅ | ✅ |
-| Linux aarch64 | — | ✅ | — |
+| Linux aarch64 | ✅ | ✅ | ✅ |
 | macOS x86_64 | ✅ | ✅ | ✅ |
 | macOS aarch64 | ✅ | ✅ | ✅ |
 | Windows x86_64 | ✅ | ✅ | — |

@@ -28,7 +28,7 @@ If you enable `f32lz4` or `encryption` on the server, C++ clients cannot decode 
 
 ```rust
 let config = ServerConfig {
-    mdns_service_type: "_myapp._tcp.local.".into(), // C++ clients won't discover this
+    mdns_service_type: "_myapp._tcp.local.".into(),
     ..ServerConfig::default()
 };
 ```

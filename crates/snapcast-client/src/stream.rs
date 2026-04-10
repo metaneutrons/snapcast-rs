@@ -366,7 +366,8 @@ impl Stream {
     /// Fill `output` with silence.
     pub fn get_silence(&self, output: &mut [u8], frames: u32) {
         let bytes = frames as usize * self.format.frame_size() as usize;
-        output[..bytes].fill(0);
+        let len = bytes.min(output.len());
+        output[..len].fill(0);
     }
 
     /// Like [`get_player_chunk`](Self::get_player_chunk), but fills silence on failure.

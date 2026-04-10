@@ -69,14 +69,11 @@ fn run_cpal(
     };
 
     let channels = format.channels() as usize;
-    let frame_size = format.frame_size() as usize;
-    let sample_size = format.sample_size() as usize;
 
     let cpal_stream = device.build_output_stream(
         &config,
         move |data: &mut [f32], info: &cpal::OutputCallbackInfo| {
             let num_frames = data.len() / channels;
-            let mut pcm_buf = vec![0u8; num_frames * frame_size];
 
             let buffer_dac_usec = info
                 .timestamp()
@@ -91,26 +88,39 @@ fn run_cpal(
                 now_usec() + tp.diff_to_server_usec()
             };
 
-            {
-                let mut s = stream.lock().unwrap_or_else(|e| e.into_inner());
-                s.get_player_chunk_or_silence(
-                    server_now,
-                    buffer_dac_usec,
-                    &mut pcm_buf,
-                    num_frames as u32,
-                );
+            let mut s = stream.lock().unwrap_or_else(|e| e.into_inner());
+            let current_format = s.format();
+            let current_frame_size = current_format.frame_size() as usize;
+            let current_sample_size = current_format.sample_size() as usize;
+
+            if current_frame_size == 0 {
+                data.fill(0.0);
+                return;
             }
 
-            match sample_size {
+            let mut pcm_buf = vec![0u8; num_frames * current_frame_size];
+            s.get_player_chunk_or_silence(
+                server_now,
+                buffer_dac_usec,
+                &mut pcm_buf,
+                num_frames as u32,
+            );
+            drop(s);
+
+            match current_sample_size {
                 2 => {
                     for (i, chunk) in pcm_buf.chunks_exact(2).enumerate() {
-                        data[i] = i16::from_le_bytes([chunk[0], chunk[1]]) as f32 / i16::MAX as f32;
+                        if i < data.len() {
+                            data[i] =
+                                i16::from_le_bytes([chunk[0], chunk[1]]) as f32 / i16::MAX as f32;
+                        }
                     }
                 }
                 4 => {
-                    // f32 bytes (from f32lz4) — reinterpret directly
                     for (i, chunk) in pcm_buf.chunks_exact(4).enumerate() {
-                        data[i] = f32::from_le_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]);
+                        if i < data.len() {
+                            data[i] = f32::from_le_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]);
+                        }
                     }
                 }
                 _ => data.fill(0.0),

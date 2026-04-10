@@ -358,6 +358,8 @@ fn spawn_stream_encoder(
 
         rt.block_on(async {
             let mut pending_timestamp: Option<i64> = None;
+            let mut warned_f32 = false;
+            let mut warned_pcm = false;
 
             while let Some(frame) = rx.recv().await {
                 if pending_timestamp.is_none() {
@@ -366,6 +368,14 @@ fn spawn_stream_encoder(
 
                 let pcm_bytes = match frame.data {
                     AudioData::F32(samples) => {
+                        if !is_f32lz4 && !warned_f32 {
+                            warned_f32 = true;
+                            tracing::warn!(
+                                stream = %stream_id,
+                                codec = enc.name(),
+                                "F32 input requires quantization to {bits}-bit PCM — consider f32lz4 codec for lossless path",
+                            );
+                        }
                         if is_f32lz4 {
                             // f32lz4: pass f32 bytes directly — no quantization
                             samples.iter().flat_map(|s| s.to_le_bytes()).collect()
@@ -373,7 +383,16 @@ fn spawn_stream_encoder(
                             f32_to_pcm_bytes(&samples, bits)
                         }
                     }
-                    AudioData::Pcm(data) => data,
+                    AudioData::Pcm(data) => {
+                        if is_f32lz4 && !warned_pcm {
+                            warned_pcm = true;
+                            tracing::warn!(
+                                stream = %stream_id,
+                                "PCM input with f32lz4 codec requires reinterpretation — consider matching input format to codec",
+                            );
+                        }
+                        data
+                    }
                 };
 
                 match enc.encode(&pcm_bytes) {

@@ -112,7 +112,7 @@ fn main() -> anyhow::Result<()> {
         // Set up stream manager with configured sources
         let default_format: snapcast_proto::SampleFormat = sample_format_str
             .parse()
-            .unwrap_or_else(|_| snapcast_proto::SampleFormat::new(48000, 16, 2));
+            .unwrap_or(snapcast_proto::DEFAULT_SAMPLE_FORMAT);
 
         let mut manager = snapcast_server::stream::manager::StreamManager::new();
         for source in &server_config.sources {

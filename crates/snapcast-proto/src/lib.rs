@@ -28,3 +28,16 @@ pub use message::MessageType;
 pub use message::base::{BaseMessage, ProtoError};
 pub use sample_format::SampleFormat;
 pub use types::Timeval;
+
+/// Default TCP port for binary protocol (streaming clients).
+pub const DEFAULT_STREAM_PORT: u16 = 1704;
+/// Default TCP port for JSON-RPC control.
+pub const DEFAULT_CONTROL_PORT: u16 = 1705;
+/// Default HTTP port for JSON-RPC + Snapweb.
+pub const DEFAULT_HTTP_PORT: u16 = 1780;
+/// Default WebSocket Secure port.
+pub const DEFAULT_WSS_PORT: u16 = 1788;
+/// Snapcast binary protocol version.
+pub const PROTOCOL_VERSION: u32 = 2;
+/// Default sample format: 48000 Hz, 16-bit, stereo.
+pub const DEFAULT_SAMPLE_FORMAT: SampleFormat = SampleFormat::new(48000, 16, 2);

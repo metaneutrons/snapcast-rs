@@ -256,7 +256,7 @@ pub struct ServerConfig {
 impl Default for ServerConfig {
     fn default() -> Self {
         Self {
-            stream_port: 1704,
+            stream_port: snapcast_proto::DEFAULT_STREAM_PORT,
             buffer_ms: 1000,
             codec: default_codec().into(),
             sample_format: "48000:16:2".into(),
@@ -342,7 +342,7 @@ impl SnapServer {
 
         let manager = self.manager.take().unwrap_or_default();
 
-        let default_format = snapcast_proto::SampleFormat::new(48000, 16, 2);
+        let default_format = snapcast_proto::DEFAULT_SAMPLE_FORMAT;
         let first_stream = manager.stream_ids().into_iter().next().unwrap_or_default();
         let (codec, header) = if let Some((c, h, _)) = manager.header(&first_stream) {
             (c.to_string(), h.to_vec())

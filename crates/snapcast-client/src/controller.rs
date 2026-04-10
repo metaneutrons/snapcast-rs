@@ -19,6 +19,7 @@ use crate::time_provider::TimeProvider;
 use crate::{ClientCommand, ClientEvent};
 
 const VERSION: &str = env!("CARGO_PKG_VERSION");
+const MAX_RECONNECT_DELAY_SECS: u32 = 30;
 
 /// Main orchestrator wiring connection, decoder, stream, and audio output.
 pub struct Controller {
@@ -77,7 +78,7 @@ impl Controller {
                 }
             }
             self.cleanup();
-            let delay = Duration::from_secs(attempts.min(30) as u64);
+            let delay = Duration::from_secs(attempts.min(MAX_RECONNECT_DELAY_SECS) as u64);
             tokio::time::sleep(delay).await;
         }
     }
@@ -134,7 +135,7 @@ impl Controller {
             arch: std::env::consts::ARCH.to_string(),
             instance: self.settings.instance,
             id: host_id,
-            snap_stream_protocol_version: 2,
+            snap_stream_protocol_version: snapcast_proto::PROTOCOL_VERSION,
             auth,
         };
 
@@ -163,7 +164,8 @@ impl Controller {
 
     async fn receive_loop(&mut self) -> Result<()> {
         let mut sync_timer = tokio::time::interval(Duration::from_secs(1));
-        let mut quick_syncs_remaining: u32 = 50;
+        const INITIAL_QUICK_SYNCS: u32 = 50;
+        let mut quick_syncs_remaining = INITIAL_QUICK_SYNCS;
         let mut quick_sync_timer = tokio::time::interval(Duration::from_millis(100));
 
         self.connection

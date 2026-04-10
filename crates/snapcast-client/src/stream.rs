@@ -70,6 +70,22 @@ impl PcmChunk {
 
 /// Correction threshold — soft sync starts when |short_median| > 100µs
 const CORRECTION_BEGIN_USEC: i64 = 100;
+/// Hard sync: |median| exceeds this (µs).
+const HARD_SYNC_MEDIAN_USEC: i64 = 2000;
+/// Hard sync: |short_median| exceeds this (µs).
+const HARD_SYNC_SHORT_MEDIAN_USEC: i64 = 5000;
+/// Hard sync: |mini_median| exceeds this (µs).
+const HARD_SYNC_MINI_MEDIAN_USEC: i64 = 50000;
+/// Hard sync: |age| exceeds this (µs).
+const HARD_SYNC_AGE_USEC: i64 = 500_000;
+/// Minimum |age| for hard sync re-trigger (µs).
+const HARD_SYNC_MIN_AGE_USEC: i64 = 500;
+/// Minimum |mini_median| for soft sync (µs).
+const SOFT_SYNC_MIN_USEC: i64 = 50;
+/// Maximum playback rate correction factor.
+const MAX_RATE_CORRECTION: f64 = 0.0005;
+/// Rate correction scaling factor.
+const RATE_CORRECTION_SCALE: f64 = 0.00005;
 
 /// Time-synchronized PCM stream buffer.
 pub struct Stream {
@@ -267,13 +283,18 @@ impl Stream {
         self.set_real_sample_rate(self.format.rate() as f64);
 
         // Hard sync re-trigger thresholds (matching C++)
-        if self.buffer.full() && self.median.abs() > 2000 && age_usec.abs() > 500 {
+        if self.buffer.full()
+            && self.median.abs() > HARD_SYNC_MEDIAN_USEC
+            && age_usec.abs() > HARD_SYNC_MIN_AGE_USEC
+        {
             tracing::info!(
                 median = self.median,
                 "Hard sync: buffer full, |median| > 2ms"
             );
             self.hard_sync = true;
-        } else if self.short_buffer.full() && self.short_median.abs() > 5000 && age_usec.abs() > 500
+        } else if self.short_buffer.full()
+            && self.short_median.abs() > HARD_SYNC_SHORT_MEDIAN_USEC
+            && age_usec.abs() > HARD_SYNC_MIN_AGE_USEC
         {
             tracing::info!(
                 short_median = self.short_median,
@@ -281,29 +302,30 @@ impl Stream {
             );
             self.hard_sync = true;
         } else if self.mini_buffer.full()
-            && self.mini_buffer.median_simple().abs() > 50000
-            && age_usec.abs() > 500
+            && self.mini_buffer.median_simple().abs() > HARD_SYNC_MINI_MEDIAN_USEC
+            && age_usec.abs() > HARD_SYNC_MIN_AGE_USEC
         {
             tracing::info!("Hard sync: mini buffer full, |mini_median| > 50ms");
             self.hard_sync = true;
-        } else if age_usec.abs() > 500_000 {
+        } else if age_usec.abs() > HARD_SYNC_AGE_USEC {
             tracing::info!(age_usec, "Hard sync: |age| > 500ms");
             self.hard_sync = true;
         } else if self.short_buffer.full() {
             // Soft sync: adjust playback speed based on drift
             let mini_median = self.mini_buffer.median_simple();
-            if self.short_median > CORRECTION_BEGIN_USEC && mini_median > 50 && age_usec > 50 {
-                // Late: play faster (drop frames)
-                let rate = (self.short_median as f64 / 100.0) * 0.00005;
-                let rate = 1.0 - rate.min(0.0005);
+            if self.short_median > CORRECTION_BEGIN_USEC
+                && mini_median > SOFT_SYNC_MIN_USEC
+                && age_usec > SOFT_SYNC_MIN_USEC
+            {
+                let rate = (self.short_median as f64 / 100.0) * RATE_CORRECTION_SCALE;
+                let rate = 1.0 - rate.min(MAX_RATE_CORRECTION);
                 self.set_real_sample_rate(self.format.rate() as f64 * rate);
             } else if self.short_median < -CORRECTION_BEGIN_USEC
-                && mini_median < -50
-                && age_usec < -50
+                && mini_median < -SOFT_SYNC_MIN_USEC
+                && age_usec < -SOFT_SYNC_MIN_USEC
             {
-                // Early: play slower (insert frames)
-                let rate = (-self.short_median as f64 / 100.0) * 0.00005;
-                let rate = 1.0 + rate.min(0.0005);
+                let rate = (-self.short_median as f64 / 100.0) * RATE_CORRECTION_SCALE;
+                let rate = 1.0 + rate.min(MAX_RATE_CORRECTION);
                 self.set_real_sample_rate(self.format.rate() as f64 * rate);
             }
         }

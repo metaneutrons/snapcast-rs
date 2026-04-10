@@ -160,7 +160,7 @@ impl Default for ClientConfig {
     fn default() -> Self {
         Self {
             host: String::new(),
-            port: 1704,
+            port: snapcast_proto::DEFAULT_STREAM_PORT,
             auth: None,
             instance: 1,
             host_id: String::new(),

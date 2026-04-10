@@ -30,7 +30,7 @@ pub struct SampleFormat {
 
 impl SampleFormat {
     /// Create a new sample format.
-    pub fn new(rate: u32, bits: u16, channels: u16) -> Self {
+    pub const fn new(rate: u32, bits: u16, channels: u16) -> Self {
         Self {
             rate,
             bits,

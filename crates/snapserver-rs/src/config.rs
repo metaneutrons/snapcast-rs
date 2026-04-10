@@ -24,8 +24,8 @@ impl Default for BinaryConfig {
     fn default() -> Self {
         Self {
             server: ServerConfig::default(),
-            control_port: 1705,
-            http_port: 1780,
+            control_port: snapcast_proto::DEFAULT_CONTROL_PORT,
+            http_port: snapcast_proto::DEFAULT_HTTP_PORT,
             doc_root: None,
             sources: vec!["pipe:///tmp/snapfifo?name=default".into()],
             state_file: Some("/var/lib/snapserver/server.json".into()),

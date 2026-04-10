@@ -215,10 +215,10 @@ fn parse_url(url: &str) -> Result<ServerSettings> {
 
 fn default_port(scheme: &str) -> u16 {
     match scheme {
-        "tcp" => 1704,
-        "ws" => 1780,
-        "wss" => 1788,
-        _ => 1704,
+        "tcp" => snapcast_proto::DEFAULT_STREAM_PORT,
+        "ws" => snapcast_proto::DEFAULT_HTTP_PORT,
+        "wss" => snapcast_proto::DEFAULT_WSS_PORT,
+        _ => snapcast_proto::DEFAULT_STREAM_PORT,
     }
 }
 

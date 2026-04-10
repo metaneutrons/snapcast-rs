@@ -146,7 +146,7 @@ impl Default for ServerSettings {
         Self {
             scheme: "tcp".into(),
             host: String::new(),
-            port: 1704,
+            port: snapcast_proto::DEFAULT_STREAM_PORT,
             auth: None,
             server_certificate: None,
             certificate: None,

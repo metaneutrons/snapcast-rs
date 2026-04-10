@@ -49,6 +49,8 @@ use tokio::sync::{broadcast, mpsc};
 // Re-export proto types that embedders need
 #[cfg(feature = "custom-protocol")]
 pub use snapcast_proto::CustomMessage;
+#[cfg(feature = "encryption")]
+pub use snapcast_proto::DEFAULT_ENCRYPTION_PSK;
 pub use snapcast_proto::SampleFormat;
 pub use snapcast_proto::{DEFAULT_SAMPLE_FORMAT, DEFAULT_STREAM_PORT};
 

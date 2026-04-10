@@ -95,7 +95,7 @@ fn main() -> anyhow::Result<()> {
 
     let rt = tokio::runtime::Runtime::new()?;
     rt.block_on(async {
-        let (mut server, mut events, _audio_tx) = SnapServer::new(server_config.server);
+        let (mut server, mut events) = SnapServer::new(server_config.server);
 
         // Ctrl-C handler — must be first so it works even if setup fails
         let cmd = server.command_sender();
@@ -114,12 +114,11 @@ fn main() -> anyhow::Result<()> {
             std::process::exit(1);
         });
 
-        // Set up stream manager with configured sources
+        // Set up streams from configured sources
         let default_format: snapcast_proto::SampleFormat = sample_format_str
             .parse()
             .unwrap_or(snapcast_proto::DEFAULT_SAMPLE_FORMAT);
 
-        let mut manager = snapcast_server::stream::manager::StreamManager::new();
         for source in &server_config.sources {
             let parsed = match stream::uri::StreamUri::parse(source) {
                 Ok(p) => p,
@@ -134,7 +133,7 @@ fn main() -> anyhow::Result<()> {
                 .and_then(|s| s.parse().ok())
                 .unwrap_or(default_format);
 
-            let (tx, rx) = tokio::sync::mpsc::channel(128);
+            let tx = server.add_stream(&name);
 
             // Chunk size matches codec block size:
             // FLAC level 0-2: 1152 frames, level 3+: 4096 frames
@@ -166,18 +165,10 @@ fn main() -> anyhow::Result<()> {
                 }
             };
 
-            match reader_handle {
-                Ok(_handle) => {
-                    let enc_config = snapcast_server::encoder::EncoderConfig::new(&codec, format);
-                    if let Err(e) = manager.add_stream_from_receiver(&name, enc_config, rx) {
-                        tracing::error!(name, error = %e, "Failed to add stream");
-                    }
-                }
-                Err(e) => tracing::error!(source, error = %e, "Failed to start stream reader"),
+            if let Err(e) = reader_handle {
+                tracing::error!(source, error = %e, "Failed to start stream reader");
             }
         }
-
-        server.set_manager(manager);
 
         // JSON-RPC control servers
         let shared_state = std::sync::Arc::new(tokio::sync::Mutex::new(

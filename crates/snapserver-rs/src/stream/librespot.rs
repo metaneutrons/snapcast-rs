@@ -8,14 +8,14 @@ use tokio::sync::mpsc;
 use tokio::task::JoinHandle;
 
 use super::uri::StreamUri;
-use snapcast_server::stream::PcmChunk;
 use snapcast_server::time::ChunkTimestamper;
+use snapcast_server::{AudioData, AudioFrame};
 
 /// Start librespot and read PCM from stdout, metadata from stderr.
 pub fn start(
     uri: StreamUri,
     format: SampleFormat,
-    tx: mpsc::Sender<PcmChunk>,
+    tx: mpsc::Sender<AudioFrame>,
     meta_tx: mpsc::Sender<(String, String)>,
 ) -> Result<JoinHandle<()>> {
     let devicename = uri.param("devicename").unwrap_or("Snapcast").to_string();
@@ -87,11 +87,11 @@ pub fn start(
             let mut reader = tokio::io::BufReader::new(stdout);
             let mut buf = vec![0u8; chunk_bytes];
             while reader.read_exact(&mut buf).await.is_ok() {
-                let chunk = PcmChunk {
+                let frame = AudioFrame {
                     timestamp_usec: ts.next(chunk_frames as u32),
-                    data: buf.clone(),
+                    data: AudioData::Pcm(buf.clone()),
                 };
-                if tx.send(chunk).await.is_err() {
+                if tx.send(frame).await.is_err() {
                     let _ = child.kill().await;
                     return;
                 }

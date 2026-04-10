@@ -2,12 +2,12 @@
 
 use anyhow::Result;
 use snapcast_proto::SampleFormat;
+use snapcast_server::{AudioData, AudioFrame};
 use tokio::io::AsyncReadExt;
 use tokio::sync::mpsc;
 use tokio::task::JoinHandle;
 
 use super::uri::StreamUri;
-use snapcast_server::stream::PcmChunk;
 use snapcast_server::time::ChunkTimestamper;
 
 /// Start reading PCM from a named pipe.
@@ -15,7 +15,7 @@ pub fn start(
     uri: StreamUri,
     format: SampleFormat,
     chunk_frames: usize,
-    tx: mpsc::Sender<PcmChunk>,
+    tx: mpsc::Sender<AudioFrame>,
 ) -> Result<JoinHandle<()>> {
     let path = uri.path.clone();
     let chunk_bytes = chunk_frames * format.frame_size() as usize;
@@ -30,11 +30,11 @@ pub fn start(
                     loop {
                         match file.read_exact(&mut buf).await {
                             Ok(_) => {
-                                let chunk = PcmChunk {
+                                let frame = AudioFrame {
+                                    data: AudioData::Pcm(buf.clone()),
                                     timestamp_usec: ts.next(chunk_frames as u32),
-                                    data: buf.clone(),
                                 };
-                                if tx.send(chunk).await.is_err() {
+                                if tx.send(frame).await.is_err() {
                                     return;
                                 }
                             }

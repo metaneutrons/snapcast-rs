@@ -8,15 +8,15 @@ use tokio::sync::mpsc;
 use tokio::task::JoinHandle;
 
 use super::uri::StreamUri;
-use snapcast_server::stream::PcmChunk;
 use snapcast_server::time::ChunkTimestamper;
+use snapcast_server::{AudioData, AudioFrame};
 
 /// Start a TCP listener that reads PCM from connecting clients.
 pub fn start(
     uri: StreamUri,
     format: SampleFormat,
     chunk_frames: usize,
-    tx: mpsc::Sender<PcmChunk>,
+    tx: mpsc::Sender<AudioFrame>,
 ) -> Result<JoinHandle<()>> {
     let host = if uri.host.is_empty() {
         "0.0.0.0".to_string()
@@ -48,11 +48,11 @@ pub fn start(
                     loop {
                         match stream.read_exact(&mut buf).await {
                             Ok(_) => {
-                                let chunk = PcmChunk {
+                                let frame = AudioFrame {
                                     timestamp_usec: ts.next(chunk_frames as u32),
-                                    data: buf.clone(),
+                                    data: AudioData::Pcm(buf.clone()),
                                 };
-                                if tx.send(chunk).await.is_err() {
+                                if tx.send(frame).await.is_err() {
                                     return;
                                 }
                             }

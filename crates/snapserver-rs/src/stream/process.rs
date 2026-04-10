@@ -8,15 +8,15 @@ use tokio::sync::mpsc;
 use tokio::task::JoinHandle;
 
 use super::uri::StreamUri;
-use snapcast_server::stream::PcmChunk;
 use snapcast_server::time::ChunkTimestamper;
+use snapcast_server::{AudioData, AudioFrame};
 
 /// Start a child process and read PCM from its stdout.
 pub fn start(
     uri: StreamUri,
     format: SampleFormat,
     chunk_frames: usize,
-    tx: mpsc::Sender<PcmChunk>,
+    tx: mpsc::Sender<AudioFrame>,
 ) -> Result<JoinHandle<()>> {
     let path = uri.path.clone();
     let params = uri.param("params").unwrap_or("").to_string();
@@ -50,11 +50,11 @@ pub fn start(
 
             let mut buf = vec![0u8; chunk_bytes];
             while stdout.read_exact(&mut buf).await.is_ok() {
-                let chunk = PcmChunk {
+                let frame = AudioFrame {
                     timestamp_usec: ts.next(chunk_frames as u32),
-                    data: buf.clone(),
+                    data: AudioData::Pcm(buf.clone()),
                 };
-                if tx.send(chunk).await.is_err() {
+                if tx.send(frame).await.is_err() {
                     let _ = child.kill().await;
                     return;
                 }

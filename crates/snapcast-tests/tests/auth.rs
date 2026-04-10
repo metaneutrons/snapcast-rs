@@ -25,7 +25,8 @@ fn auth_server_config(port: u16) -> ServerConfig {
 #[tokio::test]
 async fn auth_success() {
     let port = free_port();
-    let (mut server, _events, _audio_tx) = SnapServer::new(auth_server_config(port));
+    let (mut server, _events) = SnapServer::new(auth_server_config(port));
+    let _audio_tx = server.add_stream("default");
     tokio::spawn(async move { server.run().await.ok() });
     tokio::time::sleep(std::time::Duration::from_millis(50)).await;
 
@@ -57,7 +58,8 @@ async fn auth_success() {
 #[tokio::test]
 async fn auth_rejection() {
     let port = free_port();
-    let (mut server, _events, _audio_tx) = SnapServer::new(auth_server_config(port));
+    let (mut server, _events) = SnapServer::new(auth_server_config(port));
+    let _audio_tx = server.add_stream("default");
     tokio::spawn(async move { server.run().await.ok() });
     tokio::time::sleep(std::time::Duration::from_millis(50)).await;
 

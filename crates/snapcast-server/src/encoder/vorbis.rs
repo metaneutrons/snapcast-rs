@@ -14,6 +14,7 @@ use crate::AudioData;
 pub struct VorbisEncoder {
     format: SampleFormat,
     header: Vec<u8>,
+    warned: bool,
 }
 
 impl VorbisEncoder {
@@ -32,7 +33,11 @@ impl VorbisEncoder {
 
         let header = header_buf.into_inner();
 
-        Ok(Self { format, header })
+        Ok(Self {
+            format,
+            header,
+            warned: false,
+        })
     }
 }
 
@@ -63,6 +68,13 @@ impl Encoder for VorbisEncoder {
                 bufs
             }
             AudioData::Pcm(pcm) => {
+                if !self.warned {
+                    self.warned = true;
+                    tracing::warn!(
+                        codec = "vorbis",
+                        "PCM input requires scaling to f32 — consider sending F32 directly"
+                    );
+                }
                 let sample_size = self.format.sample_size() as usize;
                 let total_samples = pcm.len() / sample_size;
                 let frames = total_samples / channels;

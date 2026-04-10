@@ -100,9 +100,14 @@ cmd.send(ClientCommand::Stop).await;
 
 ```rust
 ClientConfig {
+    scheme: String,            // "tcp", "ws", or "wss" (default: "tcp")
     host: String,              // server host (empty = mDNS discovery)
     port: u16,                 // default: 1704
     auth: Option<Auth>,        // Basic auth for Hello handshake
+    server_certificate: Option<PathBuf>, // CA cert for TLS verification
+    certificate: Option<PathBuf>,        // client cert (PEM)
+    certificate_key: Option<PathBuf>,    // client key (PEM)
+    key_password: Option<String>,        // key password
     instance: u32,             // for multiple clients on one host
     host_id: String,           // unique identifier (default: MAC)
     latency: i32,              // additional latency offset (ms)

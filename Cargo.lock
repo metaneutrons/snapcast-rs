@@ -2298,6 +2298,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "snapcast-tests"
+version = "0.2.0"
+dependencies = [
+ "anyhow",
+ "snapcast-client",
+ "snapcast-proto",
+ "snapcast-server",
+ "tokio",
+]
+
+[[package]]
 name = "snapclient-rs"
 version = "0.2.0"
 dependencies = [

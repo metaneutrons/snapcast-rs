@@ -1,0 +1,15 @@
+[package]
+name = "snapcast-tests"
+version.workspace = true
+edition.workspace = true
+publish = false
+
+[dependencies]
+snapcast-proto = { workspace = true }
+snapcast-client = { workspace = true, features = ["f32lz4"] }
+snapcast-server = { workspace = true, features = ["f32lz4"] }
+tokio = { workspace = true }
+anyhow = { workspace = true }
+
+[features]
+custom-protocol = ["snapcast-proto/custom-protocol", "snapcast-client/custom-protocol", "snapcast-server/custom-protocol"]

@@ -12,9 +12,9 @@ authors = ["Fabian Schmieder"]
 
 [workspace.dependencies]
 # Internal
-snapcast-proto = { path = "crates/snapcast-proto" }
-snapcast-client = { path = "crates/snapcast-client", default-features = false }
-snapcast-server = { path = "crates/snapcast-server" }
+snapcast-proto = { path = "crates/snapcast-proto", version = "0.3.0" }
+snapcast-client = { path = "crates/snapcast-client", version = "0.3.0", default-features = false }
+snapcast-server = { path = "crates/snapcast-server", version = "0.3.0" }
 
 # Async runtime
 tokio = { version = "1", features = ["full"] }

@@ -32,12 +32,7 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - name: Install cross-compilation tools
         if: matrix.target == 'aarch64-unknown-linux-gnu'
-        run: |
-          sudo dpkg --add-architecture arm64
-          sudo apt-get update
-          sudo apt-get install -y gcc-aarch64-linux-gnu libasound2-dev:arm64 libflac-dev:arm64
-          echo "PKG_CONFIG_PATH=/usr/lib/aarch64-linux-gnu/pkgconfig" >> $GITHUB_ENV
-          echo "PKG_CONFIG_ALLOW_CROSS=1" >> $GITHUB_ENV
+        run: sudo apt-get update && sudo apt-get install -y gcc-aarch64-linux-gnu
       - name: Install system deps (Linux native)
         if: runner.os == 'Linux' && matrix.target != 'aarch64-unknown-linux-gnu'
         run: sudo apt-get update && sudo apt-get install -y libasound2-dev libflac-dev
@@ -46,8 +41,12 @@ jobs:
         run: brew install flac
       - name: Build release
         run: |
-          cargo build --release --target ${{ matrix.target }} -p snapclient-rs
-          cargo build --release --target ${{ matrix.target }} -p snapserver-rs --features flac
+          if [ "${{ matrix.target }}" = "aarch64-unknown-linux-gnu" ]; then
+            cargo build --release --target ${{ matrix.target }} -p snapserver-rs
+          else
+            cargo build --release --target ${{ matrix.target }} -p snapclient-rs
+            cargo build --release --target ${{ matrix.target }} -p snapserver-rs --features flac
+          fi
         env:
           CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER: aarch64-linux-gnu-gcc
       - name: Upload artifacts

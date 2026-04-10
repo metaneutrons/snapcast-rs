@@ -40,6 +40,8 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
       - run: cargo test -p snapcast-proto -p snapcast-client -p snapcast-server
+      - run: cargo test -p snapcast-tests
+      - run: cargo test -p snapcast-tests --features custom-protocol
 
   build-linux:
     name: Build (Linux)

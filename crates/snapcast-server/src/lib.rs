@@ -343,18 +343,10 @@ pub struct SnapServer {
 fn spawn_stream_encoder(
     stream_id: String,
     mut rx: mpsc::Receiver<AudioFrame>,
-    enc_config: encoder::EncoderConfig,
+    mut enc: Box<dyn encoder::Encoder>,
     chunk_tx: broadcast::Sender<WireChunkData>,
 ) {
     std::thread::spawn(move || {
-        let mut enc = match encoder::create(&enc_config) {
-            Ok(e) => e,
-            Err(e) => {
-                tracing::error!(stream = %stream_id, error = %e, "Failed to create encoder");
-                return;
-            }
-        };
-
         let rt = tokio::runtime::Builder::new_current_thread()
             .enable_all()
             .build()
@@ -455,40 +447,46 @@ impl SnapServer {
                 .map_err(|e| tracing::warn!(error = %e, "mDNS advertisement failed"))
                 .ok();
 
-        // Create encoder for codec header (needed before any audio arrives)
-        let enc_config = encoder::EncoderConfig {
+        // Create default encoder — used for codec header and first default stream
+        let default_enc_config = encoder::EncoderConfig {
             codec: self.config.codec.clone(),
             format: sample_format,
             options: String::new(),
             #[cfg(feature = "encryption")]
             encryption_psk: self.config.encryption_psk.clone(),
         };
-        let header_enc = encoder::create(&enc_config)?;
-        let codec = header_enc.name().to_string();
-        let codec_header = header_enc.header().to_vec();
-        drop(header_enc);
+        let default_enc = encoder::create(&default_enc_config)?;
+        let codec = default_enc.name().to_string();
+        let codec_header = default_enc.header().to_vec();
 
-        // Spawn per-stream encode loops
+        // Spawn per-stream encode loops — reuse default_enc for first default stream
         let chunk_tx = self.chunk_tx.clone();
         let streams = std::mem::take(&mut self.streams);
+        let mut default_enc = Some(default_enc);
         for (name, stream_cfg, rx) in streams {
-            let stream_codec = stream_cfg.codec.as_deref().unwrap_or(&self.config.codec);
-            let stream_format: snapcast_proto::SampleFormat = stream_cfg
-                .sample_format
-                .as_deref()
-                .and_then(|s| s.parse().ok())
-                .unwrap_or(sample_format);
-            let stream_enc_config = encoder::EncoderConfig {
-                codec: stream_codec.to_string(),
-                format: stream_format,
-                options: String::new(),
-                #[cfg(feature = "encryption")]
-                encryption_psk: self.config.encryption_psk.clone(),
+            let enc = if stream_cfg.codec.is_none() && stream_cfg.sample_format.is_none() {
+                if let Some(enc) = default_enc.take() {
+                    enc
+                } else {
+                    encoder::create(&default_enc_config)?
+                }
+            } else {
+                let stream_codec = stream_cfg.codec.as_deref().unwrap_or(&self.config.codec);
+                let stream_format: snapcast_proto::SampleFormat = stream_cfg
+                    .sample_format
+                    .as_deref()
+                    .and_then(|s| s.parse().ok())
+                    .unwrap_or(sample_format);
+                encoder::create(&encoder::EncoderConfig {
+                    codec: stream_codec.to_string(),
+                    format: stream_format,
+                    options: String::new(),
+                    #[cfg(feature = "encryption")]
+                    encryption_psk: self.config.encryption_psk.clone(),
+                })?
             };
-            let stream_chunk_tx = chunk_tx.clone();
-            let stream_name = name.clone();
-            spawn_stream_encoder(stream_name, rx, stream_enc_config, stream_chunk_tx);
-            tracing::info!(stream = %name, codec = %stream_codec, %stream_format, "Stream registered");
+            tracing::info!(stream = %name, codec = enc.name(), %sample_format, "Stream registered");
+            spawn_stream_encoder(name, rx, enc, chunk_tx.clone());
         }
 
         // Start session server

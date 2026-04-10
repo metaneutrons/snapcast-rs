@@ -25,7 +25,7 @@ pub(crate) struct EncodedChunk {
 ///
 /// Each encoder accepts [`AudioData`] (F32 or Pcm) and handles conversion
 /// internally. This keeps format-specific logic in the encoder, not the caller.
-pub(crate) trait Encoder {
+pub(crate) trait Encoder: Send {
     /// Codec name (e.g. "flac", "pcm", "opus", "ogg", "f32lz4").
     fn name(&self) -> &str;
 

@@ -4,6 +4,10 @@
 #![warn(clippy::uninlined_format_args)]
 #![warn(missing_docs)]
 
+//! Snapcast client library — embeddable synchronized multiroom audio client.
+//!
+//! See also: [`snapcast-server`](https://docs.rs/snapcast-server) for the server library.
+
 //! Snapcast client library — embeddable synchronized multiroom audio.
 //!
 //! # Example
@@ -59,7 +63,11 @@ const EVENT_CHANNEL_SIZE: usize = 256;
 const COMMAND_CHANNEL_SIZE: usize = 64;
 const AUDIO_CHANNEL_SIZE: usize = 256;
 
+// Re-export proto types that embedders need
+#[cfg(feature = "custom-protocol")]
+pub use snapcast_proto::CustomMessage;
 pub use snapcast_proto::SampleFormat;
+pub use snapcast_proto::{DEFAULT_STREAM_PORT, PROTOCOL_VERSION};
 
 /// Interleaved f32 audio frame produced by the client library.
 #[derive(Debug, Clone)]

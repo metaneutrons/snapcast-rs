@@ -6,6 +6,7 @@
 
 //! Snapcast server library — embeddable synchronized multiroom audio server.
 //!
+//! See also: [`snapcast-client`](https://docs.rs/snapcast-client) for the client library.
 //! # Architecture
 //!
 //! The server is built around a channel-based API matching `snapcast-client`:
@@ -43,6 +44,12 @@
 use std::sync::Arc;
 
 use tokio::sync::mpsc;
+
+// Re-export proto types that embedders need
+#[cfg(feature = "custom-protocol")]
+pub use snapcast_proto::CustomMessage;
+pub use snapcast_proto::SampleFormat;
+pub use snapcast_proto::{DEFAULT_SAMPLE_FORMAT, DEFAULT_STREAM_PORT};
 
 const EVENT_CHANNEL_SIZE: usize = 256;
 const COMMAND_CHANNEL_SIZE: usize = 64;

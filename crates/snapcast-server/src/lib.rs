@@ -315,6 +315,15 @@ impl Default for ServerConfig {
     }
 }
 
+/// Per-stream configuration. If `None`, inherits from [`ServerConfig`].
+#[derive(Debug, Clone, Default)]
+pub struct StreamConfig {
+    /// Codec override (e.g. "flac", "f32lz4", "opus", "ogg", "pcm").
+    pub codec: Option<String>,
+    /// Sample format override (e.g. "48000:16:2").
+    pub sample_format: Option<String>,
+}
+
 /// The embeddable Snapcast server.
 pub struct SnapServer {
     config: ServerConfig,
@@ -322,7 +331,7 @@ pub struct SnapServer {
     command_tx: mpsc::Sender<ServerCommand>,
     command_rx: Option<mpsc::Receiver<ServerCommand>>,
     /// Named audio streams — each gets its own encoder at run().
-    streams: Vec<(String, mpsc::Receiver<AudioFrame>)>,
+    streams: Vec<(String, StreamConfig, mpsc::Receiver<AudioFrame>)>,
     /// Broadcast channel for encoded chunks → sessions.
     chunk_tx: broadcast::Sender<WireChunkData>,
 }
@@ -391,11 +400,19 @@ impl SnapServer {
 
     /// Add a named audio stream. Returns a sender for pushing audio frames.
     ///
-    /// Each stream gets its own encoder (based on server config) at `run()`.
-    /// Groups can be assigned to streams by name via `SetGroupStream`.
+    /// Uses the server's default codec and sample format.
     pub fn add_stream(&mut self, name: &str) -> mpsc::Sender<AudioFrame> {
+        self.add_stream_with_config(name, StreamConfig::default())
+    }
+
+    /// Add a named audio stream with per-stream codec/format overrides.
+    pub fn add_stream_with_config(
+        &mut self,
+        name: &str,
+        config: StreamConfig,
+    ) -> mpsc::Sender<AudioFrame> {
         let (tx, rx) = mpsc::channel(AUDIO_CHANNEL_SIZE);
-        self.streams.push((name.to_string(), rx));
+        self.streams.push((name.to_string(), config, rx));
         tx
     }
 
@@ -454,12 +471,24 @@ impl SnapServer {
         // Spawn per-stream encode loops
         let chunk_tx = self.chunk_tx.clone();
         let streams = std::mem::take(&mut self.streams);
-        for (name, rx) in streams {
-            let stream_enc_config = enc_config.clone();
+        for (name, stream_cfg, rx) in streams {
+            let stream_codec = stream_cfg.codec.as_deref().unwrap_or(&self.config.codec);
+            let stream_format: snapcast_proto::SampleFormat = stream_cfg
+                .sample_format
+                .as_deref()
+                .and_then(|s| s.parse().ok())
+                .unwrap_or(sample_format);
+            let stream_enc_config = encoder::EncoderConfig {
+                codec: stream_codec.to_string(),
+                format: stream_format,
+                options: String::new(),
+                #[cfg(feature = "encryption")]
+                encryption_psk: self.config.encryption_psk.clone(),
+            };
             let stream_chunk_tx = chunk_tx.clone();
             let stream_name = name.clone();
             spawn_stream_encoder(stream_name, rx, stream_enc_config, stream_chunk_tx);
-            tracing::info!(stream = %name, codec = %codec, %sample_format, "Stream registered");
+            tracing::info!(stream = %name, codec = %stream_codec, %stream_format, "Stream registered");
         }
 
         // Start session server

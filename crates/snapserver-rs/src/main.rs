@@ -10,7 +10,7 @@ use snapcast_server::{ServerCommand, ServerEvent, SnapServer};
 
 /// JSON-RPC event forwarded from control/HTTP handlers to the binary's event loop.
 #[derive(Debug)]
-pub enum ControlEvent {
+pub(crate) enum ControlEvent {
     /// Unrecognized JSON-RPC method or registered notification.
     JsonRpc {
         /// Control client that sent the request.
@@ -18,7 +18,7 @@ pub enum ControlEvent {
         /// The full JSON-RPC request object.
         request: serde_json::Value,
         /// Response channel (`Some` for methods, `None` for notifications).
-        response_tx: Option<tokio::sync::oneshot::Sender<serde_json::Value>>,
+        _response_tx: Option<tokio::sync::oneshot::Sender<serde_json::Value>>,
     },
 }
 

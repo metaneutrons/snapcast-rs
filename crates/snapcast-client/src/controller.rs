@@ -130,7 +130,7 @@ impl Controller {
             mac: mac.clone(),
             host_name: hostname(),
             version: VERSION.to_string(),
-            client_name: "Snapclient".to_string(),
+            client_name: self.settings.client_name.clone(),
             os: std::env::consts::OS.to_string(),
             arch: std::env::consts::ARCH.to_string(),
             instance: self.settings.instance,

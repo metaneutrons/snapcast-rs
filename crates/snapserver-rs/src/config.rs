@@ -16,8 +16,6 @@ pub struct BinaryConfig {
     pub doc_root: Option<String>,
     /// Stream source URIs.
     pub sources: Vec<String>,
-    /// Path to server state file for persistence.
-    pub state_file: Option<String>,
 }
 
 impl Default for BinaryConfig {
@@ -28,7 +26,6 @@ impl Default for BinaryConfig {
             http_port: snapcast_proto::DEFAULT_HTTP_PORT,
             doc_root: None,
             sources: vec!["pipe:///tmp/snapfifo?name=default".into()],
-            state_file: Some("/var/lib/snapserver/server.json".into()),
         }
     }
 }
@@ -46,12 +43,6 @@ pub fn parse_config_file(path: &str) -> BinaryConfig {
     };
 
     tracing::info!(path, "Loaded config file");
-
-    if let Some(s) = ini.section(Some("server")) {
-        get_str(s, "datadir", |v| {
-            config.state_file = Some(format!("{v}/server.json"));
-        });
-    }
 
     if let Some(s) = ini.section(Some("http")) {
         get_u16(s, "port", |v| config.http_port = v);

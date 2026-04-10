@@ -154,6 +154,8 @@ pub struct ClientConfig {
     pub latency: i32,
     /// mDNS service type. Default: "_snapcast._tcp.local.".
     pub mdns_service_type: String,
+    /// Client name sent in Hello. Default: "Snapclient".
+    pub client_name: String,
 }
 
 impl Default for ClientConfig {
@@ -166,6 +168,7 @@ impl Default for ClientConfig {
             host_id: String::new(),
             latency: 0,
             mdns_service_type: "_snapcast._tcp.local.".into(),
+            client_name: "Snapclient".into(),
         }
     }
 }

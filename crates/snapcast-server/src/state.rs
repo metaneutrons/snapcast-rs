@@ -147,7 +147,7 @@ impl ServerState {
 
         // Create new group with this client
         let group = Group {
-            id: uuid_v4(),
+            id: generate_id(),
             name: String::new(),
             stream_id: default_stream.to_string(),
             muted: false,
@@ -236,7 +236,7 @@ impl ServerState {
     }
 }
 
-fn uuid_v4() -> String {
+fn generate_id() -> String {
     use std::time::{SystemTime, UNIX_EPOCH};
     let t = SystemTime::now()
         .duration_since(UNIX_EPOCH)

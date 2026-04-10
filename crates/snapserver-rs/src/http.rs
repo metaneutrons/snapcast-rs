@@ -113,7 +113,7 @@ async fn http_jsonrpc_handler(
             let _ = app
                 .event_tx
                 .send(crate::ControlEvent::JsonRpc {
-                    response_tx: None,
+                    _response_tx: None,
                     client_id: "http".into(),
                     request,
                 })
@@ -160,7 +160,7 @@ async fn handle_ws(mut socket: WebSocket, app: AppState) {
                         }
                     }
                     RpcResult::Unknown => {
-                        let _ = app.event_tx.send(crate::ControlEvent::JsonRpc { response_tx: None,
+                        let _ = app.event_tx.send(crate::ControlEvent::JsonRpc { _response_tx: None,
                             client_id: "websocket".into(),
                             request,
                         }).await;

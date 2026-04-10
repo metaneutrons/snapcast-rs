@@ -107,7 +107,7 @@ pub async fn run_tcp(cfg: ControlConfig) -> Result<()> {
                                     let _ = event_tx.send(crate::ControlEvent::JsonRpc {
                                         client_id: client_id.clone(),
                                         request,
-                                        response_tx: Some(resp_tx),
+                                        _response_tx: Some(resp_tx),
                                     }).await;
                                     match tokio::time::timeout(
                                         std::time::Duration::from_secs(5),
@@ -129,7 +129,7 @@ pub async fn run_tcp(cfg: ControlConfig) -> Result<()> {
                                     let _ = event_tx.send(crate::ControlEvent::JsonRpc {
                                         client_id: client_id.clone(),
                                         request,
-                                        response_tx: None,
+                                        _response_tx: None,
                                     }).await;
                                 } else {
                                     // Unknown method

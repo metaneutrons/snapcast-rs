@@ -25,16 +25,6 @@ pub enum RpcResult {
 }
 
 /// Handle a JSON-RPC request against shared server state.
-/// A control command sent to a stream reader.
-#[derive(Debug, Clone)]
-pub struct StreamControlMsg {
-    /// Target stream ID.
-    pub stream_id: String,
-    /// Command (e.g. "play", "pause", "next").
-    pub command: String,
-}
-
-/// Handle a JSON-RPC request against shared server state.
 pub async fn handle_request(
     request: &Value,
     state: &Arc<Mutex<ServerState>>,
@@ -260,11 +250,9 @@ pub async fn handle_request(
             let Some(command) = params["command"].as_str() else {
                 return err(id, INVALID_PARAMS, "missing 'command'");
             };
-            let msg = StreamControlMsg {
-                stream_id: stream_id.to_string(),
-                command: command.to_string(),
-            };
-            tracing::debug!(stream_id = %msg.stream_id, command = %msg.command, "Stream control");
+            let msg_stream_id = stream_id.to_string();
+            let msg_command = command.to_string();
+            tracing::debug!(stream_id = %msg_stream_id, command = %msg_command, "Stream control");
             ok(id, json!({"id": stream_id}))
         }
 

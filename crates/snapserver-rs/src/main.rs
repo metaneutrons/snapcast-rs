@@ -92,7 +92,7 @@ fn main() -> anyhow::Result<()> {
 
     let rt = tokio::runtime::Runtime::new()?;
     rt.block_on(async {
-        let (mut server, mut events, _audio_tx) = SnapServer::new(server_config.clone());
+        let (mut server, mut events, _audio_tx) = SnapServer::new(server_config.server.clone());
 
         // Ctrl-C handler — must be first so it works even if setup fails
         let cmd = server.command_sender();
@@ -108,6 +108,7 @@ fn main() -> anyhow::Result<()> {
 
         // Set up stream manager with configured sources
         let default_format: snapcast_proto::SampleFormat = server_config
+            .server
             .sample_format
             .parse()
             .unwrap_or_else(|_| snapcast_proto::SampleFormat::new(48000, 16, 2));
@@ -126,7 +127,7 @@ fn main() -> anyhow::Result<()> {
             // Chunk size matches codec block size:
             // FLAC level 0-2: 1152 frames, level 3+: 4096 frames
             // Others: 960 frames (20ms at 48kHz)
-            let chunk_frames = match server_config.codec.as_str() {
+            let chunk_frames = match server_config.server.codec.as_str() {
                 "flac" => 1152,
                 _ => (format.rate() as usize * 20) / 1000, // 20ms
             };
@@ -156,7 +157,7 @@ fn main() -> anyhow::Result<()> {
                     if let Err(e) = manager.add_stream_from_receiver(
                         &name,
                         format,
-                        &server_config.codec,
+                        &server_config.server.codec,
                         "",
                         rx,
                     ) {

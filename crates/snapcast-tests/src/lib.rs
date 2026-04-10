@@ -29,8 +29,6 @@ pub async fn start_server() -> TestServer {
     let port = free_port();
     let config = ServerConfig {
         stream_port: port,
-        control_port: free_port(),
-        http_port: free_port(),
         ..ServerConfig::default()
     };
     let (mut server, events, audio_tx) = SnapServer::new(config);

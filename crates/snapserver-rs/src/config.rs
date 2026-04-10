@@ -4,9 +4,39 @@ use ini::Ini;
 
 use snapcast_server::ServerConfig;
 
-/// Parse a snapserver.conf INI file into a [`ServerConfig`].
-pub fn parse_config_file(path: &str) -> ServerConfig {
-    let mut config = ServerConfig::default();
+/// Binary-specific configuration (not part of the library).
+#[derive(Debug, Clone)]
+pub struct BinaryConfig {
+    /// Library server config.
+    pub server: ServerConfig,
+    /// TCP port for JSON-RPC control. Default: 1705.
+    pub control_port: u16,
+    /// HTTP port for JSON-RPC + Snapweb. Default: 1780.
+    pub http_port: u16,
+    /// Path to Snapweb static files (None = disabled).
+    pub doc_root: Option<String>,
+    /// Stream source URIs.
+    pub sources: Vec<String>,
+    /// Path to server state file for persistence.
+    pub state_file: Option<String>,
+}
+
+impl Default for BinaryConfig {
+    fn default() -> Self {
+        Self {
+            server: ServerConfig::default(),
+            control_port: 1705,
+            http_port: 1780,
+            doc_root: None,
+            sources: vec!["pipe:///tmp/snapfifo?name=default".into()],
+            state_file: Some("/var/lib/snapserver/server.json".into()),
+        }
+    }
+}
+
+/// Parse a snapserver.conf INI file into a [`BinaryConfig`].
+pub fn parse_config_file(path: &str) -> BinaryConfig {
+    let mut config = BinaryConfig::default();
 
     let ini = match Ini::load_from_file(path) {
         Ok(ini) => ini,
@@ -34,7 +64,7 @@ pub fn parse_config_file(path: &str) -> ServerConfig {
     }
 
     if let Some(s) = ini.section(Some("tcp-streaming")) {
-        get_u16(s, "port", |v| config.stream_port = v);
+        get_u16(s, "port", |v| config.server.stream_port = v);
     }
 
     if let Some(s) = ini.section(Some("stream")) {
@@ -42,9 +72,11 @@ pub fn parse_config_file(path: &str) -> ServerConfig {
         if !sources.is_empty() {
             config.sources = sources;
         }
-        get_str(s, "codec", |v| config.codec = v.to_string());
-        get_str(s, "sampleformat", |v| config.sample_format = v.to_string());
-        get_u32(s, "buffer", |v| config.buffer_ms = v);
+        get_str(s, "codec", |v| config.server.codec = v.to_string());
+        get_str(s, "sampleformat", |v| {
+            config.server.sample_format = v.to_string();
+        });
+        get_u32(s, "buffer", |v| config.server.buffer_ms = v);
     }
 
     config
@@ -68,30 +100,22 @@ fn get_u32<F: FnOnce(u32)>(section: &ini::Properties, key: &str, f: F) {
     }
 }
 
-/// CLI overrides for server config.
+/// CLI overrides.
 pub struct CliOverrides {
-    /// Override stream port.
     pub stream_port: Option<u16>,
-    /// Override control port.
     pub control_port: Option<u16>,
-    /// Override HTTP port.
     pub http_port: Option<u16>,
-    /// Override Snapweb doc root.
     pub doc_root: Option<String>,
-    /// Override buffer size.
     pub buffer: Option<u32>,
-    /// Override codec.
     pub codec: Option<String>,
-    /// Override sample format.
     pub sampleformat: Option<String>,
-    /// Override stream sources.
     pub sources: Vec<String>,
 }
 
-/// Merge CLI overrides into a config. Non-default CLI values take precedence.
-pub fn merge_cli(mut config: ServerConfig, cli: CliOverrides) -> ServerConfig {
+/// Merge CLI overrides into config.
+pub fn merge_cli(mut config: BinaryConfig, cli: CliOverrides) -> BinaryConfig {
     if let Some(v) = cli.stream_port {
-        config.stream_port = v;
+        config.server.stream_port = v;
     }
     if let Some(v) = cli.control_port {
         config.control_port = v;
@@ -103,13 +127,13 @@ pub fn merge_cli(mut config: ServerConfig, cli: CliOverrides) -> ServerConfig {
         config.doc_root = Some(v);
     }
     if let Some(v) = cli.buffer {
-        config.buffer_ms = v;
+        config.server.buffer_ms = v;
     }
     if let Some(v) = cli.codec {
-        config.codec = v;
+        config.server.codec = v;
     }
     if let Some(v) = cli.sampleformat {
-        config.sample_format = v;
+        config.server.sample_format = v;
     }
     if !cli.sources.is_empty() {
         config.sources = cli.sources;
@@ -135,18 +159,18 @@ mod tests {
         assert_eq!(config.sources, vec!["pipe:///tmp/snapfifo?name=test"]);
         assert_eq!(config.http_port, 8080);
         assert_eq!(config.doc_root, Some("/var/www".into()));
-        assert_eq!(config.stream_port, 2704);
+        assert_eq!(config.server.stream_port, 2704);
     }
 
     #[test]
     fn missing_file_returns_defaults() {
         let config = parse_config_file("/nonexistent/snapserver.conf");
-        assert_eq!(config.stream_port, 1704);
+        assert_eq!(config.server.stream_port, 1704);
     }
 
     #[test]
     fn merge_cli_overrides() {
-        let config = ServerConfig::default();
+        let config = BinaryConfig::default();
         let merged = merge_cli(
             config,
             CliOverrides {
@@ -160,7 +184,7 @@ mod tests {
                 sources: vec![],
             },
         );
-        assert_eq!(merged.stream_port, 9704);
+        assert_eq!(merged.server.stream_port, 9704);
         assert_eq!(merged.control_port, 1705);
     }
 }

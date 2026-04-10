@@ -1,4 +1,4 @@
-//! mDNS service advertisement for `_snapcast._tcp`.
+//! mDNS service advertisement.
 
 use anyhow::Result;
 use mdns_sd::{ServiceDaemon, ServiceInfo};
@@ -9,22 +9,15 @@ pub struct MdnsAdvertiser {
 }
 
 impl MdnsAdvertiser {
-    /// Start advertising on the given port.
-    pub fn new(port: u16) -> Result<Self> {
+    /// Start advertising on the given port with the given service type.
+    pub fn new(port: u16, service_type: &str) -> Result<Self> {
         let daemon = ServiceDaemon::new()?;
         let host = hostname::get()?.to_string_lossy().to_string();
         let short = host.split('.').next().unwrap_or(&host);
         let mdns_host = format!("{short}.local.");
-        let service = ServiceInfo::new(
-            "_snapcast._tcp.local.",
-            "Snapserver",
-            &mdns_host,
-            "",
-            port,
-            None,
-        )?;
+        let service = ServiceInfo::new(service_type, "Snapserver", &mdns_host, "", port, None)?;
         daemon.register(service)?;
-        tracing::info!(port, host = %mdns_host, "mDNS: advertising _snapcast._tcp");
+        tracing::info!(port, host = %mdns_host, service_type, "mDNS: advertising");
         Ok(Self { daemon })
     }
 

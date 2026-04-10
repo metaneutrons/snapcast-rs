@@ -240,36 +240,24 @@ fn default_codec() -> &'static str {
 pub struct ServerConfig {
     /// TCP port for binary protocol (client connections). Default: 1704.
     pub stream_port: u16,
-    /// TCP port for JSON-RPC control. Default: 1705.
-    pub control_port: u16,
-    /// HTTP port for JSON-RPC + Snapweb. Default: 1780.
-    pub http_port: u16,
-    /// Path to Snapweb static files (None = disabled).
-    pub doc_root: Option<String>,
     /// Audio buffer size in milliseconds. Default: 1000.
     pub buffer_ms: u32,
     /// Default codec: "f32lz4", "pcm", "opus", "ogg". Default: "f32lz4".
     pub codec: String,
     /// Default sample format. Default: 48000:16:2.
     pub sample_format: String,
-    /// Stream source URIs (from config file [stream] source= lines).
-    pub sources: Vec<String>,
-    /// Path to server state file for persistence.
-    pub state_file: Option<String>,
+    /// mDNS service type. Default: "_snapcast._tcp.local.".
+    pub mdns_service_type: String,
 }
 
 impl Default for ServerConfig {
     fn default() -> Self {
         Self {
             stream_port: 1704,
-            control_port: 1705,
-            http_port: 1780,
-            doc_root: None,
             buffer_ms: 1000,
             codec: default_codec().into(),
             sample_format: "48000:16:2".into(),
-            sources: vec!["pipe:///tmp/snapfifo?name=default".into()],
-            state_file: Some("/var/lib/snapserver/server.json".into()),
+            mdns_service_type: "_snapcast._tcp.local.".into(),
         }
     }
 }
@@ -343,9 +331,10 @@ impl SnapServer {
 
         // Advertise via mDNS (protocol-level discovery)
         #[cfg(feature = "mdns")]
-        let _mdns = mdns::MdnsAdvertiser::new(self.config.stream_port)
-            .map_err(|e| tracing::warn!(error = %e, "mDNS advertisement failed"))
-            .ok();
+        let _mdns =
+            mdns::MdnsAdvertiser::new(self.config.stream_port, &self.config.mdns_service_type)
+                .map_err(|e| tracing::warn!(error = %e, "mDNS advertisement failed"))
+                .ok();
 
         let manager = self.manager.take().unwrap_or_default();
 

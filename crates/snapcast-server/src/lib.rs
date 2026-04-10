@@ -69,6 +69,8 @@ pub struct AudioFrame {
 }
 
 pub mod auth;
+#[cfg(feature = "encryption")]
+pub mod crypto;
 pub mod encoder;
 #[cfg(feature = "mdns")]
 pub mod mdns;
@@ -261,6 +263,9 @@ pub struct ServerConfig {
     pub mdns_service_type: String,
     /// Auth validator for streaming clients. `None` = no auth required.
     pub auth: Option<std::sync::Arc<dyn auth::AuthValidator>>,
+    /// Pre-shared key for f32lz4 encryption. `None` = no encryption.
+    #[cfg(feature = "encryption")]
+    pub encryption_key: Option<String>,
 }
 
 impl Default for ServerConfig {
@@ -272,6 +277,8 @@ impl Default for ServerConfig {
             sample_format: "48000:16:2".into(),
             mdns_service_type: "_snapcast._tcp.local.".into(),
             auth: None,
+            #[cfg(feature = "encryption")]
+            encryption_key: None,
         }
     }
 }

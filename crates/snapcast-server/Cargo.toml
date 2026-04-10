@@ -10,6 +10,9 @@ authors.workspace = true
 
 [dependencies]
 base64 = { workspace = true }
+chacha20poly1305 = { workspace = true, optional = true }
+hkdf = { workspace = true, optional = true }
+sha2 = { workspace = true, optional = true }
 subtle = { workspace = true }
 snapcast-proto = { workspace = true }
 tokio = { workspace = true }
@@ -34,6 +37,7 @@ flac = ["dep:libflac-sys"]
 opus = ["dep:audiopus"]
 vorbis = ["dep:vorbis_rs", "dep:ogg"]
 f32lz4 = ["dep:lz4_flex"]
+encryption = ["f32lz4", "dep:chacha20poly1305", "dep:hkdf", "dep:sha2"]
 mdns = ["dep:mdns-sd", "dep:hostname"]
 custom-protocol = ["snapcast-proto/custom-protocol"]
 

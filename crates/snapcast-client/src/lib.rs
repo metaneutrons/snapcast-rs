@@ -46,6 +46,8 @@
 pub mod config;
 pub mod connection;
 pub(crate) mod controller;
+#[cfg(feature = "encryption")]
+pub(crate) mod crypto;
 pub mod decoder;
 pub(crate) mod double_buffer;
 pub mod stream;
@@ -168,6 +170,9 @@ pub struct ClientConfig {
     pub mdns_service_type: String,
     /// Client name sent in Hello. Default: "Snapclient".
     pub client_name: String,
+    /// Pre-shared key for f32lz4 decryption. `None` = auto-detect from env SNAPCAST_PSK.
+    #[cfg(feature = "encryption")]
+    pub encryption_key: Option<String>,
 }
 
 impl Default for ClientConfig {
@@ -181,6 +186,8 @@ impl Default for ClientConfig {
             latency: 0,
             mdns_service_type: "_snapcast._tcp.local.".into(),
             client_name: "Snapclient".into(),
+            #[cfg(feature = "encryption")]
+            encryption_key: None,
         }
     }
 }

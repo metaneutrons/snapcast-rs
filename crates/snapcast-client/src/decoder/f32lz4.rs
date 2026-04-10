@@ -18,6 +18,8 @@ const MAGIC: &[u8; 4] = b"F32L";
 /// F32 LZ4 decoder.
 pub struct F32Lz4Decoder {
     sample_format: SampleFormat,
+    #[cfg(feature = "encryption")]
+    decryptor: Option<crate::crypto::ChunkDecryptor>,
 }
 
 impl Decoder for F32Lz4Decoder {
@@ -32,6 +34,19 @@ impl Decoder for F32Lz4Decoder {
         let channels = u16::from_le_bytes(header.payload[8..10].try_into().unwrap());
         let bits = u16::from_le_bytes(header.payload[10..12].try_into().unwrap());
         self.sample_format = SampleFormat::new(rate, bits, channels);
+
+        // Check for encryption marker after the 12-byte base header
+        #[cfg(feature = "encryption")]
+        if header.payload.len() >= 32 && &header.payload[12..16] == b"ENC\0" {
+            let salt = &header.payload[16..32];
+            if let Some(psk) = std::env::var("SNAPCAST_PSK").ok().filter(|s| !s.is_empty()) {
+                self.decryptor = Some(crate::crypto::ChunkDecryptor::new(&psk, salt));
+                tracing::info!("F32LZ4 decryption enabled");
+            } else {
+                bail!("Server requires encryption but SNAPCAST_PSK is not set");
+            }
+        }
+
         tracing::info!(rate, channels, bits, "F32LZ4 decoder initialized");
         Ok(self.sample_format)
     }
@@ -40,6 +55,19 @@ impl Decoder for F32Lz4Decoder {
         if data.is_empty() {
             return Ok(false);
         }
+
+        // Decrypt if encryption is active
+        #[cfg(feature = "encryption")]
+        if let Some(ref dec) = self.decryptor {
+            match dec.decrypt(data) {
+                Ok(decrypted) => *data = decrypted,
+                Err(e) => {
+                    tracing::warn!(error = %e, "F32LZ4 decryption failed");
+                    return Ok(false);
+                }
+            }
+        }
+
         match lz4_flex::decompress_size_prepended(data) {
             Ok(decompressed) => {
                 tracing::trace!(
@@ -62,6 +90,8 @@ impl Decoder for F32Lz4Decoder {
 pub fn create() -> F32Lz4Decoder {
     F32Lz4Decoder {
         sample_format: SampleFormat::default(),
+        #[cfg(feature = "encryption")]
+        decryptor: None,
     }
 }
 

@@ -11,10 +11,22 @@ use super::{EncodedChunk, Encoder};
 
 const MAGIC: &[u8; 4] = b"F32L";
 
+/// Fill buffer with random bytes (uses system RNG).
+#[cfg(feature = "encryption")]
+fn getrandom(buf: &mut [u8]) {
+    use std::io::Read;
+    std::fs::File::open("/dev/urandom")
+        .expect("open /dev/urandom")
+        .read_exact(buf)
+        .expect("read /dev/urandom");
+}
+
 /// F32 LZ4 encoder — compresses f32 audio with LZ4.
 pub struct F32Lz4Encoder {
     format: SampleFormat,
     header: Vec<u8>,
+    #[cfg(feature = "encryption")]
+    encryptor: Option<crate::crypto::ChunkEncryptor>,
 }
 
 impl F32Lz4Encoder {
@@ -30,7 +42,25 @@ impl F32Lz4Encoder {
         header.extend_from_slice(&format.rate().to_le_bytes());
         header.extend_from_slice(&format.channels().to_le_bytes());
         header.extend_from_slice(&32u16.to_le_bytes()); // bits = 32 (f32)
-        Self { format, header }
+        Self {
+            format,
+            header,
+            #[cfg(feature = "encryption")]
+            encryptor: None,
+        }
+    }
+
+    /// Enable encryption with a pre-shared key. Appends salt to the codec header.
+    #[cfg(feature = "encryption")]
+    pub fn with_encryption(mut self, psk: &str) -> Self {
+        let mut salt = [0u8; 16];
+        getrandom(&mut salt);
+        self.encryptor = Some(crate::crypto::ChunkEncryptor::new(psk, &salt));
+        // Append encryption marker + salt to header
+        self.header.extend_from_slice(b"ENC\0");
+        self.header.extend_from_slice(&salt);
+        tracing::info!("F32LZ4 encryption enabled");
+        self
     }
 }
 
@@ -67,10 +97,17 @@ impl Encoder for F32Lz4Encoder {
         let compressed = lz4_flex::compress_prepend_size(&f32_bytes);
         let duration_ms = self.format.frames_to_ms(frames);
 
-        Ok(EncodedChunk {
-            data: compressed,
-            duration_ms,
-        })
+        #[cfg(feature = "encryption")]
+        let data = if let Some(ref mut enc) = self.encryptor {
+            enc.encrypt(&compressed)
+                .map_err(|e| anyhow::anyhow!("encryption failed: {e}"))?
+        } else {
+            compressed
+        };
+        #[cfg(not(feature = "encryption"))]
+        let data = compressed;
+
+        Ok(EncodedChunk { data, duration_ms })
     }
 }
 

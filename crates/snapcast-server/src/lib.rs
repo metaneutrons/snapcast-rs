@@ -153,6 +153,25 @@ pub enum ServerEvent {
         /// New status.
         status: String,
     },
+    /// A group's name changed.
+    GroupNameChanged {
+        /// Group ID.
+        group_id: String,
+        /// New name.
+        name: String,
+    },
+    /// A group's client list changed (clients moved between groups).
+    GroupClientsChanged {
+        /// Group ID.
+        group_id: String,
+        /// New client IDs.
+        clients: Vec<String>,
+    },
+    /// Server state changed — groups were reorganized (created, deleted, merged).
+    ///
+    /// Emitted after structural changes like `SetGroupClients` or client connect/disconnect
+    /// when the group topology changes. The consumer should re-read server status.
+    ServerUpdated,
     /// Custom binary protocol message from a streaming client.
     #[cfg(feature = "custom-protocol")]
     CustomMessage {
@@ -456,8 +475,9 @@ impl SnapServer {
                         Some(ServerCommand::SetGroupName { group_id, name }) => {
                             let mut s = shared_state.lock().await;
                             if let Some(g) = s.groups.iter_mut().find(|g| g.id == group_id) {
-                                g.name = name;
+                                g.name = name.clone();
                             }
+                            let _ = event_tx.try_send(ServerEvent::GroupNameChanged { group_id, name });
                         }
                         Some(ServerCommand::SetGroupClients { group_id, clients }) => {
                             let mut s = shared_state.lock().await;
@@ -465,13 +485,18 @@ impl SnapServer {
                                 s.remove_client_from_groups(cid);
                             }
                             if let Some(g) = s.groups.iter_mut().find(|g| g.id == group_id) {
-                                g.clients = clients;
+                                g.clients = clients.clone();
                             }
+                            let _ = event_tx.try_send(ServerEvent::GroupClientsChanged { group_id, clients });
+                            // Group topology may have changed (empty groups removed)
+                            let _ = event_tx.try_send(ServerEvent::ServerUpdated);
                         }
                         Some(ServerCommand::DeleteClient { client_id }) => {
                             let mut s = shared_state.lock().await;
                             s.remove_client_from_groups(&client_id);
                             s.clients.remove(&client_id);
+                            drop(s);
+                            let _ = event_tx.try_send(ServerEvent::ServerUpdated);
                         }
                         Some(ServerCommand::GetStatus { response_tx }) => {
                             let s = shared_state.lock().await;

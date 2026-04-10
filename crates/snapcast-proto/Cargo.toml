@@ -17,3 +17,6 @@ thiserror = { workspace = true }
 
 [features]
 custom-protocol = []
+
+[package.metadata.docs.rs]
+all-features = false

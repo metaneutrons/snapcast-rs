@@ -1,6 +1,8 @@
 # snapcast-rs
 
 [![CI](https://github.com/metaneutrons/snapcast-rs/actions/workflows/ci.yml/badge.svg)](https://github.com/metaneutrons/snapcast-rs/actions/workflows/ci.yml)
+[![crates.io](https://img.shields.io/crates/v/snapcast-client.svg)](https://crates.io/crates/snapcast-client)
+[![crates.io](https://img.shields.io/crates/v/snapcast-server.svg)](https://crates.io/crates/snapcast-server)
 [![docs.rs](https://docs.rs/snapcast-client/badge.svg)](https://docs.rs/snapcast-client)
 [![docs.rs](https://docs.rs/snapcast-server/badge.svg)](https://docs.rs/snapcast-server)
 [![License: GPL-3.0](https://img.shields.io/badge/license-GPL--3.0-blue.svg)](LICENSE)

@@ -43,3 +43,7 @@ resampler = ["dep:rubato"]
 f32lz4 = ["dep:lz4_flex"]
 encryption = ["f32lz4", "dep:chacha20poly1305", "dep:hkdf", "dep:sha2"]
 custom-protocol = ["snapcast-proto/custom-protocol"]
+
+[package.metadata.docs.rs]
+all-features = false
+features = ["f32lz4", "custom-protocol", "encryption"]

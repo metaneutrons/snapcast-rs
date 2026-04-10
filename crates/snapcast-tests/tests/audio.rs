@@ -66,9 +66,7 @@ async fn audio_round_trip_f32lz4() {
         server
             .audio_tx
             .send(snapcast_server::AudioFrame {
-                samples: samples.clone(),
-                sample_rate: 48000,
-                channels: 2,
+                data: snapcast_server::AudioData::F32(samples.clone()),
                 timestamp_usec: 0,
             })
             .await

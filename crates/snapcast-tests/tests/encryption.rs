@@ -48,9 +48,7 @@ async fn encrypted_f32lz4_end_to_end() {
     for _ in 0..5 {
         audio_tx
             .send(snapcast_server::AudioFrame {
-                samples: samples.clone(),
-                sample_rate: 48000,
-                channels: 2,
+                data: snapcast_server::AudioData::F32(samples.clone()),
                 timestamp_usec: 0,
             })
             .await

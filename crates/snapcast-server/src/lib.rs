@@ -55,16 +55,23 @@ const EVENT_CHANNEL_SIZE: usize = 256;
 const COMMAND_CHANNEL_SIZE: usize = 64;
 const AUDIO_CHANNEL_SIZE: usize = 256;
 
-/// Interleaved f32 audio frame for server input.
-#[derive(Debug)]
+/// Audio data pushed by the consumer — either f32 or raw PCM.
+#[derive(Debug, Clone)]
+pub enum AudioData {
+    /// Interleaved f32 samples (from DSP, EQ, AirPlay receivers).
+    /// Range: -1.0 to 1.0.
+    F32(Vec<f32>),
+    /// Raw interleaved PCM bytes at the stream's configured sample format
+    /// (from pipe/file/process readers). Byte order: little-endian.
+    Pcm(Vec<u8>),
+}
+
+/// A timestamped audio frame for server input.
+#[derive(Debug, Clone)]
 pub struct AudioFrame {
-    /// Interleaved f32 samples.
-    pub samples: Vec<f32>,
-    /// Sample rate in Hz.
-    pub sample_rate: u32,
-    /// Number of channels.
-    pub channels: u16,
-    /// Timestamp in microseconds.
+    /// Audio samples.
+    pub data: AudioData,
+    /// Timestamp in microseconds (server time).
     pub timestamp_usec: i64,
 }
 
@@ -433,11 +440,16 @@ impl SnapServer {
             };
             manager.add_stream_from_receiver("default", enc_config, internal_pcm_rx)?;
 
-            // Spawn task to convert AudioFrame (f32) → PcmChunk for the encoder
+            // Spawn task to convert AudioFrame → PcmChunk for the encoder
             let audio_format = sample_format;
             tokio::spawn(async move {
                 while let Some(frame) = audio_rx.recv().await {
-                    let pcm = f32_to_pcm_bytes(&frame.samples, audio_format.bits());
+                    let pcm = match frame.data {
+                        AudioData::F32(ref samples) => {
+                            f32_to_pcm_bytes(samples, audio_format.bits())
+                        }
+                        AudioData::Pcm(data) => data,
+                    };
                     if internal_pcm_tx
                         .send(stream::PcmChunk {
                             timestamp_usec: frame.timestamp_usec,

@@ -14,6 +14,7 @@ pub struct OpusEncoder {
     encoder: OpusEnc,
     header: Vec<u8>,
     frame_size: usize,
+    warned: bool,
 }
 
 impl OpusEncoder {
@@ -59,6 +60,7 @@ impl OpusEncoder {
             encoder,
             header,
             frame_size,
+            warned: false,
         })
     }
 }
@@ -75,7 +77,16 @@ impl Encoder for OpusEncoder {
     fn encode(&mut self, input: &AudioData) -> Result<EncodedChunk> {
         let pcm = match input {
             AudioData::Pcm(data) => std::borrow::Cow::Borrowed(data.as_slice()),
-            AudioData::F32(samples) => std::borrow::Cow::Owned(super::f32_to_pcm(samples, 16)),
+            AudioData::F32(samples) => {
+                if !self.warned {
+                    self.warned = true;
+                    tracing::warn!(
+                        codec = "opus",
+                        "F32 input requires quantization to 16-bit — consider f32lz4 for lossless path"
+                    );
+                }
+                std::borrow::Cow::Owned(super::f32_to_pcm(samples, 16))
+            }
         };
 
         let channels = self.format.channels() as usize;

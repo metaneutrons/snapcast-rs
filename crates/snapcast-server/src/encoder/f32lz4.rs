@@ -26,6 +26,7 @@ fn getrandom(buf: &mut [u8]) {
 pub struct F32Lz4Encoder {
     format: SampleFormat,
     header: Vec<u8>,
+    warned: bool,
     #[cfg(feature = "encryption")]
     encryptor: Option<crate::crypto::ChunkEncryptor>,
 }
@@ -46,6 +47,7 @@ impl F32Lz4Encoder {
         Self {
             format,
             header,
+            warned: false,
             #[cfg(feature = "encryption")]
             encryptor: None,
         }
@@ -85,6 +87,14 @@ impl Encoder for F32Lz4Encoder {
             }
             AudioData::Pcm(pcm) => {
                 // Convert integer PCM → f32 → bytes
+                if !self.warned {
+                    self.warned = true;
+                    tracing::warn!(
+                        codec = "f32lz4",
+                        bits = self.format.bits(),
+                        "PCM input requires conversion to f32 — consider sending F32 directly"
+                    );
+                }
                 let f32_samples = super::pcm_to_f32(pcm, self.format.bits());
                 f32_samples.iter().flat_map(|s| s.to_le_bytes()).collect()
             }

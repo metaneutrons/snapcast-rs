@@ -24,6 +24,7 @@ pub struct FlacEncoder {
     format: SampleFormat,
     encoder: *mut FLAC__StreamEncoder,
     callback_data: *mut CallbackData,
+    warned: bool,
 }
 
 #[allow(unsafe_code)]
@@ -108,6 +109,7 @@ impl FlacEncoder {
                 format,
                 encoder,
                 callback_data,
+                warned: false,
             })
         }
     }
@@ -127,6 +129,14 @@ impl Encoder for FlacEncoder {
         let pcm = match input {
             AudioData::Pcm(data) => std::borrow::Cow::Borrowed(data.as_slice()),
             AudioData::F32(samples) => {
+                if !self.warned {
+                    self.warned = true;
+                    tracing::warn!(
+                        codec = "flac",
+                        bits = self.format.bits(),
+                        "F32 input requires quantization — consider f32lz4 for lossless path"
+                    );
+                }
                 std::borrow::Cow::Owned(super::f32_to_pcm(samples, self.format.bits()))
             }
         };

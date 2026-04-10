@@ -359,8 +359,32 @@ mod tests {
             uri: "pipe:///tmp/snapfifo".into(),
             properties: Default::default(),
         });
-        let (cmd_tx, _cmd_rx) = tokio::sync::mpsc::channel(16);
-        (Arc::new(Mutex::new(s)), AuthConfig::default(), cmd_tx)
+        let state = Arc::new(Mutex::new(s));
+        let (cmd_tx, mut cmd_rx) = tokio::sync::mpsc::channel(16);
+        let state_for_cmd = Arc::clone(&state);
+        tokio::spawn(async move {
+            while let Some(cmd) = cmd_rx.recv().await {
+                match cmd {
+                    snapcast_server::ServerCommand::GetStatus { response_tx } => {
+                        let s = state_for_cmd.lock().await;
+                        let _ = response_tx.send(s.to_status_json());
+                    }
+                    snapcast_server::ServerCommand::SetClientVolume {
+                        client_id,
+                        volume,
+                        muted,
+                    } => {
+                        let mut s = state_for_cmd.lock().await;
+                        if let Some(c) = s.clients.get_mut(&client_id) {
+                            c.config.volume.percent = volume;
+                            c.config.volume.muted = muted;
+                        }
+                    }
+                    _ => {}
+                }
+            }
+        });
+        (state, AuthConfig::default(), cmd_tx)
     }
 
     #[tokio::test]
@@ -393,6 +417,9 @@ mod tests {
         assert_eq!(response["result"]["volume"]["percent"], 50);
         assert!(notification.is_some());
         assert_eq!(notification.unwrap()["method"], "Client.OnVolumeChanged");
+
+        // Let the command handler process the SetClientVolume
+        tokio::task::yield_now().await;
 
         let s = state.lock().await;
         assert_eq!(s.clients["c1"].config.volume.percent, 50);

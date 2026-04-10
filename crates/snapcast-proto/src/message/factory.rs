@@ -261,4 +261,25 @@ mod tests {
         assert!(base.size > 0);
         assert_eq!(frame.len(), BaseMessage::HEADER_SIZE + base.size as usize);
     }
+
+    #[cfg(feature = "custom-protocol")]
+    #[test]
+    fn round_trip_custom_message() {
+        let payload = b"hello custom";
+        let mut base = make_base(MessageType::Custom(42), 0);
+        let frame = serialize(&mut base, &MessagePayload::Custom(payload.to_vec())).unwrap();
+
+        let mut cursor = std::io::Cursor::new(&frame);
+        let header = BaseMessage::read_from(&mut cursor).unwrap();
+        assert_eq!(header.msg_type, MessageType::Custom(42));
+        assert_eq!(header.size, payload.len() as u32);
+
+        let mut body = vec![0u8; header.size as usize];
+        std::io::Read::read_exact(&mut cursor, &mut body).unwrap();
+        let msg = deserialize(header, &body).unwrap();
+        match msg.payload {
+            MessagePayload::Custom(data) => assert_eq!(data, payload),
+            _ => panic!("expected Custom"),
+        }
+    }
 }

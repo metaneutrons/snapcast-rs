@@ -329,10 +329,7 @@ async fn session_loop(
                 let chunk = chunk.context("broadcast closed")?;
                 let ts_usec = chunk.timestamp_usec;
                 let wc = WireChunk {
-                    timestamp: Timeval {
-                        sec: (ts_usec / 1_000_000) as i32,
-                        usec: (ts_usec % 1_000_000) as i32,
-                    },
+                    timestamp: Timeval::from_usec(ts_usec),
                     payload: chunk.data,
                 };
                 let frame = serialize_msg(MessageType::WireChunk, &MessagePayload::WireChunk(wc), 0)?;
@@ -436,9 +433,5 @@ async fn read_frame_from<R: AsyncReadExt + Unpin>(reader: &mut R) -> Result<Type
 }
 
 fn now_timeval() -> Timeval {
-    let usec = now_usec();
-    Timeval {
-        sec: (usec / 1_000_000) as i32,
-        usec: (usec % 1_000_000) as i32,
-    }
+    Timeval::from_usec(now_usec())
 }

@@ -328,12 +328,6 @@ impl Controller {
     fn emit(&self, event: ClientEvent) {
         let _ = self.event_tx.try_send(event);
     }
-
-    /// Graceful shutdown — stops player and closes connection.
-    pub fn shutdown(&mut self) {
-        tracing::info!("Shutting down");
-        self.cleanup();
-    }
 }
 
 /// Timer-driven audio pump: reads time-synced PCM from Stream, converts to f32, sends via channel.

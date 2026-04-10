@@ -70,6 +70,11 @@ impl SampleFormat {
         f64::from(self.rate) / 1000.0
     }
 
+    /// Convert a frame count to duration in milliseconds.
+    pub fn frames_to_ms(&self, frames: usize) -> f64 {
+        frames as f64 * 1000.0 / f64::from(self.rate)
+    }
+
     /// Whether any field has been set (non-zero).
     pub fn is_initialized(&self) -> bool {
         self.rate != 0 || self.bits != 0 || self.channels != 0

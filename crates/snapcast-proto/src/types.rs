@@ -16,6 +16,19 @@ pub struct Timeval {
 }
 
 impl Timeval {
+    /// Create from microseconds since epoch.
+    pub fn from_usec(usec: i64) -> Self {
+        Self {
+            sec: (usec / 1_000_000) as i32,
+            usec: (usec % 1_000_000) as i32,
+        }
+    }
+
+    /// Convert to microseconds since epoch.
+    pub fn to_usec(self) -> i64 {
+        self.sec as i64 * 1_000_000 + self.usec as i64
+    }
+
     /// Read a Timeval (8 bytes, little-endian) from a reader.
     pub fn read_from<R: Read>(r: &mut R) -> io::Result<Self> {
         Ok(Self {

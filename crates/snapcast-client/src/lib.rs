@@ -41,9 +41,9 @@
 
 pub mod config;
 pub mod connection;
-pub mod controller;
+pub(crate) mod controller;
 pub mod decoder;
-pub mod double_buffer;
+pub(crate) mod double_buffer;
 pub mod stream;
 pub mod time_provider;
 
@@ -55,7 +55,6 @@ pub mod resampler;
 
 use tokio::sync::mpsc;
 
-pub use config::{ClientSettings, PlayerSettings, ServerSettings};
 pub use snapcast_proto::SampleFormat;
 
 /// Interleaved f32 audio frame produced by the client library.

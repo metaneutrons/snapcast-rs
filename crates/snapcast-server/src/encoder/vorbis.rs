@@ -99,7 +99,7 @@ impl Encoder for VorbisEncoder {
         enc.encode_audio_block(channel_refs)?;
         enc.finish()?;
 
-        let duration_ms = frames as f64 * 1000.0 / self.format.rate() as f64;
+        let duration_ms = self.format.frames_to_ms(frames);
         Ok(EncodedChunk {
             data: output.into_inner(),
             duration_ms,

@@ -32,7 +32,7 @@ impl PcmChunk {
 
     /// Start time of this chunk in microseconds.
     pub fn start_usec(&self) -> i64 {
-        self.timestamp.sec as i64 * 1_000_000 + self.timestamp.usec as i64
+        self.timestamp.to_usec()
     }
 
     /// Duration of this chunk in microseconds.

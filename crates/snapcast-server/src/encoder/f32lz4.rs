@@ -65,7 +65,7 @@ impl Encoder for F32Lz4Encoder {
         let frames = f32_bytes.len() / (4 * channels);
         tracing::trace!(input_bytes = f32_bytes.len(), frames, "F32LZ4 encoding");
         let compressed = lz4_flex::compress_prepend_size(&f32_bytes);
-        let duration_ms = frames as f64 * 1000.0 / self.format.rate() as f64;
+        let duration_ms = self.format.frames_to_ms(frames);
 
         Ok(EncodedChunk {
             data: compressed,

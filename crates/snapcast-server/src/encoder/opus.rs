@@ -104,7 +104,7 @@ impl Encoder for OpusEncoder {
             }
         }
 
-        let duration_ms = total_frames as f64 * 1000.0 / self.format.rate() as f64;
+        let duration_ms = self.format.frames_to_ms(total_frames);
         Ok(EncodedChunk {
             data: output,
             duration_ms,

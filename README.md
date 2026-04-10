@@ -39,8 +39,6 @@ let config = ServerConfig {
 
 For full interoperability with C++ clients, use `--codec flac` or `--codec pcm` and leave `custom-protocol` and `encryption` disabled.
 
-FLAC default codec (C++ compatible). Pure Rust client. Cross-platform: macOS, Linux, Windows. Cross-platform: macOS, Linux, Windows.
-
 ## Architecture
 
 ```
@@ -136,16 +134,25 @@ ClientConfig {
 ## Server Library API
 
 ```rust
-use snapcast_server::{SnapServer, ServerConfig, ServerEvent, ServerCommand, AudioFrame};
+use snapcast_server::{SnapServer, ServerConfig, ServerEvent, ServerCommand, AudioFrame, StreamConfig};
 
 let config = ServerConfig {
-    codec: "f32lz4".into(),
+    codec: "flac".into(),
     auth: Some(Arc::new(StaticAuthValidator::new(users, roles))),
     ..ServerConfig::default()
 };
 
-// Create server — returns event receiver and audio input sender
-let (mut server, events, audio_tx) = SnapServer::new(config);
+// Create server — returns event receiver
+let (mut server, events) = SnapServer::new(config);
+
+// Add audio streams (each gets its own encoder)
+let audio_tx = server.add_stream("default");
+
+// Per-stream codec override
+let zone2_tx = server.add_stream_with_config("Zone2", StreamConfig {
+    codec: Some("f32lz4".into()),
+    ..Default::default()
+});
 
 // Run (blocks until Stop)
 tokio::spawn(async move { server.run().await });
@@ -182,11 +189,20 @@ match event {
 ServerConfig {
     stream_port: u16,          // default: 1704
     buffer_ms: u32,            // default: 1000
-    codec: String,             // default: "f32lz4" (feature-dependent)
+    codec: String,             // default: "flac" (feature-dependent: flac > f32lz4 > pcm)
     sample_format: String,     // default: "48000:16:2"
     mdns_service_type: String, // default: "_snapcast._tcp.local."
     auth: Option<Arc<dyn AuthValidator>>, // default: None (no auth)
     encryption_psk: Option<String>, // f32lz4 encryption (feature: encryption)
+}
+```
+
+### Per-Stream Config
+
+```rust
+StreamConfig {
+    codec: Option<String>,         // override server codec (e.g. "f32lz4", "flac")
+    sample_format: Option<String>, // override server format (e.g. "48000:32:2")
 }
 ```
 
@@ -327,9 +343,28 @@ Message types 0–8 are reserved by the Snapcast protocol. Types 9+ are availabl
 
 Optional ChaCha20-Poly1305 authenticated encryption for f32lz4 audio chunks. Pure Rust (RustCrypto), zero C dependencies.
 
+### Binary usage
+
+The binaries support `f32lz4e` as a codec alias — it selects `f32lz4` with encryption using a built-in default key:
+
+```bash
+# Server — just works, default PSK
+snapserver-rs --codec f32lz4e
+
+# Client — just works, default PSK matches
+snapclient-rs tcp://192.168.1.50:1704
+
+# Custom PSK (must match on both sides)
+snapserver-rs --codec f32lz4e --encryption-psk "my-secret"
+snapclient-rs --encryption-psk "my-secret" tcp://192.168.1.50:1704
+```
+
+### Library usage
+
 ```rust
 // Server
 let config = ServerConfig {
+    codec: "f32lz4".into(),
     encryption_psk: Some("my-secret-key".into()),
     ..ServerConfig::default()
 };
@@ -365,12 +400,15 @@ cargo build --release --no-default-features --features f32lz4  # pure Rust, no C
 ```bash
 # Server
 snapserver-rs --source "pipe:///tmp/snapfifo?name=Music"
-snapserver-rs --codec flac --features flac
+snapserver-rs --codec flac
+snapserver-rs --codec f32lz4e                            # encrypted f32lz4 (default key)
+snapserver-rs --codec f32lz4e --encryption-psk "secret"  # custom key
 snapserver-rs --help
 
 # Client
 snapclient-rs tcp://192.168.1.50:1704
-snapclient-rs                            # mDNS auto-discovery
+snapclient-rs                                            # mDNS auto-discovery
+snapclient-rs --encryption-psk "secret"                  # custom key
 snapclient-rs --help
 
 # Feed audio

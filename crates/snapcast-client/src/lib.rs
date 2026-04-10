@@ -125,8 +125,6 @@ pub enum ClientEvent {
         /// Raw payload.
         payload: Vec<u8>,
     },
-    /// Raw JSON-RPC message from server.
-    JsonRpc(serde_json::Value),
 }
 
 /// Commands the consumer sends to the client.
@@ -139,8 +137,6 @@ pub enum ClientCommand {
         /// Mute state.
         muted: bool,
     },
-    /// Send arbitrary JSON-RPC to the server — extension point.
-    SendJsonRpc(serde_json::Value),
     /// Send a custom message to the server.
     #[cfg(feature = "custom-protocol")]
     SendCustom {

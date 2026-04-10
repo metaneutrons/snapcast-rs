@@ -2259,7 +2259,6 @@ dependencies = [
  "rustls",
  "rustls-native-certs",
  "serde",
- "serde_json",
  "snapcast-proto",
  "symphonia",
  "tokio",

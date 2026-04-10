@@ -188,9 +188,6 @@ impl Controller {
                         Some(ClientCommand::SetVolume { volume, muted }) => {
                             tracing::debug!(volume, muted, "Volume change (applied by binary)");
                         }
-                        Some(ClientCommand::SendJsonRpc(_msg)) => {
-                            // JSON-RPC is handled server-side
-                        }
                         #[cfg(feature = "custom-protocol")]
                         Some(ClientCommand::SendCustom { type_id, payload }) => {
                             self.connection

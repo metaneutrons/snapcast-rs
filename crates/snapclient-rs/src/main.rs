@@ -62,9 +62,6 @@ fn main() -> anyhow::Result<()> {
                     ClientEvent::StreamStarted { codec, format } => {
                         tracing::info!(%codec, %format, "Stream started");
                     }
-                    ClientEvent::JsonRpc(msg) => {
-                        tracing::debug!(?msg, "JSON-RPC");
-                    }
                     _ => {}
                 }
             }

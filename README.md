@@ -273,6 +273,12 @@ match event {
 
 Message types 0–8 are reserved by the Snapcast protocol. Types 9+ are available for application use. The payload format is opaque — the library passes raw bytes, the application chooses JSON, bincode, protobuf, or any other format.
 
+## Documentation
+
+API documentation: [snapcast-client](https://docs.rs/snapcast-client) · [snapcast-server](https://docs.rs/snapcast-server) · [snapcast-proto](https://docs.rs/snapcast-proto)
+
+Generate locally: `cargo doc --open --no-deps`
+
 ## Building
 
 ```bash

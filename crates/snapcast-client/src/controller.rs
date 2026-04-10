@@ -193,8 +193,12 @@ impl Controller {
                         }
                         #[cfg(feature = "custom-protocol")]
                         Some(ClientCommand::SendCustom { type_id, payload }) => {
-                            tracing::debug!(type_id, bytes = payload.len(), "Custom message to server");
-                            // TODO: send via binary protocol
+                            self.connection
+                                .send(
+                                    MessageType::Custom(type_id),
+                                    &MessagePayload::Custom(payload),
+                                )
+                                .await?;
                         }
                     }
                 }
@@ -260,6 +264,12 @@ impl Controller {
             }
             MessagePayload::Error(e) => {
                 tracing::error!(code = e.code, error = %e.error, "Server error");
+            }
+            #[cfg(feature = "custom-protocol")]
+            MessagePayload::Custom(payload) => {
+                if let MessageType::Custom(type_id) = msg.base.msg_type {
+                    self.emit(ClientEvent::CustomMessage { type_id, payload });
+                }
             }
             _ => {}
         }

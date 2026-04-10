@@ -38,6 +38,9 @@ pub enum MessagePayload {
     ClientInfo(ClientInfo),
     /// Error payload.
     Error(Error),
+    /// Custom raw payload (type 9+).
+    #[cfg(feature = "custom-protocol")]
+    Custom(Vec<u8>),
 }
 
 /// Deserialize a typed message from a base header and raw payload bytes.
@@ -58,6 +61,8 @@ pub fn deserialize(base: BaseMessage, payload: &[u8]) -> Result<TypedMessage, Pr
         MessageType::Base => {
             return Err(ProtoError::UnknownMessageType(0));
         }
+        #[cfg(feature = "custom-protocol")]
+        MessageType::Custom(_) => MessagePayload::Custom(payload.to_vec()),
     };
     Ok(TypedMessage { base, payload: msg })
 }
@@ -75,6 +80,8 @@ pub fn serialize(base: &mut BaseMessage, payload: &MessagePayload) -> Result<Vec
         MessagePayload::WireChunk(m) => m.write_to(&mut payload_buf)?,
         MessagePayload::ClientInfo(m) => m.write_to(&mut payload_buf)?,
         MessagePayload::Error(m) => m.write_to(&mut payload_buf)?,
+        #[cfg(feature = "custom-protocol")]
+        MessagePayload::Custom(data) => payload_buf.extend_from_slice(data),
     }
     base.size = payload_buf.len() as u32;
 

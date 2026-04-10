@@ -154,7 +154,15 @@ mod tests {
         bad_bytes[0] = 0xFF;
         bad_bytes[1] = 0xFF;
         let mut cursor = io::Cursor::new(&bad_bytes);
-        let err = BaseMessage::read_from(&mut cursor).unwrap_err();
-        assert!(matches!(err, ProtoError::UnknownMessageType(0xFFFF)));
+        #[cfg(not(feature = "custom-protocol"))]
+        {
+            let err = BaseMessage::read_from(&mut cursor).unwrap_err();
+            assert!(matches!(err, ProtoError::UnknownMessageType(0xFFFF)));
+        }
+        #[cfg(feature = "custom-protocol")]
+        {
+            let msg = BaseMessage::read_from(&mut cursor).unwrap();
+            assert_eq!(msg.msg_type, MessageType::Custom(0xFFFF));
+        }
     }
 }

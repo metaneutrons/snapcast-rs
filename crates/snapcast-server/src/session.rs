@@ -40,6 +40,18 @@ pub struct SessionServer {
     buffer_ms: i32,
     clients: Arc<Mutex<HashMap<String, ClientInfo>>>,
     settings_senders: Arc<Mutex<HashMap<String, mpsc::Sender<ClientSettingsUpdate>>>>,
+    #[cfg(feature = "custom-protocol")]
+    custom_senders: Arc<Mutex<HashMap<String, mpsc::Sender<CustomOutbound>>>>,
+}
+
+/// Outbound custom message to a specific client.
+#[cfg(feature = "custom-protocol")]
+#[derive(Debug, Clone)]
+pub struct CustomOutbound {
+    /// Message type ID (9+).
+    pub type_id: u16,
+    /// Raw payload.
+    pub payload: Vec<u8>,
 }
 
 impl SessionServer {
@@ -50,6 +62,8 @@ impl SessionServer {
             buffer_ms,
             clients: Arc::new(Mutex::new(HashMap::new())),
             settings_senders: Arc::new(Mutex::new(HashMap::new())),
+            #[cfg(feature = "custom-protocol")]
+            custom_senders: Arc::new(Mutex::new(HashMap::new())),
         }
     }
 
@@ -79,6 +93,8 @@ impl SessionServer {
             let chunk_sub = chunk_rx.subscribe();
             let clients = Arc::clone(&self.clients);
             let settings_senders = Arc::clone(&self.settings_senders);
+            #[cfg(feature = "custom-protocol")]
+            let custom_senders = Arc::clone(&self.custom_senders);
             let event_tx = event_tx.clone();
             let buffer_ms = self.buffer_ms;
             let codec = codec.clone();
@@ -86,13 +102,21 @@ impl SessionServer {
 
             tokio::spawn(async move {
                 let (settings_tx, settings_rx) = mpsc::channel(16);
+                #[cfg(feature = "custom-protocol")]
+                let (custom_tx, custom_rx) = mpsc::channel(64);
                 let result = handle_client(
                     stream,
                     chunk_sub,
                     settings_rx,
+                    #[cfg(feature = "custom-protocol")]
+                    custom_rx,
                     &clients,
                     &settings_senders,
+                    #[cfg(feature = "custom-protocol")]
+                    &custom_senders,
                     settings_tx,
+                    #[cfg(feature = "custom-protocol")]
+                    custom_tx,
                     event_tx,
                     buffer_ms,
                     &codec,
@@ -116,6 +140,15 @@ impl SessionServer {
             .cloned()
             .collect()
     }
+
+    /// Send a custom binary protocol message to a specific client.
+    #[cfg(feature = "custom-protocol")]
+    pub async fn send_custom(&self, client_id: &str, type_id: u16, payload: Vec<u8>) {
+        let senders = self.custom_senders.lock().await;
+        if let Some(tx) = senders.get(client_id) {
+            let _ = tx.send(CustomOutbound { type_id, payload }).await;
+        }
+    }
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -123,9 +156,14 @@ async fn handle_client(
     mut stream: TcpStream,
     chunk_rx: broadcast::Receiver<WireChunkData>,
     settings_rx: mpsc::Receiver<ClientSettingsUpdate>,
+    #[cfg(feature = "custom-protocol")] custom_rx: mpsc::Receiver<CustomOutbound>,
     clients: &Mutex<HashMap<String, ClientInfo>>,
     settings_senders: &Mutex<HashMap<String, mpsc::Sender<ClientSettingsUpdate>>>,
+    #[cfg(feature = "custom-protocol")] custom_senders: &Mutex<
+        HashMap<String, mpsc::Sender<CustomOutbound>>,
+    >,
     settings_tx: mpsc::Sender<ClientSettingsUpdate>,
+    #[cfg(feature = "custom-protocol")] custom_tx: mpsc::Sender<CustomOutbound>,
     event_tx: mpsc::Sender<ServerEvent>,
     buffer_ms: i32,
     codec: &str,
@@ -156,6 +194,11 @@ async fn handle_client(
             .lock()
             .await
             .insert(client_id.clone(), settings_tx);
+        #[cfg(feature = "custom-protocol")]
+        custom_senders
+            .lock()
+            .await
+            .insert(client_id.clone(), custom_tx);
     }
 
     let _ = event_tx
@@ -192,7 +235,18 @@ async fn handle_client(
     .await?;
 
     // 4. Main loop
-    let result = session_loop(&mut stream, chunk_rx, settings_rx).await;
+    let result = session_loop(
+        &mut stream,
+        chunk_rx,
+        settings_rx,
+        #[cfg(feature = "custom-protocol")]
+        custom_rx,
+        #[cfg(feature = "custom-protocol")]
+        event_tx.clone(),
+        #[cfg(feature = "custom-protocol")]
+        client_id.clone(),
+    )
+    .await;
 
     // Cleanup
     {
@@ -202,6 +256,8 @@ async fn handle_client(
         }
     }
     settings_senders.lock().await.remove(&client_id);
+    #[cfg(feature = "custom-protocol")]
+    custom_senders.lock().await.remove(&client_id);
     let _ = event_tx
         .send(ServerEvent::ClientDisconnected { id: client_id })
         .await;
@@ -213,8 +269,17 @@ async fn session_loop(
     stream: &mut TcpStream,
     mut chunk_rx: broadcast::Receiver<WireChunkData>,
     mut settings_rx: mpsc::Receiver<ClientSettingsUpdate>,
+    #[cfg(feature = "custom-protocol")] mut custom_rx: mpsc::Receiver<CustomOutbound>,
+    #[cfg(feature = "custom-protocol")] event_tx: mpsc::Sender<ServerEvent>,
+    #[cfg(feature = "custom-protocol")] client_id: String,
 ) -> Result<()> {
     let (mut reader, mut writer) = stream.split();
+
+    #[cfg(not(feature = "custom-protocol"))]
+    let (mut custom_rx, _event_tx, _client_id): (mpsc::Receiver<()>, Option<()>, String) = {
+        let (_tx, rx) = mpsc::channel(1);
+        (rx, None, String::new())
+    };
 
     loop {
         tokio::select! {
@@ -233,10 +298,23 @@ async fn session_loop(
             }
             msg = read_frame_from(&mut reader) => {
                 let msg = msg?;
-                if let MessagePayload::Time(t) = msg.payload {
-                    let response = Time { latency: t.latency };
-                    let frame = serialize_msg(MessageType::Time, &MessagePayload::Time(response), msg.base.id)?;
-                    writer.write_all(&frame).await.context("write time")?;
+                match msg.payload {
+                    MessagePayload::Time(t) => {
+                        let response = Time { latency: t.latency };
+                        let frame = serialize_msg(MessageType::Time, &MessagePayload::Time(response), msg.base.id)?;
+                        writer.write_all(&frame).await.context("write time")?;
+                    }
+                    #[cfg(feature = "custom-protocol")]
+                    MessagePayload::Custom(payload) => {
+                        if let MessageType::Custom(type_id) = msg.base.msg_type {
+                            let _ = event_tx.send(ServerEvent::CustomMessage {
+                                client_id: client_id.clone(),
+                                type_id,
+                                payload,
+                            }).await;
+                        }
+                    }
+                    _ => {}
                 }
             }
             update = settings_rx.recv() => {
@@ -254,6 +332,19 @@ async fn session_loop(
                 )?;
                 writer.write_all(&frame).await.context("write settings")?;
                 tracing::debug!(volume = update.volume, latency = update.latency, "Pushed settings to client");
+            }
+            outbound = custom_rx.recv() => {
+                #[cfg(feature = "custom-protocol")]
+                if let Some(msg) = outbound {
+                    let frame = serialize_msg(
+                        MessageType::Custom(msg.type_id),
+                        &MessagePayload::Custom(msg.payload),
+                        0,
+                    )?;
+                    writer.write_all(&frame).await.context("write custom")?;
+                }
+                #[cfg(not(feature = "custom-protocol"))]
+                let _ = outbound;
             }
         }
     }

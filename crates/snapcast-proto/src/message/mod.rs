@@ -13,25 +13,27 @@ pub mod wire_chunk;
 
 /// Message type identifiers matching the C++ `message_type` enum.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[repr(u16)]
 pub enum MessageType {
     /// Base message (type 0), header only.
-    Base = 0,
+    Base,
     /// Codec header (type 1).
-    CodecHeader = 1,
+    CodecHeader,
     /// Encoded audio chunk (type 2).
-    WireChunk = 2,
+    WireChunk,
     /// Server settings (type 3).
-    ServerSettings = 3,
+    ServerSettings,
     /// Time sync (type 4).
-    Time = 4,
+    Time,
     /// Client hello (type 5).
-    Hello = 5,
+    Hello,
     // 6 is unused (was StreamTags)
     /// Client info (type 7).
-    ClientInfo = 7,
+    ClientInfo,
     /// Error (type 8).
-    Error = 8,
+    Error,
+    /// Application-defined message (type 9+).
+    #[cfg(feature = "custom-protocol")]
+    Custom(u16),
 }
 
 impl MessageType {
@@ -46,6 +48,8 @@ impl MessageType {
             5 => Some(Self::Hello),
             7 => Some(Self::ClientInfo),
             8 => Some(Self::Error),
+            #[cfg(feature = "custom-protocol")]
+            9.. => Some(Self::Custom(value)),
             _ => None,
         }
     }
@@ -53,7 +57,18 @@ impl MessageType {
 
 impl From<MessageType> for u16 {
     fn from(mt: MessageType) -> Self {
-        mt as u16
+        match mt {
+            MessageType::Base => 0,
+            MessageType::CodecHeader => 1,
+            MessageType::WireChunk => 2,
+            MessageType::ServerSettings => 3,
+            MessageType::Time => 4,
+            MessageType::Hello => 5,
+            MessageType::ClientInfo => 7,
+            MessageType::Error => 8,
+            #[cfg(feature = "custom-protocol")]
+            MessageType::Custom(id) => id,
+        }
     }
 }
 
@@ -82,8 +97,19 @@ mod tests {
     #[test]
     fn unknown_message_type_returns_none() {
         assert_eq!(MessageType::from_u16(6), None);
-        assert_eq!(MessageType::from_u16(9), None);
-        assert_eq!(MessageType::from_u16(u16::MAX), None);
+        #[cfg(not(feature = "custom-protocol"))]
+        {
+            assert_eq!(MessageType::from_u16(9), None);
+            assert_eq!(MessageType::from_u16(u16::MAX), None);
+        }
+        #[cfg(feature = "custom-protocol")]
+        {
+            assert_eq!(MessageType::from_u16(9), Some(MessageType::Custom(9)));
+            assert_eq!(
+                MessageType::from_u16(u16::MAX),
+                Some(MessageType::Custom(u16::MAX))
+            );
+        }
     }
 }
 

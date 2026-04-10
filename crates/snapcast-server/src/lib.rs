@@ -500,8 +500,7 @@ impl SnapServer {
                         }
                         #[cfg(feature = "custom-protocol")]
                         Some(ServerCommand::SendToClient { client_id, type_id, payload }) => {
-                            tracing::debug!(client_id, type_id, bytes = payload.len(), "Custom message to client");
-                            // TODO: route to session server
+                            session_srv.send_custom(&client_id, type_id, payload).await;
                         }
                     }
                 }

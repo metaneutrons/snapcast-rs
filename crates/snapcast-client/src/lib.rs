@@ -125,6 +125,7 @@ pub enum ClientEvent {
         /// Raw payload.
         payload: Vec<u8>,
     },
+    /// Raw JSON-RPC message from server.
     JsonRpc(serde_json::Value),
 }
 

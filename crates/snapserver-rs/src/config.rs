@@ -67,7 +67,13 @@ pub(crate) fn parse_config_file(path: &str) -> BinaryConfig {
             config.server.sample_format = v.to_string();
         });
         get_u32(s, "buffer", |v| config.server.buffer_ms = v);
+        #[cfg(feature = "encryption")]
+        get_str(s, "encryption_psk", |v| {
+            config.server.encryption_psk = Some(v.to_string());
+        });
     }
+
+    resolve_encryption(&mut config);
 
     config
 }
@@ -100,6 +106,8 @@ pub(crate) struct CliOverrides {
     pub codec: Option<String>,
     pub sampleformat: Option<String>,
     pub sources: Vec<String>,
+    #[cfg(feature = "encryption")]
+    pub encryption_psk: Option<String>,
 }
 
 /// Merge CLI overrides into config.
@@ -128,7 +136,35 @@ pub(crate) fn merge_cli(mut config: BinaryConfig, cli: CliOverrides) -> BinaryCo
     if !cli.sources.is_empty() {
         config.sources = cli.sources;
     }
+    #[cfg(feature = "encryption")]
+    if let Some(v) = cli.encryption_psk {
+        config.server.encryption_psk = Some(v);
+    }
+
+    // Resolve f32lz4e → f32lz4 + default PSK (if no explicit PSK set)
+    resolve_encryption(&mut config);
+
     config
+}
+
+/// If codec is `f32lz4e`, rewrite to `f32lz4` and apply default PSK
+/// unless an explicit PSK was already set.
+#[cfg(feature = "encryption")]
+fn resolve_encryption(config: &mut BinaryConfig) {
+    if config.server.codec == "f32lz4e" {
+        config.server.codec = "f32lz4".into();
+        if config.server.encryption_psk.is_none() {
+            config.server.encryption_psk = Some(snapcast_proto::DEFAULT_ENCRYPTION_PSK.into());
+        }
+    }
+}
+
+#[cfg(not(feature = "encryption"))]
+fn resolve_encryption(config: &mut BinaryConfig) {
+    if config.server.codec == "f32lz4e" {
+        tracing::error!("Codec f32lz4e requires the 'encryption' feature — falling back to f32lz4");
+        config.server.codec = "f32lz4".into();
+    }
 }
 
 #[cfg(test)]

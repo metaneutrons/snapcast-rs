@@ -41,3 +41,10 @@ pub const DEFAULT_WSS_PORT: u16 = 1788;
 pub const PROTOCOL_VERSION: u32 = 2;
 /// Default sample format: 48000 Hz, 16-bit, stereo.
 pub const DEFAULT_SAMPLE_FORMAT: SampleFormat = SampleFormat::new(48000, 16, 2);
+
+/// Default pre-shared key for f32lz4e (encrypted f32lz4) codec.
+///
+/// Used when the `f32lz4e` codec is selected without an explicit PSK.
+/// Provides transport obfuscation out of the box — not a substitute for
+/// real key management in security-sensitive deployments.
+pub const DEFAULT_ENCRYPTION_PSK: &str = "snapcast-f32lz4e-default-psk-v1";

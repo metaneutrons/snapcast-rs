@@ -55,6 +55,10 @@ pub mod resampler;
 
 use tokio::sync::mpsc;
 
+const EVENT_CHANNEL_SIZE: usize = 256;
+const COMMAND_CHANNEL_SIZE: usize = 64;
+const AUDIO_CHANNEL_SIZE: usize = 256;
+
 pub use snapcast_proto::SampleFormat;
 
 /// Interleaved f32 audio frame produced by the client library.
@@ -194,9 +198,9 @@ impl SnapClient {
         mpsc::Receiver<ClientEvent>,
         mpsc::Receiver<AudioFrame>,
     ) {
-        let (event_tx, event_rx) = mpsc::channel(256);
-        let (command_tx, command_rx) = mpsc::channel(64);
-        let (_audio_tx, audio_rx) = mpsc::channel(256);
+        let (event_tx, event_rx) = mpsc::channel(EVENT_CHANNEL_SIZE);
+        let (command_tx, command_rx) = mpsc::channel(COMMAND_CHANNEL_SIZE);
+        let (_audio_tx, audio_rx) = mpsc::channel(AUDIO_CHANNEL_SIZE);
         let time_provider =
             std::sync::Arc::new(std::sync::Mutex::new(time_provider::TimeProvider::new()));
         let stream = std::sync::Arc::new(std::sync::Mutex::new(stream::Stream::new(

@@ -134,9 +134,11 @@ fn main() -> anyhow::Result<()> {
             // Chunk size matches codec block size:
             // FLAC level 0-2: 1152 frames, level 3+: 4096 frames
             // Others: 960 frames (20ms at 48kHz)
+            const FLAC_BLOCK_FRAMES: usize = 1152;
+            const DEFAULT_CHUNK_MS: usize = 20;
             let chunk_frames = match codec.as_str() {
-                "flac" => 1152,
-                _ => (format.rate() as usize * 20) / 1000, // 20ms
+                "flac" => FLAC_BLOCK_FRAMES,
+                _ => (format.rate() as usize * DEFAULT_CHUNK_MS) / 1000, // 20ms
             };
 
             // Start stream reader

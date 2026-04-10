@@ -20,6 +20,10 @@ use crate::{ClientCommand, ClientEvent};
 
 const VERSION: &str = env!("CARGO_PKG_VERSION");
 const MAX_RECONNECT_DELAY_SECS: u32 = 30;
+const MDNS_TIMEOUT: Duration = Duration::from_secs(5);
+const HELLO_TIMEOUT: Duration = Duration::from_secs(5);
+const SYNC_INTERVAL: Duration = Duration::from_secs(1);
+const QUICK_SYNC_INTERVAL: Duration = Duration::from_millis(100);
 
 /// Main orchestrator wiring connection, decoder, stream, and audio output.
 pub struct Controller {
@@ -89,7 +93,9 @@ impl Controller {
             #[cfg(feature = "mdns")]
             {
                 tracing::info!(service = %self.settings.host, "Browsing mDNS...");
-                let endpoint = crate::discovery::discover(Duration::from_secs(5)).await?;
+                let endpoint =
+                    crate::discovery::discover(MDNS_TIMEOUT, &self.settings.mdns_service_type)
+                        .await?;
                 self.settings.host = endpoint.host;
                 self.settings.port = endpoint.port;
                 self.connection = TcpConnection::new(&self.settings.host, self.settings.port);
@@ -143,7 +149,7 @@ impl Controller {
             .send(MessageType::Hello, &MessagePayload::Hello(hello))
             .await?;
 
-        let response = self.recv_timeout(Duration::from_secs(5)).await?;
+        let response = self.recv_timeout(HELLO_TIMEOUT).await?;
         match response.payload {
             MessagePayload::ServerSettings(ss) => {
                 self.emit(ClientEvent::ServerSettings {
@@ -163,10 +169,10 @@ impl Controller {
     }
 
     async fn receive_loop(&mut self) -> Result<()> {
-        let mut sync_timer = tokio::time::interval(Duration::from_secs(1));
+        let mut sync_timer = tokio::time::interval(SYNC_INTERVAL);
         const INITIAL_QUICK_SYNCS: u32 = 50;
         let mut quick_syncs_remaining = INITIAL_QUICK_SYNCS;
-        let mut quick_sync_timer = tokio::time::interval(Duration::from_millis(100));
+        let mut quick_sync_timer = tokio::time::interval(QUICK_SYNC_INTERVAL);
 
         self.connection
             .send(MessageType::Time, &MessagePayload::Time(Time::new()))

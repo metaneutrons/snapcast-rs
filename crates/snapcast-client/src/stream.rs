@@ -86,6 +86,14 @@ const SOFT_SYNC_MIN_USEC: i64 = 50;
 const MAX_RATE_CORRECTION: f64 = 0.0005;
 /// Rate correction scaling factor.
 const RATE_CORRECTION_SCALE: f64 = 0.00005;
+/// DoubleBuffer capacity for mini (fast) drift detection.
+const MINI_BUFFER_SIZE: usize = 20;
+/// DoubleBuffer capacity for short-term drift detection.
+const SHORT_BUFFER_SIZE: usize = 100;
+/// DoubleBuffer capacity for long-term drift detection.
+const BUFFER_SIZE: usize = 500;
+/// Default buffer in milliseconds.
+const DEFAULT_BUFFER_MS: i64 = 1000;
 
 /// Time-synchronized PCM stream buffer.
 pub struct Stream {
@@ -119,11 +127,11 @@ impl Stream {
             format,
             chunks: VecDeque::new(),
             current: None,
-            buffer_ms: 1000,
+            buffer_ms: DEFAULT_BUFFER_MS,
             hard_sync: true,
-            mini_buffer: DoubleBuffer::new(20),
-            short_buffer: DoubleBuffer::new(100),
-            buffer: DoubleBuffer::new(500),
+            mini_buffer: DoubleBuffer::new(MINI_BUFFER_SIZE),
+            short_buffer: DoubleBuffer::new(SHORT_BUFFER_SIZE),
+            buffer: DoubleBuffer::new(BUFFER_SIZE),
             median: 0,
             short_median: 0,
             played_frames: 0,

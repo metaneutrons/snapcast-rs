@@ -44,6 +44,10 @@ use std::sync::Arc;
 
 use tokio::sync::mpsc;
 
+const EVENT_CHANNEL_SIZE: usize = 256;
+const COMMAND_CHANNEL_SIZE: usize = 64;
+const AUDIO_CHANNEL_SIZE: usize = 256;
+
 /// Interleaved f32 audio frame for server input.
 #[derive(Debug)]
 pub struct AudioFrame {
@@ -287,9 +291,9 @@ impl SnapServer {
         mpsc::Receiver<ServerEvent>,
         mpsc::Sender<crate::AudioFrame>,
     ) {
-        let (event_tx, event_rx) = mpsc::channel(256);
-        let (command_tx, command_rx) = mpsc::channel(64);
-        let (audio_tx, audio_rx) = mpsc::channel(256);
+        let (event_tx, event_rx) = mpsc::channel(EVENT_CHANNEL_SIZE);
+        let (command_tx, command_rx) = mpsc::channel(COMMAND_CHANNEL_SIZE);
+        let (audio_tx, audio_rx) = mpsc::channel(AUDIO_CHANNEL_SIZE);
         let server = Self {
             config,
             event_tx,

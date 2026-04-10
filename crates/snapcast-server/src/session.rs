@@ -198,7 +198,11 @@ async fn handle_client(
         };
         match auth_result {
             Ok(result) => {
-                if !result.permissions.iter().any(|p| p == "Streaming") {
+                if !result
+                    .permissions
+                    .iter()
+                    .any(|p| p == crate::auth::PERM_STREAMING)
+                {
                     let err = snapcast_proto::message::error::Error {
                         code: 403,
                         message: "Forbidden".into(),

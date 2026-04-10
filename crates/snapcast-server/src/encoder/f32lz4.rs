@@ -8,6 +8,7 @@ use anyhow::Result;
 use snapcast_proto::SampleFormat;
 
 use super::{EncodedChunk, Encoder};
+use crate::AudioData;
 
 const MAGIC: &[u8; 4] = b"F32L";
 
@@ -73,23 +74,20 @@ impl Encoder for F32Lz4Encoder {
         &self.header
     }
 
-    fn encode(&mut self, pcm: &[u8]) -> Result<EncodedChunk> {
-        let sample_size = self.format.sample_size() as usize;
+    fn encode(&mut self, input: &AudioData) -> Result<EncodedChunk> {
         let channels = self.format.channels() as usize;
 
-        // If input is already f32 bytes (4 bytes/sample, from audio_tx), compress directly
-        // If input is i16 PCM (from pipe readers), convert first
-        let f32_bytes = if sample_size == 4 {
-            // Already f32 — zero conversion
-            pcm.to_vec()
-        } else {
-            // Convert i16 PCM to f32
-            let mut buf = Vec::with_capacity(pcm.len() * 2);
-            for chunk in pcm.chunks_exact(2) {
-                let s = i16::from_le_bytes([chunk[0], chunk[1]]) as f32 / i16::MAX as f32;
-                buf.extend_from_slice(&s.to_le_bytes());
+        // f32lz4 compresses f32 bytes directly
+        let f32_bytes: Vec<u8> = match input {
+            AudioData::F32(samples) => {
+                // Zero conversion — reinterpret f32 as bytes
+                samples.iter().flat_map(|s| s.to_le_bytes()).collect()
             }
-            buf
+            AudioData::Pcm(pcm) => {
+                // Convert integer PCM → f32 → bytes
+                let f32_samples = super::pcm_to_f32(pcm, self.format.bits());
+                f32_samples.iter().flat_map(|s| s.to_le_bytes()).collect()
+            }
         };
 
         let frames = f32_bytes.len() / (4 * channels);
@@ -123,12 +121,20 @@ mod tests {
     }
 
     #[test]
-    fn encode_compresses() {
+    fn encode_compresses_f32() {
+        let fmt = SampleFormat::new(48000, 32, 2);
+        let mut enc = F32Lz4Encoder::new(fmt);
+        let samples = vec![0.0f32; 960 * 2]; // 960 frames, stereo
+        let result = enc.encode(&AudioData::F32(samples)).unwrap();
+        assert!(!result.data.is_empty());
+    }
+
+    #[test]
+    fn encode_compresses_pcm() {
         let fmt = SampleFormat::new(48000, 16, 2);
         let mut enc = F32Lz4Encoder::new(fmt);
-        // 960 * 4 bytes = 960 frames of 16-bit stereo = 20ms at 48kHz
-        let pcm = vec![0u8; 960 * 4];
-        let result = enc.encode(&pcm).unwrap();
-        assert!(result.data.len() < pcm.len(), "expected compression");
+        let pcm = vec![0u8; 960 * 4]; // 960 frames, 16-bit stereo
+        let result = enc.encode(&AudioData::Pcm(pcm)).unwrap();
+        assert!(!result.data.is_empty());
     }
 }

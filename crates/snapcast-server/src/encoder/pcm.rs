@@ -4,19 +4,24 @@ use anyhow::Result;
 use snapcast_proto::SampleFormat;
 
 use super::{EncodedChunk, Encoder};
+use crate::AudioData;
 
 /// PCM passthrough encoder. Header is a 44-byte WAV header.
 pub struct PcmEncoder {
-    #[allow(dead_code)]
     format: SampleFormat,
     header: Vec<u8>,
+    warned: bool,
 }
 
 impl PcmEncoder {
     /// Create a new PCM encoder for the given sample format.
     pub fn new(format: SampleFormat) -> Self {
         let header = build_wav_header(format);
-        Self { format, header }
+        Self {
+            format,
+            header,
+            warned: false,
+        }
     }
 }
 
@@ -29,9 +34,23 @@ impl Encoder for PcmEncoder {
         &self.header
     }
 
-    fn encode(&mut self, pcm: &[u8]) -> Result<EncodedChunk> {
-        tracing::trace!(codec = "pcm", input_bytes = pcm.len(), "encode");
-        Ok(EncodedChunk { data: pcm.to_vec() })
+    fn encode(&mut self, input: &AudioData) -> Result<EncodedChunk> {
+        let data = match input {
+            AudioData::Pcm(pcm) => pcm.clone(),
+            AudioData::F32(samples) => {
+                if !self.warned {
+                    self.warned = true;
+                    tracing::warn!(
+                        codec = "pcm",
+                        bits = self.format.bits(),
+                        "F32 input → {}-bit PCM quantization",
+                        self.format.bits()
+                    );
+                }
+                super::f32_to_pcm(samples, self.format.bits())
+            }
+        };
+        Ok(EncodedChunk { data })
     }
 }
 
@@ -71,8 +90,17 @@ mod tests {
         assert_eq!(enc.header().len(), 44);
         assert_eq!(&enc.header()[0..4], b"RIFF");
 
-        let pcm = vec![0u8; 960 * 4]; // 960 frames, 4 bytes/frame
-        let result = enc.encode(&pcm).unwrap();
+        let pcm = vec![0u8; 960 * 4];
+        let result = enc.encode(&AudioData::Pcm(pcm.clone())).unwrap();
         assert_eq!(result.data.len(), pcm.len());
+    }
+
+    #[test]
+    fn f32_converts_to_pcm() {
+        let fmt = SampleFormat::new(48000, 16, 2);
+        let mut enc = PcmEncoder::new(fmt);
+        let samples = vec![0.0f32; 960];
+        let result = enc.encode(&AudioData::F32(samples)).unwrap();
+        assert_eq!(result.data.len(), 960 * 2); // 16-bit = 2 bytes/sample
     }
 }

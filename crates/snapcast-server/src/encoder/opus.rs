@@ -6,6 +6,7 @@ use audiopus::{Application, Channels, SampleRate};
 use snapcast_proto::SampleFormat;
 
 use super::{EncodedChunk, Encoder};
+use crate::AudioData;
 
 /// Opus encoder wrapping libopus via audiopus.
 pub struct OpusEncoder {
@@ -71,7 +72,12 @@ impl Encoder for OpusEncoder {
         &self.header
     }
 
-    fn encode(&mut self, pcm: &[u8]) -> Result<EncodedChunk> {
+    fn encode(&mut self, input: &AudioData) -> Result<EncodedChunk> {
+        let pcm = match input {
+            AudioData::Pcm(data) => std::borrow::Cow::Borrowed(data.as_slice()),
+            AudioData::F32(samples) => std::borrow::Cow::Owned(super::f32_to_pcm(samples, 16)),
+        };
+
         let channels = self.format.channels() as usize;
         let frame_samples = self.frame_size * channels;
         let frame_bytes = frame_samples * 2; // 16-bit samples

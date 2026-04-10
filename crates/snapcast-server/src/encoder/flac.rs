@@ -10,6 +10,7 @@ use libflac_sys::*;
 use snapcast_proto::SampleFormat;
 
 use super::{EncodedChunk, Encoder};
+use crate::AudioData;
 
 /// Client data passed to the libflac write callback.
 struct CallbackData {
@@ -122,7 +123,14 @@ impl Encoder for FlacEncoder {
         unsafe { &(*self.callback_data).header }
     }
 
-    fn encode(&mut self, pcm: &[u8]) -> Result<EncodedChunk> {
+    fn encode(&mut self, input: &AudioData) -> Result<EncodedChunk> {
+        let pcm = match input {
+            AudioData::Pcm(data) => std::borrow::Cow::Borrowed(data.as_slice()),
+            AudioData::F32(samples) => {
+                std::borrow::Cow::Owned(super::f32_to_pcm(samples, self.format.bits()))
+            }
+        };
+
         let sample_size = self.format.sample_size() as usize;
         let channels = self.format.channels() as usize;
         let samples = pcm.len() / sample_size;
@@ -202,7 +210,7 @@ mod tests {
         let mut total = 0;
         for _ in 0..10 {
             let pcm = vec![0u8; 960 * 4]; // 20ms chunks
-            let result = enc.encode(&pcm).unwrap();
+            let result = enc.encode(&AudioData::Pcm(pcm)).unwrap();
             if !result.data.is_empty() {
                 // FLAC frame sync code
                 assert_eq!(result.data[0], 0xFF);
@@ -217,11 +225,9 @@ mod tests {
     fn persistent_across_chunks() {
         let fmt = SampleFormat::new(48000, 16, 2);
         let mut enc = FlacEncoder::new(fmt, "").unwrap();
-        // Encode 100 chunks — should not crash or produce header data
         for _ in 0..100 {
             let pcm = vec![42u8; 960 * 4];
-            let result = enc.encode(&pcm).unwrap();
-            // Frame data only — no fLaC header bytes
+            let result = enc.encode(&AudioData::Pcm(pcm)).unwrap();
             if result.data.len() >= 4 {
                 assert_ne!(&result.data[..4], b"fLaC", "got header in frame data");
             }

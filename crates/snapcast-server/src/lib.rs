@@ -329,19 +329,14 @@ pub struct SnapServer {
 
 /// Spawn a per-stream encode loop on a dedicated thread.
 ///
-/// Receives `AudioFrame` (F32 or Pcm), converts to PCM bytes if needed,
-/// encodes with the configured codec, and broadcasts `WireChunkData`.
+/// Receives `AudioFrame`, passes `AudioData` directly to the encoder,
+/// and broadcasts encoded `WireChunkData` to sessions.
 fn spawn_stream_encoder(
     stream_id: String,
     mut rx: mpsc::Receiver<AudioFrame>,
     enc_config: encoder::EncoderConfig,
     chunk_tx: broadcast::Sender<WireChunkData>,
-    format: snapcast_proto::SampleFormat,
 ) {
-    let (done_tx, done_rx) = tokio::sync::oneshot::channel::<()>();
-    let is_f32lz4 = enc_config.codec == "f32lz4";
-    let bits = format.bits();
-
     std::thread::spawn(move || {
         let mut enc = match encoder::create(&enc_config) {
             Ok(e) => e,
@@ -357,115 +352,26 @@ fn spawn_stream_encoder(
             .expect("encoder runtime");
 
         rt.block_on(async {
-            let mut pending_timestamp: Option<i64> = None;
-            let mut warned_f32 = false;
-            let mut warned_pcm = false;
-
             while let Some(frame) = rx.recv().await {
-                if pending_timestamp.is_none() {
-                    pending_timestamp = Some(frame.timestamp_usec);
-                }
-
-                let pcm_bytes = match frame.data {
-                    AudioData::F32(samples) => {
-                        if !is_f32lz4 && !warned_f32 {
-                            warned_f32 = true;
-                            tracing::warn!(
-                                stream = %stream_id,
-                                codec = enc.name(),
-                                "F32 input requires quantization to {bits}-bit PCM — consider f32lz4 codec for lossless path",
-                            );
-                        }
-                        if is_f32lz4 {
-                            // f32lz4: pass f32 bytes directly — no quantization
-                            samples.iter().flat_map(|s| s.to_le_bytes()).collect()
-                        } else {
-                            f32_to_pcm_bytes(&samples, bits)
-                        }
-                    }
-                    AudioData::Pcm(data) => {
-                        if is_f32lz4 && !warned_pcm {
-                            warned_pcm = true;
-                            tracing::warn!(
-                                stream = %stream_id,
-                                "PCM input with f32lz4 codec requires reinterpretation — consider matching input format to codec",
-                            );
-                        }
-                        data
-                    }
-                };
-
-                match enc.encode(&pcm_bytes) {
-                    Ok(encoded) => {
-                        if encoded.data.is_empty() {
-                            continue; // encoder buffering
-                        }
-                        let wire = WireChunkData {
+                match enc.encode(&frame.data) {
+                    Ok(encoded) if !encoded.data.is_empty() => {
+                        let _ = chunk_tx.send(WireChunkData {
                             stream_id: stream_id.clone(),
-                            timestamp_usec: pending_timestamp
-                                .take()
-                                .unwrap_or(frame.timestamp_usec),
+                            timestamp_usec: frame.timestamp_usec,
                             data: encoded.data,
-                        };
-                        let _ = chunk_tx.send(wire);
-                        pending_timestamp = None;
+                        });
                     }
                     Err(e) => {
                         tracing::warn!(stream = %stream_id, error = %e, "Encode failed");
-                        pending_timestamp = None;
                     }
+                    _ => {} // encoder buffering
                 }
             }
         });
-
-        let _ = done_tx.send(());
-    });
-
-    // Keep a handle so we can detect encoder thread exit
-    tokio::spawn(async move {
-        let _ = done_rx.await;
     });
 }
 
 /// Convert f32 samples to PCM bytes at the given bit depth.
-fn f32_to_pcm_bytes(samples: &[f32], bits: u16) -> Vec<u8> {
-    match bits {
-        16 => {
-            let mut buf = Vec::with_capacity(samples.len() * 2);
-            for &s in samples {
-                let i = (s.clamp(-1.0, 1.0) * i16::MAX as f32) as i16;
-                buf.extend_from_slice(&i.to_le_bytes());
-            }
-            buf
-        }
-        24 => {
-            let mut buf = Vec::with_capacity(samples.len() * 3);
-            for &s in samples {
-                let i = (s.clamp(-1.0, 1.0) * 8_388_607.0) as i32;
-                let bytes = i.to_le_bytes();
-                buf.extend_from_slice(&bytes[..3]);
-            }
-            buf
-        }
-        32 => {
-            let mut buf = Vec::with_capacity(samples.len() * 4);
-            for &s in samples {
-                let i = (s.clamp(-1.0, 1.0) * i32::MAX as f32) as i32;
-                buf.extend_from_slice(&i.to_le_bytes());
-            }
-            buf
-        }
-        _ => {
-            let mut buf = Vec::with_capacity(samples.len() * 2);
-            for &s in samples {
-                let i = (s.clamp(-1.0, 1.0) * i16::MAX as f32) as i16;
-                buf.extend_from_slice(&i.to_le_bytes());
-            }
-            buf
-        }
-    }
-}
-
 impl SnapServer {
     /// Create a new server. Returns the server and event receiver.
     pub fn new(config: ServerConfig) -> (Self, mpsc::Receiver<ServerEvent>) {
@@ -552,13 +458,7 @@ impl SnapServer {
             let stream_enc_config = enc_config.clone();
             let stream_chunk_tx = chunk_tx.clone();
             let stream_name = name.clone();
-            spawn_stream_encoder(
-                stream_name,
-                rx,
-                stream_enc_config,
-                stream_chunk_tx,
-                sample_format,
-            );
+            spawn_stream_encoder(stream_name, rx, stream_enc_config, stream_chunk_tx);
             tracing::info!(stream = %name, codec = %codec, %sample_format, "Stream registered");
         }
 

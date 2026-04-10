@@ -1,5 +1,34 @@
 # Changelog
 
+## [0.4.0](https://github.com/metaneutrons/snapcast-rs/compare/v0.3.1...v0.4.0) (2026-04-10)
+
+
+### ⚠ BREAKING CHANGES
+
+* **server:** add_stream() API — multi-stream, library owns encoding
+
+### Features
+
+* **encoder:** add PCM→f32 conversion warning to vorbis encoder ([07bf6e1](https://github.com/metaneutrons/snapcast-rs/commit/07bf6e1d0ccdf7de7674144b7a7d236c3ea597aa))
+* **encoder:** one-time warnings on input/codec format mismatch ([f42c3c4](https://github.com/metaneutrons/snapcast-rs/commit/f42c3c4cc89d739414c1f636cac77d1fdb0666a6))
+* encryption support in binaries with default PSK ([272585c](https://github.com/metaneutrons/snapcast-rs/commit/272585c3e9e78a92d1ec5685b647e70d3c0ebd5d))
+* **server:** add_stream() API — multi-stream, library owns encoding ([8a51bd8](https://github.com/metaneutrons/snapcast-rs/commit/8a51bd8ec6d085f6cdec01814e8a9b754d74592e))
+* **server:** emit GroupNameChanged, GroupClientsChanged, ServerUpdated events ([3e86590](https://github.com/metaneutrons/snapcast-rs/commit/3e86590b0a1328f2b8504533aa8df980dda0890f))
+* **server:** include MAC address in ClientConnected event ([737f1b2](https://github.com/metaneutrons/snapcast-rs/commit/737f1b2f2a8b48d4cbb4e6ff035542d7318a9727))
+* **server:** per-stream codec/format config via add_stream_with_config() ([0d57ca2](https://github.com/metaneutrons/snapcast-rs/commit/0d57ca25fae03aec1f9f4fac01e59c87aecca04d))
+* **server:** redesign AudioFrame with AudioData enum (F32/Pcm) ([21fcc97](https://github.com/metaneutrons/snapcast-rs/commit/21fcc97fb7da94224a7057b17dcd75db75ae69d9))
+* **server:** warn once on input/codec format mismatch ([1e53bf7](https://github.com/metaneutrons/snapcast-rs/commit/1e53bf7846eb9639df55f1dd8ebb3b9b04f413e0))
+
+
+### Bug Fixes
+
+* add readme path to all published crates for crates.io ([e889ac2](https://github.com/metaneutrons/snapcast-rs/commit/e889ac2e8e74aac50a33ce0b370dc263dac5af88))
+* **client:** read stream format dynamically in cpal callback ([9c0b9e9](https://github.com/metaneutrons/snapcast-rs/commit/9c0b9e95dc29653aac4af435d8b8360fde80a19f))
+* **server:** only create internal stream when no external streams configured ([c921065](https://github.com/metaneutrons/snapcast-rs/commit/c9210652e356a7fc9e7f4411f33143dff1d11f66))
+* **server:** remove GroupClientsChanged, match C++ snapserver behavior ([09eccc1](https://github.com/metaneutrons/snapcast-rs/commit/09eccc1da0a23f333cfd23cbcaece7c055ab1be0))
+* **server:** reuse encoder instance for codec header and stream encoding ([87614bc](https://github.com/metaneutrons/snapcast-rs/commit/87614bcf8bae67820d6e6759ecdc554e0f8c2208))
+* **server:** route audio_tx through StreamManager encoder ([981c5b9](https://github.com/metaneutrons/snapcast-rs/commit/981c5b949217a046f9eb1e68a1e7411516399673))
+
 ## [0.3.1](https://github.com/metaneutrons/snapcast-rs/compare/v0.3.0...v0.3.1) (2026-04-10)
 
 

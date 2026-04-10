@@ -8,11 +8,12 @@ Rust implementation of [Snapcast](https://github.com/snapcast/snapcast) — sync
 
 ```
 snapcast-rs/
-├── snapcast-proto      Protocol: binary message serialization (8 message types)
+├── snapcast-proto      Protocol: binary message serialization
 ├── snapcast-client     Client library: embeddable, f32 audio output
 ├── snapcast-server     Server library: embeddable, f32 audio input
 ├── snapclient-rs       Client binary: cpal audio output
-└── snapserver-rs       Server binary: stream readers, JSON-RPC, HTTP
+├── snapserver-rs       Server binary: stream readers, JSON-RPC, HTTP
+└── snapcast-tests      Integration tests
 ```
 
 Both libraries are pure audio engines — no device I/O, no HTTP, no config files.
@@ -20,7 +21,13 @@ Both libraries are pure audio engines — no device I/O, no HTTP, no config file
 ## Client Library API
 
 ```rust
-use snapcast_client::{SnapClient, ClientConfig, ClientEvent, ClientCommand, AudioFrame};
+use snapcast_client::{SnapClient, ClientConfig, ClientEvent, ClientCommand};
+
+let config = ClientConfig {
+    host: "192.168.1.50".into(),
+    port: 1704,
+    ..ClientConfig::default()
+};
 
 // Create client — returns event receiver and audio output receiver
 let (mut client, events, audio_rx) = SnapClient::new(config);
@@ -40,12 +47,26 @@ match event {
     ClientEvent::ServerSettings { buffer_ms, latency, volume, muted } => {}
     ClientEvent::VolumeChanged { volume, muted } => {}
     ClientEvent::TimeSyncComplete { diff_ms } => {}
-    ClientEvent::JsonRpc(value) => {}
 }
 
 // Commands
 cmd.send(ClientCommand::SetVolume { volume: 80, muted: false }).await;
 cmd.send(ClientCommand::Stop).await;
+```
+
+### Client Config
+
+```rust
+ClientConfig {
+    host: String,              // server host (empty = mDNS discovery)
+    port: u16,                 // default: 1704
+    auth: Option<Auth>,        // Basic auth for Hello handshake
+    instance: u32,             // for multiple clients on one host
+    host_id: String,           // unique identifier (default: MAC)
+    latency: i32,              // additional latency offset (ms)
+    mdns_service_type: String, // default: "_snapcast._tcp.local."
+    client_name: String,       // default: "Snapclient"
+}
 ```
 
 ### Client Features
@@ -64,32 +85,27 @@ cmd.send(ClientCommand::Stop).await;
 ```rust
 use snapcast_server::{SnapServer, ServerConfig, ServerEvent, ServerCommand, AudioFrame};
 
+let config = ServerConfig {
+    codec: "f32lz4".into(),
+    auth: Some(Arc::new(StaticAuthValidator::new(users, roles))),
+    ..ServerConfig::default()
+};
+
 // Create server — returns event receiver and audio input sender
 let (mut server, events, audio_tx) = SnapServer::new(config);
-
-// Configure stream manager (binary creates readers, passes to library)
-let mut manager = StreamManager::new();
-manager.add_stream_from_receiver("music", format, "flac", "", rx)?;
-server.set_manager(manager);
-
-// Register custom JSON-RPC methods (binary handles dispatch)
-// Library handles: session protocol, encoding, mDNS, state
 
 // Run (blocks until Stop)
 tokio::spawn(async move { server.run().await });
 
-// Typed commands (no JSON-RPC detour)
+// Typed commands
 cmd.send(ServerCommand::SetClientVolume { client_id, volume: 80, muted: false }).await;
 cmd.send(ServerCommand::SetClientLatency { client_id, latency: 50 }).await;
 cmd.send(ServerCommand::SetClientName { client_id, name }).await;
 cmd.send(ServerCommand::SetGroupStream { group_id, stream_id }).await;
 cmd.send(ServerCommand::SetGroupMute { group_id, muted: true }).await;
-cmd.send(ServerCommand::SetGroupName { group_id, name }).await;
-cmd.send(ServerCommand::SetGroupClients { group_id, clients: vec![...] }).await;
 cmd.send(ServerCommand::DeleteClient { client_id }).await;
 let (tx, rx) = oneshot::channel();
 cmd.send(ServerCommand::GetStatus { response_tx: tx }).await;
-let status = rx.await?;
 
 // Push f32 audio directly (alternative to stream readers)
 audio_tx.send(AudioFrame { samples, sample_rate: 48000, channels: 2, timestamp_usec }).await;
@@ -104,12 +120,19 @@ match event {
     ServerEvent::GroupStreamChanged { group_id, stream_id } => {}
     ServerEvent::GroupMuteChanged { group_id, muted } => {}
     ServerEvent::StreamStatus { stream_id, status } => {}
-    ServerEvent::JsonRpc { client_id, request, response_tx } => {
-        // Custom method — respond via oneshot
-        if let Some(tx) = response_tx {
-            tx.send(json!({"jsonrpc": "2.0", "id": request["id"], "result": "ok"})).ok();
-        }
-    }
+}
+```
+
+### Server Config
+
+```rust
+ServerConfig {
+    stream_port: u16,          // default: 1704
+    buffer_ms: u32,            // default: 1000
+    codec: String,             // default: "f32lz4" (feature-dependent)
+    sample_format: String,     // default: "48000:16:2"
+    mdns_service_type: String, // default: "_snapcast._tcp.local."
+    auth: Option<Arc<dyn AuthValidator>>, // default: None (no auth)
 }
 ```
 
@@ -123,6 +146,33 @@ match event {
 | `opus`   | —       | libopus   | Opus encoding |
 | `vorbis` | —       | libvorbis | Vorbis encoding |
 | `custom-protocol` | — | none | Custom binary messages (type 9+) |
+
+### Authentication
+
+The server supports streaming client authentication matching the C++ implementation:
+
+```rust
+use snapcast_server::auth::{AuthValidator, StaticAuthValidator, User, Role};
+
+// Config-based auth (users/roles from config file)
+let auth = StaticAuthValidator::new(
+    vec![User { name: "player".into(), password: "secret".into(), role: "streaming".into() }],
+    vec![Role { name: "streaming".into(), permissions: vec!["Streaming".into()] }],
+);
+let config = ServerConfig {
+    auth: Some(Arc::new(auth)),
+    ..ServerConfig::default()
+};
+
+// Or implement AuthValidator for custom auth (database, LDAP, etc.)
+impl AuthValidator for MyValidator {
+    fn validate(&self, scheme: &str, param: &str) -> Result<AuthResult, AuthError> {
+        // your logic here
+    }
+}
+```
+
+Clients send Basic auth in the Hello handshake. The server validates credentials and checks the `"Streaming"` permission. Unauthenticated or unauthorized clients receive Error(401/403) and are disconnected.
 
 ### Network Ports
 
@@ -197,6 +247,8 @@ This means Rust servers can send custom messages to Rust clients while C++ clien
 A Rust-based multiroom system (e.g. [SnapDog](https://github.com/metaneutrons/SnapDogRust)) can push per-client EQ settings through the binary protocol — no JSON-RPC, no HTTP, no extra connections:
 
 ```rust
+use snapcast_proto::CustomMessage;
+
 // Server pushes EQ to a specific client
 cmd.send(ServerCommand::SendToClient {
     client_id: "kitchen".into(),
@@ -246,8 +298,8 @@ ffmpeg -re -i music.mp3 -f s16le -ar 48000 -ac 2 pipe:1 > /tmp/snapfifo
 - `#![forbid(unsafe_code)]` on protocol crate
 - `#![deny(unsafe_code)]` on client/server libraries
 - Zero `#[allow(dead_code)]`, zero TODOs, zero `#![allow]` blankets
+- Constant-time password comparison (subtle crate)
 - Structured tracing logging
-- sccache enabled
 
 ## Releases
 

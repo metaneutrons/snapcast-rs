@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.3.1](https://github.com/metaneutrons/snapcast-rs/compare/v0.3.0...v0.3.1) (2026-04-10)
+
+
+### Bug Fixes
+
+* **ci:** tolerate already-published crates, use CARGO_REGISTRY_TOKEN env ([a5f9466](https://github.com/metaneutrons/snapcast-rs/commit/a5f9466be57f65f9d0c07ebf7edf24c843e354c1))
+
 ## [0.3.0](https://github.com/metaneutrons/snapcast-rs/compare/snapcast-rs-v0.2.0...snapcast-rs-v0.3.0) (2026-04-10)
 
 

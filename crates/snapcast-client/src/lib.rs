@@ -7,8 +7,6 @@
 //! Snapcast client library — embeddable synchronized multiroom audio client.
 //!
 //! See also: [`snapcast-server`](https://docs.rs/snapcast-server) for the server library.
-
-//! Snapcast client library — embeddable synchronized multiroom audio.
 //!
 //! # Example
 //! ```no_run

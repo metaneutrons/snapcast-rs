@@ -43,18 +43,9 @@ pub struct OpusDecoder {
 
 impl Decoder for OpusDecoder {
     fn set_header(&mut self, header: &CodecHeader) -> Result<SampleFormat> {
-        tracing::trace!(
-            codec = "opus",
-            payload_len = header.payload.len(),
-            "set_header"
-        );
-        let sf = parse_opus_header(&header.payload)?;
-        self.decoder = OpusDec::new(sf.rate(), sf.channels() as usize)
-            .map_err(|e| anyhow::anyhow!("failed to create Opus decoder: {e}"))?;
-        self.sample_format = sf;
-        self.pcm_buf
-            .resize(MAX_FRAME_SIZE * sf.channels() as usize, 0);
-        Ok(sf)
+        let new = create(header)?;
+        *self = new;
+        Ok(self.sample_format)
     }
 
     fn decode(&mut self, data: &mut Vec<u8>) -> Result<bool> {
@@ -93,7 +84,6 @@ pub fn create(header: &CodecHeader) -> Result<OpusDecoder> {
         pcm_buf: vec![0i16; MAX_FRAME_SIZE * sf.channels() as usize],
     })
 }
-
 #[cfg(test)]
 mod tests {
     use super::*;

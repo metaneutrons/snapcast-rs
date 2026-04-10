@@ -15,7 +15,6 @@ pub struct WsConnection {
     ws: Option<WsStream>,
     host: String,
     port: u16,
-    next_id: u16,
 }
 
 impl WsConnection {
@@ -24,7 +23,6 @@ impl WsConnection {
             ws: None,
             host: host.to_string(),
             port,
-            next_id: 1,
         }
     }
 
@@ -34,7 +32,6 @@ impl WsConnection {
             .await
             .with_context(|| format!("WebSocket connect to {url}"))?;
         self.ws = Some(ws);
-        self.next_id = 1;
         Ok(())
     }
 

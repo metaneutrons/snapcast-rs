@@ -65,9 +65,19 @@ pub struct VorbisDecoder {
 }
 
 impl VorbisDecoder {
-    fn new_from_params(sf: SampleFormat, params: &CodecParameters) -> Result<Self> {
+    fn from_header(header: &CodecHeader) -> Result<Self> {
+        let (sf, extra_data) = parse_vorbis_header(&header.payload)?;
+        let mut params = CodecParameters::new();
+        params
+            .for_codec(CODEC_TYPE_VORBIS)
+            .with_sample_rate(sf.rate())
+            .with_channels(
+                symphonia::core::audio::Channels::from_bits(((1u64 << sf.channels()) - 1) as u32)
+                    .unwrap_or(symphonia::core::audio::Channels::FRONT_LEFT),
+            )
+            .with_extra_data(extra_data.into_boxed_slice());
         let decoder = symphonia::default::get_codecs()
-            .make(params, &DecoderOptions::default())
+            .make(&params, &DecoderOptions::default())
             .map_err(|e| anyhow::anyhow!("failed to create Vorbis decoder: {e}"))?;
         Ok(Self {
             decoder,
@@ -79,24 +89,7 @@ impl VorbisDecoder {
 
 impl Decoder for VorbisDecoder {
     fn set_header(&mut self, header: &CodecHeader) -> Result<SampleFormat> {
-        tracing::trace!(
-            codec = "vorbis",
-            payload_len = header.payload.len(),
-            "set_header"
-        );
-        let (sf, extra_data) = parse_vorbis_header(&header.payload)?;
-
-        let mut params = CodecParameters::new();
-        params
-            .for_codec(CODEC_TYPE_VORBIS)
-            .with_sample_rate(sf.rate())
-            .with_channels(
-                symphonia::core::audio::Channels::from_bits(((1u64 << sf.channels()) - 1) as u32)
-                    .unwrap_or(symphonia::core::audio::Channels::FRONT_LEFT),
-            )
-            .with_extra_data(extra_data.into_boxed_slice());
-
-        *self = Self::new_from_params(sf, &params)?;
+        *self = Self::from_header(header)?;
         Ok(self.sample_format)
     }
 
@@ -141,19 +134,7 @@ impl Decoder for VorbisDecoder {
 
 /// Create a VorbisDecoder from a CodecHeader.
 pub fn create(header: &CodecHeader) -> Result<VorbisDecoder> {
-    let (sf, extra_data) = parse_vorbis_header(&header.payload)?;
-
-    let mut params = CodecParameters::new();
-    params
-        .for_codec(CODEC_TYPE_VORBIS)
-        .with_sample_rate(sf.rate())
-        .with_channels(
-            symphonia::core::audio::Channels::from_bits(((1u64 << sf.channels()) - 1) as u32)
-                .unwrap_or(symphonia::core::audio::Channels::FRONT_LEFT),
-        )
-        .with_extra_data(extra_data.into_boxed_slice());
-
-    VorbisDecoder::new_from_params(sf, &params)
+    VorbisDecoder::from_header(header)
 }
 
 #[cfg(test)]

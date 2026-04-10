@@ -93,8 +93,9 @@ impl Encoder for VorbisEncoder {
 
         // Encode
         let mut output = Cursor::new(Vec::new());
-        let ch = NonZeroU8::new(channels as u8).unwrap();
-        let rate = NonZeroU32::new(self.format.rate()).unwrap();
+        let ch = NonZeroU8::new(channels as u8).ok_or_else(|| anyhow::anyhow!("zero channels"))?;
+        let rate = NonZeroU32::new(self.format.rate())
+            .ok_or_else(|| anyhow::anyhow!("zero sample rate"))?;
         let mut enc = VorbisEncoderBuilder::new(rate, ch, &mut output)?.build()?;
         enc.encode_audio_block(channel_refs)?;
         enc.finish()?;

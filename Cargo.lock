@@ -2303,6 +2303,7 @@ name = "snapcast-tests"
 version = "0.2.0"
 dependencies = [
  "anyhow",
+ "base64",
  "snapcast-client",
  "snapcast-proto",
  "snapcast-server",

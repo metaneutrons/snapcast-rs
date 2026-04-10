@@ -160,17 +160,11 @@ pub enum ServerEvent {
         /// New name.
         name: String,
     },
-    /// A group's client list changed (clients moved between groups).
-    GroupClientsChanged {
-        /// Group ID.
-        group_id: String,
-        /// New client IDs.
-        clients: Vec<String>,
-    },
     /// Server state changed — groups were reorganized (created, deleted, merged).
     ///
-    /// Emitted after structural changes like `SetGroupClients` or client connect/disconnect
-    /// when the group topology changes. The consumer should re-read server status.
+    /// Emitted after structural changes like `SetGroupClients` or `DeleteClient`
+    /// when the group topology changes. Mirrors `Server.OnUpdate` in the C++ snapserver.
+    /// The consumer should re-read server status via `GetStatus`.
     ServerUpdated,
     /// Custom binary protocol message from a streaming client.
     #[cfg(feature = "custom-protocol")]
@@ -485,10 +479,9 @@ impl SnapServer {
                                 s.remove_client_from_groups(cid);
                             }
                             if let Some(g) = s.groups.iter_mut().find(|g| g.id == group_id) {
-                                g.clients = clients.clone();
+                                g.clients = clients;
                             }
-                            let _ = event_tx.try_send(ServerEvent::GroupClientsChanged { group_id, clients });
-                            // Group topology may have changed (empty groups removed)
+                            // Structural change — mirrors Server.OnUpdate in C++ snapserver
                             let _ = event_tx.try_send(ServerEvent::ServerUpdated);
                         }
                         Some(ServerCommand::DeleteClient { client_id }) => {

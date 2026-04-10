@@ -15,6 +15,26 @@ The **binary crates** (`snapclient-rs`, `snapserver-rs`) are thin wrappers aroun
 
 The result is a Snapcast implementation that works both as a drop-in replacement for the original and as an embeddable building block for Rust applications that need synchronized multiroom audio.
 
+
+snapcast-rs is fully compatible with the original C++ Snapcast when using standard codecs (PCM, FLAC, Opus, Vorbis). However, three optional features break compatibility:
+
+| Feature | What it does | C++ behavior |
+|---------|-------------|--------------|
+| `f32lz4` (default) | 32-bit float LZ4 codec | C++ clients reject unknown codec |
+| `custom-protocol` | Application-defined message types (9+) | C++ clients silently ignore |
+| `encryption` | ChaCha20-Poly1305 encrypted f32lz4 | C++ clients reject unknown codec |
+
+If you enable `f32lz4` or `encryption` on the server, C++ clients cannot decode the audio. To prevent them from auto-connecting via mDNS, change the service type:
+
+```rust
+let config = ServerConfig {
+    mdns_service_type: "_myapp._tcp.local.".into(), // C++ clients won't discover this
+    ..ServerConfig::default()
+};
+```
+
+For full interoperability with C++ clients, use `--codec flac` or `--codec pcm` and leave `custom-protocol` and `encryption` disabled.
+
 100% pure Rust by default. Cross-platform: macOS, Linux, Windows.
 
 ## Architecture

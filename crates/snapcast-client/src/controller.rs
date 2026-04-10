@@ -189,11 +189,11 @@ impl Controller {
                             tracing::debug!(volume, muted, "Volume change (applied by binary)");
                         }
                         #[cfg(feature = "custom-protocol")]
-                        Some(ClientCommand::SendCustom { type_id, payload }) => {
+                        Some(ClientCommand::SendCustom(msg)) => {
                             self.connection
                                 .send(
-                                    MessageType::Custom(type_id),
-                                    &MessagePayload::Custom(payload),
+                                    MessageType::Custom(msg.type_id),
+                                    &MessagePayload::Custom(msg.payload),
                                 )
                                 .await?;
                         }
@@ -265,7 +265,9 @@ impl Controller {
             #[cfg(feature = "custom-protocol")]
             MessagePayload::Custom(payload) => {
                 if let MessageType::Custom(type_id) = msg.base.msg_type {
-                    self.emit(ClientEvent::CustomMessage { type_id, payload });
+                    self.emit(ClientEvent::CustomMessage(
+                        snapcast_proto::CustomMessage::new(type_id, payload),
+                    ));
                 }
             }
             _ => {}

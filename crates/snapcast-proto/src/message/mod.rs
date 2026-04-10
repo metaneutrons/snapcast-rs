@@ -113,12 +113,23 @@ mod tests {
     }
 }
 
-/// Custom message for application-defined protocol extensions.
+/// Custom message for application-defined protocol extensions (type 9+).
 #[cfg(feature = "custom-protocol")]
 #[derive(Debug, Clone)]
 pub struct CustomMessage {
-    /// Message type ID (8+).
+    /// Message type ID (9+).
     pub type_id: u16,
     /// Raw payload bytes.
     pub payload: Vec<u8>,
+}
+
+#[cfg(feature = "custom-protocol")]
+impl CustomMessage {
+    /// Create a new custom message.
+    pub fn new(type_id: u16, payload: impl Into<Vec<u8>>) -> Self {
+        Self {
+            type_id,
+            payload: payload.into(),
+        }
+    }
 }

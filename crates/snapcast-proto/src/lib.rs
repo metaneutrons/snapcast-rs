@@ -22,6 +22,8 @@ pub mod message;
 pub mod sample_format;
 pub mod types;
 
+#[cfg(feature = "custom-protocol")]
+pub use message::CustomMessage;
 pub use message::MessageType;
 pub use message::base::{BaseMessage, ProtoError};
 pub use sample_format::SampleFormat;

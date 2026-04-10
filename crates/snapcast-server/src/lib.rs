@@ -144,10 +144,8 @@ pub enum ServerEvent {
     CustomMessage {
         /// Client ID.
         client_id: String,
-        /// Message type ID (8+).
-        type_id: u16,
-        /// Raw payload.
-        payload: Vec<u8>,
+        /// The custom message.
+        message: snapcast_proto::CustomMessage,
     },
 }
 
@@ -220,10 +218,8 @@ pub enum ServerCommand {
     SendToClient {
         /// Target client ID.
         client_id: String,
-        /// Message type ID (8+).
-        type_id: u16,
-        /// Raw payload.
-        payload: Vec<u8>,
+        /// The custom message.
+        message: snapcast_proto::CustomMessage,
     },
     /// Stop the server gracefully.
     Stop,
@@ -464,8 +460,8 @@ impl SnapServer {
                             let _ = response_tx.send(s.to_status_json());
                         }
                         #[cfg(feature = "custom-protocol")]
-                        Some(ServerCommand::SendToClient { client_id, type_id, payload }) => {
-                            session_srv.send_custom(&client_id, type_id, payload).await;
+                        Some(ServerCommand::SendToClient { client_id, message }) => {
+                            session_srv.send_custom(&client_id, message.type_id, message.payload).await;
                         }
                     }
                 }

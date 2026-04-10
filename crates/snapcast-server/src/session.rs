@@ -309,8 +309,7 @@ async fn session_loop(
                         if let MessageType::Custom(type_id) = msg.base.msg_type {
                             let _ = event_tx.send(ServerEvent::CustomMessage {
                                 client_id: client_id.clone(),
-                                type_id,
-                                payload,
+                                message: snapcast_proto::CustomMessage::new(type_id, payload),
                             }).await;
                         }
                     }

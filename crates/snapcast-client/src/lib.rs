@@ -118,12 +118,7 @@ pub enum ClientEvent {
     },
     #[cfg(feature = "custom-protocol")]
     /// Custom message received from server.
-    CustomMessage {
-        /// Message type ID.
-        type_id: u16,
-        /// Raw payload.
-        payload: Vec<u8>,
-    },
+    CustomMessage(snapcast_proto::CustomMessage),
 }
 
 /// Commands the consumer sends to the client.
@@ -138,12 +133,7 @@ pub enum ClientCommand {
     },
     /// Send a custom message to the server.
     #[cfg(feature = "custom-protocol")]
-    SendCustom {
-        /// Message type ID (8+).
-        type_id: u16,
-        /// Raw payload.
-        payload: Vec<u8>,
-    },
+    SendCustom(snapcast_proto::CustomMessage),
     /// Stop the client gracefully.
     Stop,
 }

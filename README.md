@@ -57,6 +57,7 @@ cmd.send(ClientCommand::Stop).await;
 | `websocket` | —       | none  | WebSocket connection |
 | `tls`       | —       | none  | WSS (WebSocket + TLS) |
 | `resampler` | —       | none  | Sample rate conversion (rubato) |
+| `custom-protocol` | — | none | Custom binary messages (type 9+) |
 
 ## Server Library API
 
@@ -121,6 +122,7 @@ match event {
 | `flac`   | —       | libFLAC   | FLAC encoding |
 | `opus`   | —       | libopus   | Opus encoding |
 | `vorbis` | —       | libvorbis | Vorbis encoding |
+| `custom-protocol` | — | none | Custom binary messages (type 9+) |
 
 ### Network Ports
 

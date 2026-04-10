@@ -163,8 +163,8 @@ fn main() -> anyhow::Result<()> {
 
             match reader_handle {
                 Ok(_handle) => {
-                    if let Err(e) = manager.add_stream_from_receiver(&name, format, &codec, "", rx)
-                    {
+                    let enc_config = snapcast_server::encoder::EncoderConfig::new(&codec, format);
+                    if let Err(e) = manager.add_stream_from_receiver(&name, enc_config, rx) {
                         tracing::error!(name, error = %e, "Failed to add stream");
                     }
                 }

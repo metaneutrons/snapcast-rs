@@ -364,7 +364,14 @@ impl SnapServer {
         let (codec, header) = if let Some((c, h, _)) = manager.header(&first_stream) {
             (c.to_string(), h.to_vec())
         } else {
-            let enc = encoder::create(&self.config.codec, default_format, "")?;
+            let enc_config = encoder::EncoderConfig {
+                codec: self.config.codec.clone(),
+                format: default_format,
+                options: String::new(),
+                #[cfg(feature = "encryption")]
+                encryption_key: self.config.encryption_key.clone(),
+            };
+            let enc = encoder::create(&enc_config)?;
             (self.config.codec.clone(), enc.header().to_vec())
         };
 

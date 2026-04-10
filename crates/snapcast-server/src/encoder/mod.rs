@@ -33,13 +33,44 @@ pub trait Encoder {
     fn encode(&mut self, pcm: &[u8]) -> Result<EncodedChunk>;
 }
 
-/// Create an encoder by codec name.
-pub fn create(
-    codec: &str,
-    format: SampleFormat,
-    #[allow(unused_variables)] options: &str,
-) -> Result<Box<dyn Encoder>> {
-    match codec {
+/// Configuration for creating an encoder.
+#[derive(Debug, Clone)]
+pub struct EncoderConfig {
+    /// Codec name: "pcm", "flac", "opus", "ogg", "f32lz4".
+    pub codec: String,
+    /// Audio sample format.
+    pub format: SampleFormat,
+    /// Codec-specific options (e.g. FLAC compression level).
+    pub options: String,
+    /// Pre-shared key for f32lz4 encryption. `None` = no encryption.
+    #[cfg(feature = "encryption")]
+    pub encryption_key: Option<String>,
+}
+
+impl EncoderConfig {
+    /// Create a minimal config for the given codec and format.
+    pub fn new(codec: &str, format: SampleFormat) -> Self {
+        Self {
+            codec: codec.into(),
+            format,
+            options: String::new(),
+            #[cfg(feature = "encryption")]
+            encryption_key: None,
+        }
+    }
+}
+
+/// Create an encoder from config.
+pub fn create(config: &EncoderConfig) -> Result<Box<dyn Encoder>> {
+    #[allow(unused_variables)]
+    let EncoderConfig {
+        codec,
+        format,
+        options,
+        ..
+    } = config;
+    let format = *format;
+    match codec.as_str() {
         "pcm" => Ok(Box::new(pcm::PcmEncoder::new(format))),
         #[cfg(feature = "flac")]
         "flac" => Ok(Box::new(flac::FlacEncoder::new(format, options)?)),
@@ -48,7 +79,16 @@ pub fn create(
         #[cfg(feature = "vorbis")]
         "ogg" => Ok(Box::new(vorbis::VorbisEncoder::new(format, options)?)),
         #[cfg(feature = "f32lz4")]
-        "f32lz4" => Ok(Box::new(f32lz4::F32Lz4Encoder::new(format))),
+        "f32lz4" => {
+            let enc = f32lz4::F32Lz4Encoder::new(format);
+            #[cfg(feature = "encryption")]
+            let enc = if let Some(ref key) = config.encryption_key {
+                enc.with_encryption(key)
+            } else {
+                enc
+            };
+            Ok(Box::new(enc))
+        }
         other => anyhow::bail!("unsupported codec: {other} (check enabled features)"),
     }
 }

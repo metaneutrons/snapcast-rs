@@ -66,25 +66,23 @@ impl StreamManager {
     pub fn add_stream_from_receiver(
         &mut self,
         name: &str,
-        format: SampleFormat,
-        codec: &str,
-        codec_options: &str,
+        encoder_config: encoder::EncoderConfig,
         reader_rx: mpsc::Receiver<super::PcmChunk>,
     ) -> Result<()> {
-        let enc = encoder::create(codec, format, codec_options)?;
+        let enc = encoder::create(&encoder_config)?;
         let header = enc.header().to_vec();
         let codec_name = enc.name().to_string();
+        let format = encoder_config.format;
         drop(enc);
 
         let stream_id = name.to_string();
         let chunk_tx = self.chunk_tx.clone();
-        let codec_str = codec.to_string();
-        let opts_str = codec_options.to_string();
 
         let encode_handle = {
             let (done_tx, done_rx) = tokio::sync::oneshot::channel::<()>();
+            let enc_config = encoder_config.clone();
             std::thread::spawn(move || {
-                let Ok(enc) = encoder::create(&codec_str, format, &opts_str) else {
+                let Ok(enc) = encoder::create(&enc_config) else {
                     return;
                 };
                 encode_loop(enc, reader_rx, &chunk_tx, &stream_id);

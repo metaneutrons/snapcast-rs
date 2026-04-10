@@ -20,6 +20,7 @@ use crate::{ClientCommand, ClientEvent};
 
 const VERSION: &str = env!("CARGO_PKG_VERSION");
 const MAX_RECONNECT_DELAY_SECS: u32 = 30;
+#[cfg(feature = "mdns")]
 const MDNS_TIMEOUT: Duration = Duration::from_secs(5);
 const HELLO_TIMEOUT: Duration = Duration::from_secs(5);
 const SYNC_INTERVAL: Duration = Duration::from_secs(1);
@@ -300,7 +301,11 @@ impl Controller {
             "flac" => Box::new(decoder::flac::create(header)?),
             "ogg" => Box::new(decoder::vorbis::create(header)?),
             "opus" => Box::new(decoder::opus::create(header)?),
-            #[cfg(feature = "f32lz4")]
+            #[cfg(all(feature = "f32lz4", feature = "encryption"))]
+            "f32lz4" => Box::new(decoder::f32lz4::create(
+                self.settings.encryption_key.as_deref(),
+            )),
+            #[cfg(all(feature = "f32lz4", not(feature = "encryption")))]
             "f32lz4" => Box::new(decoder::f32lz4::create()),
             other => bail!("unsupported codec: {other}"),
         };

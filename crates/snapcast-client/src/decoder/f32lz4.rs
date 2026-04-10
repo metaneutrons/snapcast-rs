@@ -20,6 +20,8 @@ pub struct F32Lz4Decoder {
     sample_format: SampleFormat,
     #[cfg(feature = "encryption")]
     decryptor: Option<crate::crypto::ChunkDecryptor>,
+    #[cfg(feature = "encryption")]
+    encryption_key: Option<String>,
 }
 
 impl Decoder for F32Lz4Decoder {
@@ -39,11 +41,11 @@ impl Decoder for F32Lz4Decoder {
         #[cfg(feature = "encryption")]
         if header.payload.len() >= 32 && &header.payload[12..16] == b"ENC\0" {
             let salt = &header.payload[16..32];
-            if let Some(psk) = std::env::var("SNAPCAST_PSK").ok().filter(|s| !s.is_empty()) {
-                self.decryptor = Some(crate::crypto::ChunkDecryptor::new(&psk, salt));
+            if let Some(ref psk) = self.encryption_key {
+                self.decryptor = Some(crate::crypto::ChunkDecryptor::new(psk, salt));
                 tracing::info!("F32LZ4 decryption enabled");
             } else {
-                bail!("Server requires encryption but SNAPCAST_PSK is not set");
+                bail!("Server requires encryption but no encryption_key configured");
             }
         }
 
@@ -87,11 +89,20 @@ impl Decoder for F32Lz4Decoder {
 }
 
 /// Create an F32Lz4Decoder.
+#[cfg(feature = "encryption")]
+pub fn create(encryption_key: Option<&str>) -> F32Lz4Decoder {
+    F32Lz4Decoder {
+        sample_format: SampleFormat::default(),
+        decryptor: None,
+        encryption_key: encryption_key.map(String::from),
+    }
+}
+
+/// Create an F32Lz4Decoder.
+#[cfg(not(feature = "encryption"))]
 pub fn create() -> F32Lz4Decoder {
     F32Lz4Decoder {
         sample_format: SampleFormat::default(),
-        #[cfg(feature = "encryption")]
-        decryptor: None,
     }
 }
 
@@ -109,6 +120,9 @@ mod tests {
         let compressed = lz4_flex::compress_prepend_size(&f32_bytes);
 
         // Decode
+        #[cfg(feature = "encryption")]
+        let mut dec = create(None);
+        #[cfg(not(feature = "encryption"))]
         let mut dec = create();
         let header = CodecHeader {
             codec: "f32lz4".into(),

@@ -18,7 +18,7 @@ use snapcast_client::config::{self, Auth, ClientSettings, MixerMode, ServerSetti
   If 'url' is not configured, snapclient defaults to 'tcp://_snapcast._tcp'"
 )]
 pub struct Cli {
-    /// Snapserver URL: <tcp|ws|wss>://<host>[:port]
+    /// Snapserver URL: `<tcp|ws|wss>://<host>[:<port>]`
     pub url: Option<String>,
 
     /// Instance id when running multiple instances on the same host
@@ -53,19 +53,19 @@ pub struct Cli {
     #[arg(short, long, default_value = "default")]
     pub soundcard: String,
 
-    /// Additional latency of the audio device [ms]
+    /// Additional latency of the audio device (ms)
     #[arg(long, default_value_t = 0)]
     pub latency: i32,
 
-    /// Resample to <rate>:<bits>:<channels>
+    /// Resample to `<rate>:<bits>:<channels>`
     #[arg(long)]
     pub sampleformat: Option<String>,
 
-    /// Audio player backend and optional parameters: <name>[:<params>|?]
+    /// Audio player backend and optional parameters: `<name>[:<params>|?]`
     #[arg(long, default_value = "")]
     pub player: String,
 
-    /// Mixer mode: software|hardware|script|none|?[:<params>]
+    /// Mixer mode: `software|hardware|script|none|?[:<params>]`
     #[arg(long, default_value = "software")]
     pub mixer: String,
 
@@ -74,16 +74,16 @@ pub struct Cli {
     #[arg(short, long)]
     pub daemon: Option<Option<i32>>,
 
-    /// The user[:group] to run snapclient as when daemonized
+    /// The `user[:group]` to run snapclient as when daemonized
     #[cfg(unix)]
     #[arg(long)]
     pub user: Option<String>,
 
-    /// Log sink: null|system|stdout|stderr|file:<path>
+    /// Log sink: null|system|stdout|stderr|file:`<path>`
     #[arg(long, default_value = "stdout")]
     pub logsink: String,
 
-    /// Log filter: <tag>:<level>[,<tag>:<level>]*
+    /// Log filter: `<tag>:<level>[,<tag>:<level>]*`
     #[arg(long, default_value = "*:info")]
     pub logfilter: String,
 }

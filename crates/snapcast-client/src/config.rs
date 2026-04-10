@@ -119,7 +119,7 @@ impl Default for LoggingSettings {
 pub struct DaemonSettings {
     /// Process priority [-20..19], None if not daemonizing.
     pub priority: Option<i32>,
-    /// User[:group] to run as.
+    /// `User[:group]` to run as.
     pub user: Option<String>,
 }
 

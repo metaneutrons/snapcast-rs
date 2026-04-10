@@ -1,5 +1,10 @@
 # snapcast-rs
 
+[![CI](https://github.com/metaneutrons/snapcast-rs/actions/workflows/ci.yml/badge.svg)](https://github.com/metaneutrons/snapcast-rs/actions/workflows/ci.yml)
+[![docs.rs](https://docs.rs/snapcast-client/badge.svg)](https://docs.rs/snapcast-client)
+[![docs.rs](https://docs.rs/snapcast-server/badge.svg)](https://docs.rs/snapcast-server)
+[![License: GPL-3.0](https://img.shields.io/badge/license-GPL--3.0-blue.svg)](LICENSE)
+
 Rust implementation of [Snapcast](https://github.com/snapcast/snapcast) — synchronized multiroom audio.
 
 100% pure Rust by default. Cross-platform: macOS, Linux, Windows.

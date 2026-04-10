@@ -8,7 +8,7 @@
 //!
 //! # Architecture
 //!
-//! The server is built around a channel-based API matching [`snapcast_client`]:
+//! The server is built around a channel-based API matching `snapcast-client`:
 //!
 //! - [`SnapServer`] is the main entry point
 //! - [`ServerEvent`] flows from server → consumer (client connected, stream status, custom messages)

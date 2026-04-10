@@ -116,7 +116,6 @@ pub enum ClientEvent {
         /// Clock difference to server in milliseconds.
         diff_ms: f64,
     },
-    /// Raw JSON-RPC message from server — extension point.
     #[cfg(feature = "custom-protocol")]
     /// Custom message received from server.
     CustomMessage {

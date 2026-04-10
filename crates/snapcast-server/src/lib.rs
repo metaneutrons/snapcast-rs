@@ -11,14 +11,8 @@
 //! The server is built around a channel-based API matching [`snapcast_client`]:
 //!
 //! - [`SnapServer`] is the main entry point
-//! - [`ServerEvent`] flows from server → consumer (client connected, stream status, JSON-RPC)
-//! - [`ServerCommand`] flows from consumer → server (send JSON-RPC, stop)
-//!
-//! # JSON-RPC Extension Point
-//!
-//! Unrecognized JSON-RPC methods are forwarded as [`ServerEvent::JsonRpc`].
-//! The embedding application handles them and responds via [`ServerCommand::SendJsonRpc`].
-//! This enables custom features (e.g. EQ control) without modifying the library.
+//! - [`ServerEvent`] flows from server → consumer (client connected, stream status, custom messages)
+//! - [`ServerCommand`] flows from consumer → server (typed mutations, custom messages, stop)
 //!
 //! # Example
 //!
@@ -30,21 +24,11 @@
 //! let (mut server, mut events, _audio_tx) = SnapServer::new(config);
 //! let cmd = server.command_sender();
 //!
-//! // Handle events (including custom JSON-RPC)
 //! tokio::spawn(async move {
 //!     while let Some(event) = events.recv().await {
 //!         match event {
-//!             ServerEvent::JsonRpc { client_id, request, response_tx } => {
-//!                 if request["method"] == "Client.SetEq" {
-//!                     let response = serde_json::json!({
-//!                         "jsonrpc": "2.0",
-//!                         "id": request["id"],
-//!                         "result": { "ok": true }
-//!                     });
-//!                     if let Some(tx) = response_tx {
-//!                         tx.send(response).ok();
-//!                     }
-//!                 }
+//!             ServerEvent::ClientConnected { id, name } => {
+//!                 tracing::info!(id, name, "Client connected");
 //!             }
 //!             _ => {}
 //!         }
@@ -111,7 +95,7 @@ pub enum ServerEvent {
         /// Unique client identifier.
         id: String,
     },
-    /// A client's volume changed (from JSON-RPC or typed API).
+    /// A client's volume changed.
     ClientVolumeChanged {
         /// Client ID.
         client_id: String,
@@ -165,13 +149,16 @@ pub enum ServerEvent {
         /// Raw payload.
         payload: Vec<u8>,
     },
-    /// Custom JSON-RPC request from a registered method or notification.
+    /// Custom JSON-RPC request forwarded from a control client.
+    ///
+    /// The binary's JSON-RPC handler emits this for unrecognized methods.
+    /// The embedding application handles them and responds via the oneshot channel.
     JsonRpc {
         /// Control client that sent the request.
         client_id: String,
         /// The full JSON-RPC request object.
         request: serde_json::Value,
-        /// Response channel (Some for methods, None for notifications).
+        /// Response channel (`Some` for methods, `None` for notifications).
         response_tx: Option<tokio::sync::oneshot::Sender<serde_json::Value>>,
     },
 }
@@ -179,13 +166,6 @@ pub enum ServerEvent {
 /// Commands the consumer sends to the server.
 #[derive(Debug)]
 pub enum ServerCommand {
-    /// Send a JSON-RPC response or notification to control client(s).
-    SendJsonRpc {
-        /// Target control client, or `None` for broadcast.
-        client_id: Option<String>,
-        /// The JSON-RPC message to send.
-        message: serde_json::Value,
-    },
     /// Set a client's volume.
     SetClientVolume {
         /// Client ID.
@@ -425,9 +405,6 @@ impl SnapServer {
                             tracing::info!("Server stopped");
                             session_handle.abort();
                             return Ok(());
-                        }
-                        Some(ServerCommand::SendJsonRpc { .. }) => {
-                            // JSON-RPC is handled by the binary, not the library
                         }
                         Some(ServerCommand::SetClientVolume { client_id, volume, muted }) => {
                             let mut s = shared_state.lock().await;

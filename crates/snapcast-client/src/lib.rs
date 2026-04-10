@@ -163,12 +163,16 @@ pub struct ClientConfig {
     /// Optional authentication for Hello handshake.
     pub auth: Option<crate::config::Auth>,
     /// Server CA certificate for TLS verification.
+    #[cfg(feature = "tls")]
     pub server_certificate: Option<std::path::PathBuf>,
     /// Client certificate (PEM).
+    #[cfg(feature = "tls")]
     pub certificate: Option<std::path::PathBuf>,
     /// Client private key (PEM).
+    #[cfg(feature = "tls")]
     pub certificate_key: Option<std::path::PathBuf>,
     /// Password for encrypted private key.
+    #[cfg(feature = "tls")]
     pub key_password: Option<String>,
     /// Instance id (for multiple clients on one host).
     pub instance: u32,
@@ -192,9 +196,13 @@ impl Default for ClientConfig {
             host: String::new(),
             port: snapcast_proto::DEFAULT_STREAM_PORT,
             auth: None,
+            #[cfg(feature = "tls")]
             server_certificate: None,
+            #[cfg(feature = "tls")]
             certificate: None,
+            #[cfg(feature = "tls")]
             certificate_key: None,
+            #[cfg(feature = "tls")]
             key_password: None,
             instance: 1,
             host_id: String::new(),

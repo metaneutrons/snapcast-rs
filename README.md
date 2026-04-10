@@ -5,7 +5,15 @@
 [![docs.rs](https://docs.rs/snapcast-server/badge.svg)](https://docs.rs/snapcast-server)
 [![License: GPL-3.0](https://img.shields.io/badge/license-GPL--3.0-blue.svg)](LICENSE)
 
-Rust implementation of [Snapcast](https://github.com/snapcast/snapcast) — synchronized multiroom audio.
+A Rust reimplementation of [Snapcast](https://github.com/snapcast/snapcast), the excellent multiroom audio system created by [Johannes Pohl (badaix)](https://github.com/badaix). Snapcast synchronizes audio playback across multiple devices with sub-millisecond precision — turning any collection of speakers into a perfectly synced whole-home audio system.
+
+This project exists primarily to serve as a native Rust dependency for [SnapDog](https://github.com/metaneutrons/SnapDogRust), a multiroom audio appliance. Rather than shelling out to C++ binaries or bridging through FFI, SnapDog embeds the Snapcast protocol directly as a library — receiving audio, encoding it, distributing it to clients, and controlling playback, all within a single Rust process.
+
+To make this possible, snapcast-rs separates the protocol engine from the application shell. The **library crates** (`snapcast-client`, `snapcast-server`) implement the Snapcast binary protocol, audio encoding/decoding, time synchronization, and mDNS discovery — but own no audio devices, open no HTTP ports, and read no config files. They communicate exclusively through typed Rust channels, making them straightforward to embed in any application.
+
+The **binary crates** (`snapclient-rs`, `snapserver-rs`) are thin wrappers around these libraries. They add the things a standalone application needs: reading audio from pipes and processes, serving the JSON-RPC control API over HTTP and TCP, hosting the Snapweb UI, and outputting audio through platform-native backends via cpal. They are fully functional replacements for the original C++ `snapserver` and `snapclient`.
+
+The result is a Snapcast implementation that works both as a drop-in replacement for the original and as an embeddable building block for Rust applications that need synchronized multiroom audio.
 
 100% pure Rust by default. Cross-platform: macOS, Linux, Windows.
 

@@ -12,7 +12,7 @@ async fn encrypted_f32lz4_end_to_end() {
     // Server with encryption
     let server_config = ServerConfig {
         stream_port: port,
-        encryption_key: Some(psk.into()),
+        encryption_psk: Some(psk.into()),
         ..ServerConfig::default()
     };
     let (mut server, _events, audio_tx) = SnapServer::new(server_config);
@@ -23,7 +23,7 @@ async fn encrypted_f32lz4_end_to_end() {
     let client_config = ClientConfig {
         host: "127.0.0.1".into(),
         port,
-        encryption_key: Some(psk.into()),
+        encryption_psk: Some(psk.into()),
         ..ClientConfig::default()
     };
     let (mut client, mut events, _audio_rx) = SnapClient::new(client_config);
@@ -68,7 +68,7 @@ async fn wrong_key_disconnects() {
     // Server with encryption
     let server_config = ServerConfig {
         stream_port: port,
-        encryption_key: Some("server-key".into()),
+        encryption_psk: Some("server-key".into()),
         ..ServerConfig::default()
     };
     let (mut server, _events, _audio_tx) = SnapServer::new(server_config);
@@ -79,7 +79,7 @@ async fn wrong_key_disconnects() {
     let client_config = ClientConfig {
         host: "127.0.0.1".into(),
         port,
-        encryption_key: Some("wrong-key".into()),
+        encryption_psk: Some("wrong-key".into()),
         ..ClientConfig::default()
     };
     let (mut client, mut events, _audio_rx) = SnapClient::new(client_config);

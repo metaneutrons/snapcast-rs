@@ -44,7 +44,7 @@ pub struct EncoderConfig {
     pub options: String,
     /// Pre-shared key for f32lz4 encryption. `None` = no encryption.
     #[cfg(feature = "encryption")]
-    pub encryption_key: Option<String>,
+    pub encryption_psk: Option<String>,
 }
 
 impl EncoderConfig {
@@ -55,7 +55,7 @@ impl EncoderConfig {
             format,
             options: String::new(),
             #[cfg(feature = "encryption")]
-            encryption_key: None,
+            encryption_psk: None,
         }
     }
 }
@@ -82,7 +82,7 @@ pub fn create(config: &EncoderConfig) -> Result<Box<dyn Encoder>> {
         "f32lz4" => {
             let enc = f32lz4::F32Lz4Encoder::new(format);
             #[cfg(feature = "encryption")]
-            let enc = if let Some(ref key) = config.encryption_key {
+            let enc = if let Some(ref key) = config.encryption_psk {
                 enc.with_encryption(key)
             } else {
                 enc

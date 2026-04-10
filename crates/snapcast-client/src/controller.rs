@@ -303,7 +303,7 @@ impl Controller {
             "opus" => Box::new(decoder::opus::create(header)?),
             #[cfg(all(feature = "f32lz4", feature = "encryption"))]
             "f32lz4" => Box::new(decoder::f32lz4::create(
-                self.settings.encryption_key.as_deref(),
+                self.settings.encryption_psk.as_deref(),
             )),
             #[cfg(all(feature = "f32lz4", not(feature = "encryption")))]
             "f32lz4" => Box::new(decoder::f32lz4::create()),

@@ -265,7 +265,7 @@ pub struct ServerConfig {
     pub auth: Option<std::sync::Arc<dyn auth::AuthValidator>>,
     /// Pre-shared key for f32lz4 encryption. `None` = no encryption.
     #[cfg(feature = "encryption")]
-    pub encryption_key: Option<String>,
+    pub encryption_psk: Option<String>,
 }
 
 impl Default for ServerConfig {
@@ -278,7 +278,7 @@ impl Default for ServerConfig {
             mdns_service_type: "_snapcast._tcp.local.".into(),
             auth: None,
             #[cfg(feature = "encryption")]
-            encryption_key: None,
+            encryption_psk: None,
         }
     }
 }
@@ -369,7 +369,7 @@ impl SnapServer {
                 format: default_format,
                 options: String::new(),
                 #[cfg(feature = "encryption")]
-                encryption_key: self.config.encryption_key.clone(),
+                encryption_psk: self.config.encryption_psk.clone(),
             };
             let enc = encoder::create(&enc_config)?;
             (self.config.codec.clone(), enc.header().to_vec())

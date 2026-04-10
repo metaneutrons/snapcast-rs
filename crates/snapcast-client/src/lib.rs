@@ -172,7 +172,7 @@ pub struct ClientConfig {
     pub client_name: String,
     /// Pre-shared key for f32lz4 decryption. `None` = auto-detect from env SNAPCAST_PSK.
     #[cfg(feature = "encryption")]
-    pub encryption_key: Option<String>,
+    pub encryption_psk: Option<String>,
 }
 
 impl Default for ClientConfig {
@@ -187,7 +187,7 @@ impl Default for ClientConfig {
             mdns_service_type: "_snapcast._tcp.local.".into(),
             client_name: "Snapclient".into(),
             #[cfg(feature = "encryption")]
-            encryption_key: None,
+            encryption_psk: None,
         }
     }
 }

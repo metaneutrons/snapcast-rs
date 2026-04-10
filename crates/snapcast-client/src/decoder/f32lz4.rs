@@ -21,7 +21,7 @@ pub struct F32Lz4Decoder {
     #[cfg(feature = "encryption")]
     decryptor: Option<crate::crypto::ChunkDecryptor>,
     #[cfg(feature = "encryption")]
-    encryption_key: Option<String>,
+    encryption_psk: Option<String>,
 }
 
 impl Decoder for F32Lz4Decoder {
@@ -41,11 +41,11 @@ impl Decoder for F32Lz4Decoder {
         #[cfg(feature = "encryption")]
         if header.payload.len() >= 32 && &header.payload[12..16] == b"ENC\0" {
             let salt = &header.payload[16..32];
-            if let Some(ref psk) = self.encryption_key {
+            if let Some(ref psk) = self.encryption_psk {
                 self.decryptor = Some(crate::crypto::ChunkDecryptor::new(psk, salt));
                 tracing::info!("F32LZ4 decryption enabled");
             } else {
-                bail!("Server requires encryption but no encryption_key configured");
+                bail!("Server requires encryption but no encryption_psk configured");
             }
         }
 
@@ -90,11 +90,11 @@ impl Decoder for F32Lz4Decoder {
 
 /// Create an F32Lz4Decoder.
 #[cfg(feature = "encryption")]
-pub fn create(encryption_key: Option<&str>) -> F32Lz4Decoder {
+pub fn create(encryption_psk: Option<&str>) -> F32Lz4Decoder {
     F32Lz4Decoder {
         sample_format: SampleFormat::default(),
         decryptor: None,
-        encryption_key: encryption_key.map(String::from),
+        encryption_psk: encryption_psk.map(String::from),
     }
 }
 

@@ -154,12 +154,22 @@ pub enum ClientCommand {
 /// Configuration for the embeddable client.
 #[derive(Debug, Clone)]
 pub struct ClientConfig {
+    /// Connection scheme: "tcp", "ws", or "wss". Default: "tcp".
+    pub scheme: String,
     /// Server hostname or IP (empty = mDNS discovery).
     pub host: String,
     /// Server port. Default: 1704.
     pub port: u16,
     /// Optional authentication for Hello handshake.
     pub auth: Option<crate::config::Auth>,
+    /// Server CA certificate for TLS verification.
+    pub server_certificate: Option<std::path::PathBuf>,
+    /// Client certificate (PEM).
+    pub certificate: Option<std::path::PathBuf>,
+    /// Client private key (PEM).
+    pub certificate_key: Option<std::path::PathBuf>,
+    /// Password for encrypted private key.
+    pub key_password: Option<String>,
     /// Instance id (for multiple clients on one host).
     pub instance: u32,
     /// Unique host identifier (default: MAC address).
@@ -178,9 +188,14 @@ pub struct ClientConfig {
 impl Default for ClientConfig {
     fn default() -> Self {
         Self {
+            scheme: "tcp".into(),
             host: String::new(),
             port: snapcast_proto::DEFAULT_STREAM_PORT,
             auth: None,
+            server_certificate: None,
+            certificate: None,
+            certificate_key: None,
+            key_password: None,
             instance: 1,
             host_id: String::new(),
             latency: 0,

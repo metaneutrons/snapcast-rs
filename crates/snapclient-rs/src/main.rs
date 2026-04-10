@@ -32,9 +32,14 @@ fn main() -> anyhow::Result<()> {
     );
 
     let config = ClientConfig {
+        scheme: settings.server.scheme.clone(),
         host: settings.server.host.clone(),
         port: settings.server.port,
         auth: settings.server.auth.clone(),
+        server_certificate: settings.server.server_certificate.clone(),
+        certificate: settings.server.certificate.clone(),
+        certificate_key: settings.server.certificate_key.clone(),
+        key_password: settings.server.key_password.clone(),
         instance: settings.instance,
         host_id: settings.host_id.clone(),
         latency: settings.player.latency,

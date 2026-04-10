@@ -32,7 +32,7 @@ ogg = { version = "0.9", optional = true }
 lz4_flex = { version = "0.13.0", optional = true }
 
 [features]
-default = ["f32lz4", "mdns"]
+default = ["flac", "mdns"]
 flac = ["dep:libflac-sys"]
 opus = ["dep:audiopus"]
 vorbis = ["dep:vorbis_rs", "dep:ogg"]

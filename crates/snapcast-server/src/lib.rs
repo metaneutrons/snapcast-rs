@@ -241,11 +241,11 @@ pub enum ServerCommand {
 
 /// Default codec based on compiled features.
 fn default_codec() -> &'static str {
-    #[cfg(feature = "f32lz4")]
-    return "f32lz4";
-    #[cfg(all(feature = "flac", not(feature = "f32lz4")))]
+    #[cfg(feature = "flac")]
     return "flac";
-    #[cfg(not(any(feature = "f32lz4", feature = "flac")))]
+    #[cfg(all(feature = "f32lz4", not(feature = "flac")))]
+    return "f32lz4";
+    #[cfg(not(any(feature = "flac", feature = "f32lz4")))]
     return "pcm";
 }
 

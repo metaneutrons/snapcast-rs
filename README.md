@@ -20,7 +20,7 @@ snapcast-rs is fully compatible with the original C++ Snapcast when using standa
 
 | Feature | What it does | C++ behavior |
 |---------|-------------|--------------|
-| `f32lz4` (default) | 32-bit float LZ4 codec | C++ clients reject unknown codec |
+| `f32lz4` | 32-bit float LZ4 codec | C++ clients reject unknown codec |
 | `custom-protocol` | Application-defined message types (9+) | C++ clients silently ignore |
 | `encryption` | ChaCha20-Poly1305 encrypted f32lz4 | C++ clients reject unknown codec |
 
@@ -35,7 +35,7 @@ let config = ServerConfig {
 
 For full interoperability with C++ clients, use `--codec flac` or `--codec pcm` and leave `custom-protocol` and `encryption` disabled.
 
-100% pure Rust by default. Cross-platform: macOS, Linux, Windows.
+FLAC default codec (C++ compatible). Pure Rust client. Cross-platform: macOS, Linux, Windows. Cross-platform: macOS, Linux, Windows.
 
 ## Architecture
 
@@ -116,7 +116,7 @@ ClientConfig {
 
 | Feature     | Default | C dep | Description |
 |-------------|---------|-------|-------------|
-| `f32lz4`    | ✅      | none  | f32 LZ4 codec (lz4_flex) |
+| `f32lz4`    | —       | none  | f32 LZ4 codec (lz4_flex) |
 | `mdns`      | ✅      | none  | mDNS server discovery |
 | `websocket` | —       | none  | WebSocket connection |
 | `tls`       | —       | none  | WSS (WebSocket + TLS) |
@@ -185,9 +185,9 @@ ServerConfig {
 
 | Feature  | Default | C dep     | Description |
 |----------|---------|-----------|-------------|
-| `f32lz4` | ✅      | none      | f32 LZ4 codec (lz4_flex) |
+| `f32lz4` | —       | none      | f32 LZ4 codec (lz4_flex) |
 | `mdns`   | ✅      | none      | mDNS service advertisement |
-| `flac`   | —       | libFLAC   | FLAC encoding |
+| `flac`   | ✅      | libFLAC   | FLAC encoding |
 | `opus`   | —       | libopus   | Opus encoding |
 | `vorbis` | —       | libvorbis | Vorbis encoding |
 | `custom-protocol` | — | none | Custom binary messages (type 9+) |
@@ -235,8 +235,8 @@ Libraries open only port 1704. JSON-RPC/HTTP are binary-only.
 | Codec  | Default | C dep | Precision | Latency |
 |--------|---------|-------|-----------|---------|
 | PCM    | ✅ always | none | 16/24/32-bit | zero |
-| f32lz4 | ✅ default | none | 32-bit float | zero |
-| FLAC   | optional | libFLAC | 16/24-bit | 24ms (block size) |
+| f32lz4 | optional | none | 32-bit float | zero |
+| FLAC   | ✅ default | libFLAC | 16/24-bit | 24ms (block size) |
 | Opus   | optional | libopus | lossy | 20ms |
 | Vorbis | optional | libvorbis | lossy | variable |
 
@@ -346,9 +346,9 @@ Generate locally: `cargo doc --open --no-deps`
 ## Building
 
 ```bash
-cargo build --release                                    # default: f32lz4 + mdns
-cargo build --release --features flac                    # + FLAC
-cargo build --release --no-default-features --features f32lz4  # minimal, no mdns
+cargo build --release                                    # default: flac + mdns
+cargo build --release --features f32lz4                  # + f32lz4 (pure Rust)
+cargo build --release --no-default-features --features f32lz4  # pure Rust, no C deps
 ```
 
 ## Usage

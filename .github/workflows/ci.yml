@@ -32,6 +32,8 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - run: sudo apt-get update && sudo apt-get install -y libasound2-dev
       - run: cargo clippy --all-targets -- -D warnings
+      - run: cargo clippy --all-targets --features custom-protocol -- -D warnings
+      - run: cargo clippy --all-targets --features encryption -- -D warnings
 
   test:
     name: Tests
@@ -43,6 +45,7 @@ jobs:
       - run: cargo test -p snapcast-proto -p snapcast-client -p snapcast-server
       - run: cargo test -p snapcast-tests
       - run: cargo test -p snapcast-tests --features custom-protocol
+      - run: cargo test -p snapcast-tests --features encryption
 
   build-linux:
     name: Build (Linux)

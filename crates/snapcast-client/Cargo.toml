@@ -1,6 +1,7 @@
 [package]
 name = "snapcast-client"
 description = "Snapcast client library — embeddable synchronized multiroom audio"
+readme = "../../README.md"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true

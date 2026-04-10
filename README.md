@@ -173,6 +173,49 @@ For bandwidth-constrained networks: use FLAC. For quality + simplicity: f32lz4.
 
 > ⚠️ **f32lz4 is not compatible with the original C++ Snapcast.** C++ clients/servers do not recognize this codec. Use `--codec flac` or `--codec pcm` for interoperability with C++ Snapcast.
 
+## Custom Binary Protocol (`--features custom-protocol`)
+
+> ⚠️ **snapcast-rs only.** This feature extends the Snapcast binary protocol with application-defined message types. It is not part of the original C++ Snapcast.
+
+C++ Snapcast safely ignores unknown message types — the factory returns `nullptr` for any unrecognized type, and the connection logs a warning and continues:
+
+```cpp
+// C++ snapcast: common/message/factory.hpp
+switch (base_message.type) {
+    case message_type::kCodecHeader: ...
+    case message_type::kTime: ...
+    // ...
+    default:
+        return nullptr;  // unknown types silently skipped
+}
+```
+
+This means Rust servers can send custom messages to Rust clients while C++ clients on the same server simply ignore them.
+
+### Use Case: Client-Side EQ
+
+A Rust-based multiroom system (e.g. [SnapDog](https://github.com/metaneutrons/SnapDogRust)) can push per-client EQ settings through the binary protocol — no JSON-RPC, no HTTP, no extra connections:
+
+```rust
+// Server pushes EQ to a specific client
+cmd.send(ServerCommand::SendToClient {
+    client_id: "kitchen".into(),
+    message: CustomMessage::new(9, serde_json::to_vec(&EqConfig {
+        bands: vec![Band { freq: 100, gain: 3.0 }, Band { freq: 10000, gain: -2.0 }],
+    })?),
+}).await;
+
+// Client receives and applies
+match event {
+    ClientEvent::CustomMessage(msg) if msg.type_id == 9 => {
+        let eq: EqConfig = serde_json::from_slice(&msg.payload)?;
+        equalizer.update(eq);
+    }
+}
+```
+
+Message types 0–8 are reserved by the Snapcast protocol. Types 9+ are available for application use. The payload format is opaque — the library passes raw bytes, the application chooses JSON, bincode, protobuf, or any other format.
+
 ## Building
 
 ```bash

@@ -12,6 +12,7 @@ async fn encrypted_f32lz4_end_to_end() {
     // Server with encryption
     let server_config = ServerConfig {
         stream_port: port,
+        codec: "f32lz4".into(),
         encryption_psk: Some(psk.into()),
         ..ServerConfig::default()
     };
@@ -68,6 +69,7 @@ async fn wrong_key_disconnects() {
     // Server with encryption
     let server_config = ServerConfig {
         stream_port: port,
+        codec: "f32lz4".into(),
         encryption_psk: Some("server-key".into()),
         ..ServerConfig::default()
     };

@@ -134,7 +134,7 @@ ClientConfig {
 ## Server Library API
 
 ```rust
-use snapcast_server::{SnapServer, ServerConfig, ServerEvent, ServerCommand, AudioFrame, StreamConfig};
+use snapcast_server::{SnapServer, ServerConfig, ServerEvent, ServerCommand, AudioFrame, AudioData, StreamConfig};
 
 let config = ServerConfig {
     codec: "flac".into(),
@@ -167,12 +167,15 @@ cmd.send(ServerCommand::DeleteClient { client_id }).await;
 let (tx, rx) = oneshot::channel();
 cmd.send(ServerCommand::GetStatus { response_tx: tx }).await;
 
-// Push f32 audio directly (alternative to stream readers)
-audio_tx.send(AudioFrame { samples, sample_rate: 48000, channels: 2, timestamp_usec }).await;
+// Push f32 audio directly
+audio_tx.send(AudioFrame {
+    data: AudioData::F32(samples),
+    timestamp_usec,
+}).await;
 
 // Reactive events
 match event {
-    ServerEvent::ClientConnected { id, name } => {}
+    ServerEvent::ClientConnected { id, name, mac } => {}
     ServerEvent::ClientDisconnected { id } => {}
     ServerEvent::ClientVolumeChanged { client_id, volume, muted } => {}
     ServerEvent::ClientLatencyChanged { client_id, latency } => {}

@@ -18,7 +18,7 @@ use tokio::sync::{Mutex, broadcast, mpsc};
 
 use crate::ClientSettingsUpdate;
 use crate::ServerEvent;
-use crate::stream::manager::WireChunkData;
+use crate::WireChunkData;
 use crate::time::now_usec;
 
 /// Info about a connected streaming client.

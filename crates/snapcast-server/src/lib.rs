@@ -22,7 +22,8 @@
 //!
 //! # async fn example() -> anyhow::Result<()> {
 //! let config = ServerConfig::default();
-//! let (mut server, mut events, _audio_tx) = SnapServer::new(config);
+//! let (mut server, mut events) = SnapServer::new(config);
+//! let _audio_tx = server.add_stream("default");
 //! let cmd = server.command_sender();
 //!
 //! tokio::spawn(async move {
@@ -43,7 +44,7 @@
 
 use std::sync::Arc;
 
-use tokio::sync::mpsc;
+use tokio::sync::{broadcast, mpsc};
 
 // Re-export proto types that embedders need
 #[cfg(feature = "custom-protocol")]
@@ -73,6 +74,17 @@ pub struct AudioFrame {
     pub data: AudioData,
     /// Timestamp in microseconds (server time).
     pub timestamp_usec: i64,
+}
+
+/// An encoded audio chunk ready to be sent to clients.
+#[derive(Debug, Clone)]
+pub struct WireChunkData {
+    /// Stream ID this chunk belongs to.
+    pub stream_id: String,
+    /// Server timestamp in microseconds.
+    pub timestamp_usec: i64,
+    /// Encoded audio data.
+    pub data: Vec<u8>,
 }
 
 pub mod auth;
@@ -309,8 +321,91 @@ pub struct SnapServer {
     event_tx: mpsc::Sender<ServerEvent>,
     command_tx: mpsc::Sender<ServerCommand>,
     command_rx: Option<mpsc::Receiver<ServerCommand>>,
-    audio_rx: Option<mpsc::Receiver<crate::AudioFrame>>,
-    manager: Option<stream::manager::StreamManager>,
+    /// Named audio streams — each gets its own encoder at run().
+    streams: Vec<(String, mpsc::Receiver<AudioFrame>)>,
+    /// Broadcast channel for encoded chunks → sessions.
+    chunk_tx: broadcast::Sender<WireChunkData>,
+}
+
+/// Spawn a per-stream encode loop on a dedicated thread.
+///
+/// Receives `AudioFrame` (F32 or Pcm), converts to PCM bytes if needed,
+/// encodes with the configured codec, and broadcasts `WireChunkData`.
+fn spawn_stream_encoder(
+    stream_id: String,
+    mut rx: mpsc::Receiver<AudioFrame>,
+    enc_config: encoder::EncoderConfig,
+    chunk_tx: broadcast::Sender<WireChunkData>,
+    format: snapcast_proto::SampleFormat,
+) {
+    let (done_tx, done_rx) = tokio::sync::oneshot::channel::<()>();
+    let is_f32lz4 = enc_config.codec == "f32lz4";
+    let bits = format.bits();
+
+    std::thread::spawn(move || {
+        let mut enc = match encoder::create(&enc_config) {
+            Ok(e) => e,
+            Err(e) => {
+                tracing::error!(stream = %stream_id, error = %e, "Failed to create encoder");
+                return;
+            }
+        };
+
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .expect("encoder runtime");
+
+        rt.block_on(async {
+            let mut pending_timestamp: Option<i64> = None;
+
+            while let Some(frame) = rx.recv().await {
+                if pending_timestamp.is_none() {
+                    pending_timestamp = Some(frame.timestamp_usec);
+                }
+
+                let pcm_bytes = match frame.data {
+                    AudioData::F32(samples) => {
+                        if is_f32lz4 {
+                            // f32lz4: pass f32 bytes directly — no quantization
+                            samples.iter().flat_map(|s| s.to_le_bytes()).collect()
+                        } else {
+                            f32_to_pcm_bytes(&samples, bits)
+                        }
+                    }
+                    AudioData::Pcm(data) => data,
+                };
+
+                match enc.encode(&pcm_bytes) {
+                    Ok(encoded) => {
+                        if encoded.data.is_empty() {
+                            continue; // encoder buffering
+                        }
+                        let wire = WireChunkData {
+                            stream_id: stream_id.clone(),
+                            timestamp_usec: pending_timestamp
+                                .take()
+                                .unwrap_or(frame.timestamp_usec),
+                            data: encoded.data,
+                        };
+                        let _ = chunk_tx.send(wire);
+                        pending_timestamp = None;
+                    }
+                    Err(e) => {
+                        tracing::warn!(stream = %stream_id, error = %e, "Encode failed");
+                        pending_timestamp = None;
+                    }
+                }
+            }
+        });
+
+        let _ = done_tx.send(());
+    });
+
+    // Keep a handle so we can detect encoder thread exit
+    tokio::spawn(async move {
+        let _ = done_rx.await;
+    });
 }
 
 /// Convert f32 samples to PCM bytes at the given bit depth.
@@ -353,34 +448,30 @@ fn f32_to_pcm_bytes(samples: &[f32], bits: u16) -> Vec<u8> {
 }
 
 impl SnapServer {
-    /// Create a new server. Returns the server, event receiver, and audio input sender.
-    ///
-    /// The `audio_tx` sender allows the embedding app to push PCM audio directly
-    /// into the server as an alternative to pipe/file/process stream readers.
-    pub fn new(
-        config: ServerConfig,
-    ) -> (
-        Self,
-        mpsc::Receiver<ServerEvent>,
-        mpsc::Sender<crate::AudioFrame>,
-    ) {
+    /// Create a new server. Returns the server and event receiver.
+    pub fn new(config: ServerConfig) -> (Self, mpsc::Receiver<ServerEvent>) {
         let (event_tx, event_rx) = mpsc::channel(EVENT_CHANNEL_SIZE);
         let (command_tx, command_rx) = mpsc::channel(COMMAND_CHANNEL_SIZE);
-        let (audio_tx, audio_rx) = mpsc::channel(AUDIO_CHANNEL_SIZE);
+        let (chunk_tx, _) = broadcast::channel(256);
         let server = Self {
             config,
             event_tx,
             command_tx,
             command_rx: Some(command_rx),
-            audio_rx: Some(audio_rx),
-            manager: None,
+            streams: Vec::new(),
+            chunk_tx,
         };
-        (server, event_rx, audio_tx)
+        (server, event_rx)
     }
 
-    /// Set the stream manager (configured by the binary with stream readers).
-    pub fn set_manager(&mut self, manager: stream::manager::StreamManager) {
-        self.manager = Some(manager);
+    /// Add a named audio stream. Returns a sender for pushing audio frames.
+    ///
+    /// Each stream gets its own encoder (based on server config) at `run()`.
+    /// Groups can be assigned to streams by name via `SetGroupStream`.
+    pub fn add_stream(&mut self, name: &str) -> mpsc::Sender<AudioFrame> {
+        let (tx, rx) = mpsc::channel(AUDIO_CHANNEL_SIZE);
+        self.streams.push((name.to_string(), rx));
+        tx
     }
 
     /// Get a cloneable command sender.
@@ -400,12 +491,18 @@ impl SnapServer {
             .take()
             .ok_or_else(|| anyhow::anyhow!("run() already called"))?;
 
-        let mut audio_rx = self
-            .audio_rx
-            .take()
-            .ok_or_else(|| anyhow::anyhow!("run() already called"))?;
-
         let event_tx = self.event_tx.clone();
+
+        let sample_format: snapcast_proto::SampleFormat = self
+            .config
+            .sample_format
+            .parse()
+            .unwrap_or(snapcast_proto::DEFAULT_SAMPLE_FORMAT);
+
+        anyhow::ensure!(
+            !self.streams.is_empty(),
+            "No streams configured — call add_stream() before run()"
+        );
 
         tracing::info!(stream_port = self.config.stream_port, "Snapserver starting");
 
@@ -416,74 +513,35 @@ impl SnapServer {
                 .map_err(|e| tracing::warn!(error = %e, "mDNS advertisement failed"))
                 .ok();
 
-        let has_external_streams = self.manager.is_some();
-        let mut manager = self.manager.take().unwrap_or_default();
-
-        // Register an internal stream for the audio_tx API path — only when
-        // no external streams were configured via set_manager(). The binary
-        // (snapserver-rs) configures its own streams; the library consumer
-        // (SnapDog embedded) uses audio_tx instead.
-        let sample_format: snapcast_proto::SampleFormat = self
-            .config
-            .sample_format
-            .parse()
-            .unwrap_or(snapcast_proto::DEFAULT_SAMPLE_FORMAT);
-
-        if !has_external_streams {
-            let (internal_pcm_tx, internal_pcm_rx) = mpsc::channel::<stream::PcmChunk>(256);
-            let enc_config = encoder::EncoderConfig {
-                codec: self.config.codec.clone(),
-                format: sample_format,
-                options: String::new(),
-                #[cfg(feature = "encryption")]
-                encryption_psk: self.config.encryption_psk.clone(),
-            };
-            manager.add_stream_from_receiver("default", enc_config, internal_pcm_rx)?;
-
-            // Spawn task to convert AudioFrame → PcmChunk for the encoder
-            let audio_format = sample_format;
-            tokio::spawn(async move {
-                while let Some(frame) = audio_rx.recv().await {
-                    let pcm = match frame.data {
-                        AudioData::F32(ref samples) => {
-                            f32_to_pcm_bytes(samples, audio_format.bits())
-                        }
-                        AudioData::Pcm(data) => data,
-                    };
-                    if internal_pcm_tx
-                        .send(stream::PcmChunk {
-                            timestamp_usec: frame.timestamp_usec,
-                            data: pcm,
-                        })
-                        .await
-                        .is_err()
-                    {
-                        break;
-                    }
-                }
-            });
-        } else {
-            // Drain audio_rx so the channel doesn't block
-            tokio::spawn(async move { while audio_rx.recv().await.is_some() {} });
-        }
-
-        let default_format = snapcast_proto::DEFAULT_SAMPLE_FORMAT;
-        let first_stream = manager.stream_ids().into_iter().next().unwrap_or_default();
-        let (codec, header) = if let Some((c, h, _)) = manager.header(&first_stream) {
-            (c.to_string(), h.to_vec())
-        } else {
-            let enc_config = encoder::EncoderConfig {
-                codec: self.config.codec.clone(),
-                format: default_format,
-                options: String::new(),
-                #[cfg(feature = "encryption")]
-                encryption_psk: self.config.encryption_psk.clone(),
-            };
-            let enc = encoder::create(&enc_config)?;
-            (self.config.codec.clone(), enc.header().to_vec())
+        // Create encoder for codec header (needed before any audio arrives)
+        let enc_config = encoder::EncoderConfig {
+            codec: self.config.codec.clone(),
+            format: sample_format,
+            options: String::new(),
+            #[cfg(feature = "encryption")]
+            encryption_psk: self.config.encryption_psk.clone(),
         };
+        let header_enc = encoder::create(&enc_config)?;
+        let codec = header_enc.name().to_string();
+        let codec_header = header_enc.header().to_vec();
+        drop(header_enc);
 
-        let chunk_sender = manager.chunk_sender();
+        // Spawn per-stream encode loops
+        let chunk_tx = self.chunk_tx.clone();
+        let streams = std::mem::take(&mut self.streams);
+        for (name, rx) in streams {
+            let stream_enc_config = enc_config.clone();
+            let stream_chunk_tx = chunk_tx.clone();
+            let stream_name = name.clone();
+            spawn_stream_encoder(
+                stream_name,
+                rx,
+                stream_enc_config,
+                stream_chunk_tx,
+                sample_format,
+            );
+            tracing::info!(stream = %name, codec = %codec, %sample_format, "Stream registered");
+        }
 
         // Start session server
         let session_srv = Arc::new(session::SessionServer::new(
@@ -493,9 +551,10 @@ impl SnapServer {
         ));
         let session_for_run = Arc::clone(&session_srv);
         let session_event_tx = event_tx.clone();
+        let session_chunk_tx = self.chunk_tx.clone();
         let session_handle = tokio::spawn(async move {
             if let Err(e) = session_for_run
-                .run(chunk_sender, codec, header, session_event_tx)
+                .run(session_chunk_tx, codec, codec_header, session_event_tx)
                 .await
             {
                 tracing::error!(error = %e, "Session server error");

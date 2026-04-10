@@ -16,7 +16,8 @@ async fn encrypted_f32lz4_end_to_end() {
         encryption_psk: Some(psk.into()),
         ..ServerConfig::default()
     };
-    let (mut server, _events, audio_tx) = SnapServer::new(server_config);
+    let (mut server, _events) = SnapServer::new(server_config);
+    let audio_tx = server.add_stream("default");
     tokio::spawn(async move { server.run().await.ok() });
     tokio::time::sleep(std::time::Duration::from_millis(50)).await;
 

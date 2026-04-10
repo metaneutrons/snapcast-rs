@@ -30,7 +30,8 @@ pub async fn start_server() -> TestServer {
         stream_port: port,
         ..ServerConfig::default()
     };
-    let (mut server, events, audio_tx) = SnapServer::new(config);
+    let (mut server, events) = SnapServer::new(config);
+    let audio_tx = server.add_stream("default");
     let cmd = server.command_sender();
     tokio::spawn(async move {
         server.run().await.ok();

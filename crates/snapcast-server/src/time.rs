@@ -43,7 +43,7 @@ fn monotonic_usec() -> i64 {
         unsafe {
             libc::clock_gettime(libc::CLOCK_MONOTONIC, &mut ts);
         }
-        ts.tv_sec as i64 * 1_000_000 + ts.tv_nsec as i64 / 1_000
+        ts.tv_sec * 1_000_000 + ts.tv_nsec / 1_000
     }
     #[cfg(not(unix))]
     {

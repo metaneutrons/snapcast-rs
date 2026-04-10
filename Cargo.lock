@@ -2293,6 +2293,7 @@ dependencies = [
  "serde",
  "serde_json",
  "snapcast-proto",
+ "subtle",
  "tokio",
  "tracing",
  "vorbis_rs",

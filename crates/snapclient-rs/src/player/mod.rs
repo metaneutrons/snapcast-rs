@@ -23,7 +23,7 @@ pub async fn play_audio(
     // Wait for the Stream to have a valid format (set by init_audio_pipeline)
     let format = loop {
         {
-            let s = stream.lock().unwrap();
+            let s = stream.lock().unwrap_or_else(|e| e.into_inner());
             let f = s.format();
             if f.rate() > 0 && f.channels() > 0 {
                 break f;
@@ -87,12 +87,12 @@ fn run_cpal(
                 + (num_frames as i64 * 1_000_000) / format.rate() as i64;
 
             let server_now = {
-                let tp = time_provider.lock().unwrap();
+                let tp = time_provider.lock().unwrap_or_else(|e| e.into_inner());
                 now_usec() + tp.diff_to_server_usec()
             };
 
             {
-                let mut s = stream.lock().unwrap();
+                let mut s = stream.lock().unwrap_or_else(|e| e.into_inner());
                 s.get_player_chunk_or_silence(
                     server_now,
                     buffer_dac_usec,

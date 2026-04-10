@@ -116,7 +116,13 @@ fn main() -> anyhow::Result<()> {
 
         let mut manager = snapcast_server::stream::manager::StreamManager::new();
         for source in &server_config.sources {
-            let parsed = stream::uri::StreamUri::parse(source).unwrap();
+            let parsed = match stream::uri::StreamUri::parse(source) {
+                Ok(p) => p,
+                Err(e) => {
+                    tracing::error!(source, error = %e, "Skipping malformed stream URI");
+                    continue;
+                }
+            };
             let name = parsed.param("name").unwrap_or("default").to_string();
             let format = parsed
                 .param("sampleformat")

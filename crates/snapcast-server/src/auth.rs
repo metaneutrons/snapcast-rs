@@ -6,6 +6,13 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
+use subtle::ConstantTimeEq;
+
+/// Constant-time byte comparison to prevent timing attacks.
+fn constant_time_eq(a: &[u8], b: &[u8]) -> bool {
+    a.ct_eq(b).into()
+}
+
 /// Result of successful authentication.
 #[derive(Debug, Clone)]
 pub struct AuthResult {
@@ -32,6 +39,8 @@ impl std::fmt::Display for AuthError {
         }
     }
 }
+
+impl std::error::Error for AuthError {}
 
 impl AuthError {
     /// HTTP-style error code.
@@ -154,7 +163,7 @@ impl AuthValidator for StaticAuthValidator {
             .get(username)
             .ok_or_else(|| AuthError::Unauthorized("Unknown user".into()))?;
 
-        if stored_pw != password {
+        if !constant_time_eq(stored_pw.as_bytes(), password.as_bytes()) {
             return Err(AuthError::Unauthorized("Wrong password".into()));
         }
 

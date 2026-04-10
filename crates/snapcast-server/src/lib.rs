@@ -466,7 +466,7 @@ impl SnapServer {
                         } else {
                             let mut pcm = Vec::with_capacity(frame.samples.len() * 2);
                             for &s in &frame.samples {
-                                let i = (s * i16::MAX as f32) as i16;
+                                let i = (s.clamp(-1.0, 1.0) * i16::MAX as f32) as i16;
                                 pcm.extend_from_slice(&i.to_le_bytes());
                             }
                             pcm

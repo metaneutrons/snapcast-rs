@@ -103,10 +103,15 @@ fn main() -> anyhow::Result<()> {
             tokio::signal::ctrl_c().await.ok();
             tracing::info!("Received Ctrl-C, shutting down");
             cmd.send(ServerCommand::Stop).await.ok();
+            // Force exit after 2s or on second Ctrl+C
             std::thread::spawn(|| {
                 std::thread::sleep(std::time::Duration::from_secs(2));
-                std::process::exit(0);
+                tracing::warn!("Graceful shutdown timed out, forcing exit");
+                std::process::exit(1);
             });
+            // Second Ctrl+C → immediate exit
+            tokio::signal::ctrl_c().await.ok();
+            std::process::exit(1);
         });
 
         // Set up stream manager with configured sources

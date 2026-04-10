@@ -306,6 +306,45 @@ pub struct SnapServer {
     manager: Option<stream::manager::StreamManager>,
 }
 
+/// Convert f32 samples to PCM bytes at the given bit depth.
+fn f32_to_pcm_bytes(samples: &[f32], bits: u16) -> Vec<u8> {
+    match bits {
+        16 => {
+            let mut buf = Vec::with_capacity(samples.len() * 2);
+            for &s in samples {
+                let i = (s.clamp(-1.0, 1.0) * i16::MAX as f32) as i16;
+                buf.extend_from_slice(&i.to_le_bytes());
+            }
+            buf
+        }
+        24 => {
+            let mut buf = Vec::with_capacity(samples.len() * 3);
+            for &s in samples {
+                let i = (s.clamp(-1.0, 1.0) * 8_388_607.0) as i32;
+                let bytes = i.to_le_bytes();
+                buf.extend_from_slice(&bytes[..3]);
+            }
+            buf
+        }
+        32 => {
+            let mut buf = Vec::with_capacity(samples.len() * 4);
+            for &s in samples {
+                let i = (s.clamp(-1.0, 1.0) * i32::MAX as f32) as i32;
+                buf.extend_from_slice(&i.to_le_bytes());
+            }
+            buf
+        }
+        _ => {
+            let mut buf = Vec::with_capacity(samples.len() * 2);
+            for &s in samples {
+                let i = (s.clamp(-1.0, 1.0) * i16::MAX as f32) as i16;
+                buf.extend_from_slice(&i.to_le_bytes());
+            }
+            buf
+        }
+    }
+}
+
 impl SnapServer {
     /// Create a new server. Returns the server, event receiver, and audio input sender.
     ///
@@ -370,78 +409,51 @@ impl SnapServer {
                 .map_err(|e| tracing::warn!(error = %e, "mDNS advertisement failed"))
                 .ok();
 
+        let has_external_streams = self.manager.is_some();
         let mut manager = self.manager.take().unwrap_or_default();
 
-        // Register an internal stream for the audio_tx API path.
-        // This ensures audio from the embedding app goes through the encoder
-        // (FLAC, opus, etc.) just like pipe/file/process streams.
+        // Register an internal stream for the audio_tx API path — only when
+        // no external streams were configured via set_manager(). The binary
+        // (snapserver-rs) configures its own streams; the library consumer
+        // (SnapDog embedded) uses audio_tx instead.
         let sample_format: snapcast_proto::SampleFormat = self
             .config
             .sample_format
             .parse()
             .unwrap_or(snapcast_proto::DEFAULT_SAMPLE_FORMAT);
-        let (internal_pcm_tx, internal_pcm_rx) = mpsc::channel::<stream::PcmChunk>(256);
-        let enc_config = encoder::EncoderConfig {
-            codec: self.config.codec.clone(),
-            format: sample_format,
-            options: String::new(),
-            #[cfg(feature = "encryption")]
-            encryption_psk: self.config.encryption_psk.clone(),
-        };
-        manager.add_stream_from_receiver("default", enc_config, internal_pcm_rx)?;
 
-        // Spawn task to convert AudioFrame (f32) → PcmChunk (i16 LE) for the encoder
-        let audio_format = sample_format;
-        tokio::spawn(async move {
-            while let Some(frame) = audio_rx.recv().await {
-                let pcm = match audio_format.bits() {
-                    16 => {
-                        let mut buf = Vec::with_capacity(frame.samples.len() * 2);
-                        for &s in &frame.samples {
-                            let i = (s.clamp(-1.0, 1.0) * i16::MAX as f32) as i16;
-                            buf.extend_from_slice(&i.to_le_bytes());
-                        }
-                        buf
+        if !has_external_streams {
+            let (internal_pcm_tx, internal_pcm_rx) = mpsc::channel::<stream::PcmChunk>(256);
+            let enc_config = encoder::EncoderConfig {
+                codec: self.config.codec.clone(),
+                format: sample_format,
+                options: String::new(),
+                #[cfg(feature = "encryption")]
+                encryption_psk: self.config.encryption_psk.clone(),
+            };
+            manager.add_stream_from_receiver("default", enc_config, internal_pcm_rx)?;
+
+            // Spawn task to convert AudioFrame (f32) → PcmChunk for the encoder
+            let audio_format = sample_format;
+            tokio::spawn(async move {
+                while let Some(frame) = audio_rx.recv().await {
+                    let pcm = f32_to_pcm_bytes(&frame.samples, audio_format.bits());
+                    if internal_pcm_tx
+                        .send(stream::PcmChunk {
+                            timestamp_usec: frame.timestamp_usec,
+                            data: pcm,
+                        })
+                        .await
+                        .is_err()
+                    {
+                        break;
                     }
-                    24 => {
-                        let mut buf = Vec::with_capacity(frame.samples.len() * 3);
-                        for &s in &frame.samples {
-                            let i = (s.clamp(-1.0, 1.0) * 8_388_607.0) as i32;
-                            let bytes = i.to_le_bytes();
-                            buf.extend_from_slice(&bytes[..3]);
-                        }
-                        buf
-                    }
-                    32 => {
-                        let mut buf = Vec::with_capacity(frame.samples.len() * 4);
-                        for &s in &frame.samples {
-                            let i = (s.clamp(-1.0, 1.0) * i32::MAX as f32) as i32;
-                            buf.extend_from_slice(&i.to_le_bytes());
-                        }
-                        buf
-                    }
-                    _ => {
-                        // Fallback to 16-bit
-                        let mut buf = Vec::with_capacity(frame.samples.len() * 2);
-                        for &s in &frame.samples {
-                            let i = (s.clamp(-1.0, 1.0) * i16::MAX as f32) as i16;
-                            buf.extend_from_slice(&i.to_le_bytes());
-                        }
-                        buf
-                    }
-                };
-                if internal_pcm_tx
-                    .send(stream::PcmChunk {
-                        timestamp_usec: frame.timestamp_usec,
-                        data: pcm,
-                    })
-                    .await
-                    .is_err()
-                {
-                    break;
                 }
-            }
-        });
+            });
+        } else {
+            // Drain audio_rx so the channel doesn't block
+            tokio::spawn(async move { while audio_rx.recv().await.is_some() {} });
+        }
 
         let default_format = snapcast_proto::DEFAULT_SAMPLE_FORMAT;
         let first_stream = manager.stream_ids().into_iter().next().unwrap_or_default();

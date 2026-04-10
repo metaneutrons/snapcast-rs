@@ -5,7 +5,6 @@ use ini::Ini;
 use snapcast_server::ServerConfig;
 
 /// Binary-specific configuration (not part of the library).
-#[derive(Debug, Clone)]
 pub struct BinaryConfig {
     /// Library server config.
     pub server: ServerConfig,

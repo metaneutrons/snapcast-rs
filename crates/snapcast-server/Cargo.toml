@@ -9,6 +9,7 @@ repository.workspace = true
 authors.workspace = true
 
 [dependencies]
+base64 = { workspace = true }
 snapcast-proto = { workspace = true }
 tokio = { workspace = true }
 serde = { workspace = true }

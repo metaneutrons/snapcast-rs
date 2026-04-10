@@ -57,6 +57,7 @@ pub struct AudioFrame {
     pub timestamp_usec: i64,
 }
 
+pub mod auth;
 pub mod encoder;
 #[cfg(feature = "mdns")]
 pub mod mdns;
@@ -236,7 +237,7 @@ fn default_codec() -> &'static str {
 }
 
 /// Server configuration.
-#[derive(Debug, Clone)]
+/// Server configuration for the embeddable library.
 pub struct ServerConfig {
     /// TCP port for binary protocol (client connections). Default: 1704.
     pub stream_port: u16,
@@ -248,6 +249,8 @@ pub struct ServerConfig {
     pub sample_format: String,
     /// mDNS service type. Default: "_snapcast._tcp.local.".
     pub mdns_service_type: String,
+    /// Auth validator for streaming clients. `None` = no auth required.
+    pub auth: Option<std::sync::Arc<dyn auth::AuthValidator>>,
 }
 
 impl Default for ServerConfig {
@@ -258,6 +261,7 @@ impl Default for ServerConfig {
             codec: default_codec().into(),
             sample_format: "48000:16:2".into(),
             mdns_service_type: "_snapcast._tcp.local.".into(),
+            auth: None,
         }
     }
 }
@@ -354,6 +358,7 @@ impl SnapServer {
         let session_srv = Arc::new(session::SessionServer::new(
             self.config.stream_port,
             self.config.buffer_ms as i32,
+            self.config.auth.clone(),
         ));
         let session_for_run = Arc::clone(&session_srv);
         let session_event_tx = event_tx.clone();

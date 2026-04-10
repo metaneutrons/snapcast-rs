@@ -38,6 +38,7 @@ pub struct ClientInfo {
 pub struct SessionServer {
     port: u16,
     buffer_ms: i32,
+    auth: Option<Arc<dyn crate::auth::AuthValidator>>,
     clients: Arc<Mutex<HashMap<String, ClientInfo>>>,
     settings_senders: Arc<Mutex<HashMap<String, mpsc::Sender<ClientSettingsUpdate>>>>,
     #[cfg(feature = "custom-protocol")]
@@ -56,10 +57,15 @@ pub struct CustomOutbound {
 
 impl SessionServer {
     /// Create a new session server.
-    pub fn new(port: u16, buffer_ms: i32) -> Self {
+    pub fn new(
+        port: u16,
+        buffer_ms: i32,
+        auth: Option<Arc<dyn crate::auth::AuthValidator>>,
+    ) -> Self {
         Self {
             port,
             buffer_ms,
+            auth,
             clients: Arc::new(Mutex::new(HashMap::new())),
             settings_senders: Arc::new(Mutex::new(HashMap::new())),
             #[cfg(feature = "custom-protocol")]
@@ -97,6 +103,7 @@ impl SessionServer {
             let custom_senders = Arc::clone(&self.custom_senders);
             let event_tx = event_tx.clone();
             let buffer_ms = self.buffer_ms;
+            let auth = self.auth.clone();
             let codec = codec.clone();
             let codec_header = codec_header.clone();
 
@@ -118,6 +125,7 @@ impl SessionServer {
                     #[cfg(feature = "custom-protocol")]
                     custom_tx,
                     event_tx,
+                    auth.as_deref(),
                     buffer_ms,
                     &codec,
                     &codec_header,
@@ -165,6 +173,7 @@ async fn handle_client(
     settings_tx: mpsc::Sender<ClientSettingsUpdate>,
     #[cfg(feature = "custom-protocol")] custom_tx: mpsc::Sender<CustomOutbound>,
     event_tx: mpsc::Sender<ServerEvent>,
+    auth: Option<&dyn crate::auth::AuthValidator>,
     buffer_ms: i32,
     codec: &str,
     codec_header: &[u8],
@@ -178,6 +187,39 @@ async fn handle_client(
 
     let client_id = hello.id.clone();
     tracing::info!(id = %client_id, name = %hello.host_name, mac = %hello.mac, "Client hello");
+
+    // 1b. Validate auth if required
+    if let Some(validator) = auth {
+        let auth_result = match &hello.auth {
+            Some(a) => validator.validate(&a.scheme, &a.param),
+            None => Err(crate::auth::AuthError::Unauthorized(
+                "Authentication required".into(),
+            )),
+        };
+        match auth_result {
+            Ok(result) => {
+                if !result.permissions.iter().any(|p| p == "Streaming") {
+                    let err = snapcast_proto::message::error::Error {
+                        code: 403,
+                        message: "Forbidden".into(),
+                        error: "Permission 'Streaming' missing".into(),
+                    };
+                    send_msg(&mut stream, MessageType::Error, &MessagePayload::Error(err)).await?;
+                    anyhow::bail!("Client {client_id}: missing Streaming permission");
+                }
+                tracing::info!(id = %client_id, user = %result.username, "Authenticated");
+            }
+            Err(e) => {
+                let err = snapcast_proto::message::error::Error {
+                    code: e.code() as u32,
+                    message: e.message().to_string(),
+                    error: e.message().to_string(),
+                };
+                send_msg(&mut stream, MessageType::Error, &MessagePayload::Error(err)).await?;
+                anyhow::bail!("Client {client_id}: {e}");
+            }
+        }
+    }
 
     // Register client + settings channel
     {

@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.3.1](https://github.com/metaneutrons/snapcast-rs/compare/snapcast-rs-v0.3.0...snapcast-rs-v0.3.1) (2026-04-10)
+
+
+### Bug Fixes
+
+* **ci:** release workflow triggers on snapcast-rs-v* tags ([5c5ef63](https://github.com/metaneutrons/snapcast-rs/commit/5c5ef6383ad7fe0d3e46a046710ad53ef8b5167d))
+
 ## [0.3.0](https://github.com/metaneutrons/snapcast-rs/compare/snapcast-rs-v0.2.0...snapcast-rs-v0.3.0) (2026-04-10)
 
 

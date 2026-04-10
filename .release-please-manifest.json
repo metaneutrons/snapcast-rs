@@ -1,6 +1,3 @@
 {
-  ".": {
-    "release": "0.2.0",
-    "component": "snapcast-rs"
-  }
+  ".": "0.2.0"
 }

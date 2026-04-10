@@ -12,7 +12,6 @@ use snapcast_proto::message::time::Time;
 use snapcast_proto::{MessageType, SampleFormat};
 use tokio::sync::mpsc;
 
-use crate::config::ClientSettings;
 use crate::connection::TcpConnection;
 use crate::decoder::{self, Decoder, PcmDecoder};
 use crate::stream::{PcmChunk, Stream};
@@ -23,7 +22,7 @@ const VERSION: &str = env!("CARGO_PKG_VERSION");
 
 /// Main orchestrator wiring connection, decoder, stream, and audio output.
 pub struct Controller {
-    settings: ClientSettings,
+    settings: crate::ClientConfig,
     connection: TcpConnection,
     time_provider: Arc<Mutex<TimeProvider>>,
     stream: Option<Arc<Mutex<Stream>>>,
@@ -37,14 +36,14 @@ pub struct Controller {
 impl Controller {
     /// Create a new controller with the given settings and event channels.
     pub fn new(
-        settings: ClientSettings,
+        settings: crate::ClientConfig,
         event_tx: mpsc::Sender<ClientEvent>,
         command_rx: mpsc::Receiver<ClientCommand>,
         time_provider: Arc<Mutex<TimeProvider>>,
         stream: Arc<Mutex<Stream>>,
     ) -> Self {
         Self {
-            connection: TcpConnection::new(&settings.server.host, settings.server.port),
+            connection: TcpConnection::new(&settings.host, settings.port),
             settings,
             time_provider,
             stream: Some(stream),
@@ -85,15 +84,14 @@ impl Controller {
 
     async fn session(&mut self) -> Result<()> {
         // mDNS discovery if host is empty or starts with "_"
-        if self.settings.server.host.is_empty() || self.settings.server.host.starts_with('_') {
+        if self.settings.host.is_empty() || self.settings.host.starts_with('_') {
             #[cfg(feature = "mdns")]
             {
-                tracing::info!(service = %self.settings.server.host, "Browsing mDNS...");
+                tracing::info!(service = %self.settings.host, "Browsing mDNS...");
                 let endpoint = crate::discovery::discover(Duration::from_secs(5)).await?;
-                self.settings.server.host = endpoint.host;
-                self.settings.server.port = endpoint.port;
-                self.connection =
-                    TcpConnection::new(&self.settings.server.host, self.settings.server.port);
+                self.settings.host = endpoint.host;
+                self.settings.port = endpoint.port;
+                self.connection = TcpConnection::new(&self.settings.host, self.settings.port);
             }
             #[cfg(not(feature = "mdns"))]
             bail!("mDNS not available — specify server URL");
@@ -101,13 +99,13 @@ impl Controller {
 
         self.connection.connect().await?;
         tracing::info!(
-            host = %self.settings.server.host,
-            port = self.settings.server.port,
+            host = %self.settings.host,
+            port = self.settings.port,
             "Connected"
         );
         self.emit(ClientEvent::Connected {
-            host: self.settings.server.host.clone(),
-            port: self.settings.server.port,
+            host: self.settings.host.clone(),
+            port: self.settings.port,
         });
 
         self.send_hello().await?;
@@ -122,7 +120,7 @@ impl Controller {
             self.settings.host_id.clone()
         };
 
-        let auth = self.settings.server.auth.as_ref().map(|a| Auth {
+        let auth = self.settings.auth.as_ref().map(|a| Auth {
             scheme: a.scheme.clone(),
             param: a.param.clone(),
         });
@@ -277,7 +275,7 @@ impl Controller {
 
     fn apply_server_settings(&mut self, ss: &ServerSettings) {
         if let Some(ref stream) = self.stream {
-            let buf_ms = (ss.buffer_ms - ss.latency - self.settings.player.latency).max(0);
+            let buf_ms = (ss.buffer_ms - ss.latency - self.settings.latency).max(0);
             stream.lock().unwrap().set_buffer_ms(buf_ms as i64);
         }
     }
@@ -306,7 +304,7 @@ impl Controller {
             let mut s = stream.lock().unwrap();
             *s = Stream::new(self.sample_format);
             if let Some(ref ss) = self.server_settings {
-                let buf_ms = (ss.buffer_ms - ss.latency - self.settings.player.latency).max(0);
+                let buf_ms = (ss.buffer_ms - ss.latency - self.settings.latency).max(0);
                 s.set_buffer_ms(buf_ms as i64);
             }
         }

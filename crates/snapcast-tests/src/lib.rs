@@ -2,7 +2,6 @@
 
 use std::net::TcpListener;
 
-use snapcast_client::config::{PlayerSettings, ServerSettings};
 use snapcast_client::{ClientConfig, ClientEvent, SnapClient};
 use snapcast_server::{ServerConfig, ServerEvent, SnapServer};
 use tokio::sync::mpsc;
@@ -56,15 +55,9 @@ pub struct TestClient {
 /// Connect a client to the given server port.
 pub async fn connect_client(port: u16) -> TestClient {
     let config = ClientConfig {
-        server: ServerSettings {
-            scheme: "tcp".into(),
-            host: "127.0.0.1".into(),
-            port,
-            ..ServerSettings::default()
-        },
-        player: PlayerSettings::default(),
-        host_id: String::new(),
-        instance: 1,
+        host: "127.0.0.1".into(),
+        port,
+        ..ClientConfig::default()
     };
     let (mut client, events, audio_rx) = SnapClient::new(config);
     let cmd = client.command_sender();

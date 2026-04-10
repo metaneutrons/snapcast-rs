@@ -141,34 +141,32 @@ pub enum ClientCommand {
 /// Configuration for the embeddable client.
 #[derive(Debug, Clone)]
 pub struct ClientConfig {
-    /// Server connection settings.
-    pub server: ServerSettings,
-    /// Audio player settings.
-    pub player: PlayerSettings,
+    /// Server hostname or IP (empty = mDNS discovery).
+    pub host: String,
+    /// Server port. Default: 1704.
+    pub port: u16,
+    /// Optional authentication for Hello handshake.
+    pub auth: Option<crate::config::Auth>,
     /// Instance id (for multiple clients on one host).
     pub instance: u32,
     /// Unique host identifier (default: MAC address).
     pub host_id: String,
+    /// Additional latency in milliseconds (subtracted from buffer).
+    pub latency: i32,
+    /// mDNS service type. Default: "_snapcast._tcp.local.".
+    pub mdns_service_type: String,
 }
 
 impl Default for ClientConfig {
     fn default() -> Self {
         Self {
-            server: ServerSettings::default(),
-            player: PlayerSettings::default(),
+            host: String::new(),
+            port: 1704,
+            auth: None,
             instance: 1,
             host_id: String::new(),
-        }
-    }
-}
-
-impl From<ClientSettings> for ClientConfig {
-    fn from(s: ClientSettings) -> Self {
-        Self {
-            server: s.server,
-            player: s.player,
-            instance: s.instance,
-            host_id: s.host_id,
+            latency: 0,
+            mdns_service_type: "_snapcast._tcp.local.".into(),
         }
     }
 }
@@ -225,18 +223,8 @@ impl SnapClient {
             .take()
             .ok_or_else(|| anyhow::anyhow!("run() already called"))?;
 
-        let settings = ClientSettings {
-            instance: self.config.instance,
-            host_id: self.config.host_id.clone(),
-            server: self.config.server.clone(),
-            player: self.config.player.clone(),
-            logging: config::LoggingSettings::default(),
-            #[cfg(unix)]
-            daemon: None,
-        };
-
         let mut ctrl = controller::Controller::new(
-            settings,
+            self.config.clone(),
             self.event_tx.clone(),
             command_rx,
             std::sync::Arc::clone(&self.time_provider),

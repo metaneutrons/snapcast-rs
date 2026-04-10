@@ -31,7 +31,15 @@ fn main() -> anyhow::Result<()> {
         "snapclient-rs starting"
     );
 
-    let config = ClientConfig::from(settings);
+    let config = ClientConfig {
+        host: settings.server.host.clone(),
+        port: settings.server.port,
+        auth: settings.server.auth.clone(),
+        instance: settings.instance,
+        host_id: settings.host_id.clone(),
+        latency: settings.player.latency,
+        ..ClientConfig::default()
+    };
     let rt = tokio::runtime::Runtime::new()?;
 
     rt.block_on(async {

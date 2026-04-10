@@ -14,11 +14,9 @@ use anyhow::Result;
 use snapcast_proto::SampleFormat;
 
 /// Result of encoding a PCM chunk.
-pub struct EncodedChunk {
+pub(crate) struct EncodedChunk {
     /// Encoded audio data.
     pub data: Vec<u8>,
-    /// Duration of the encoded audio in milliseconds.
-    pub duration_ms: f64,
 }
 
 /// Trait for audio encoders.
@@ -45,19 +43,6 @@ pub struct EncoderConfig {
     /// Pre-shared key for f32lz4 encryption. `None` = no encryption.
     #[cfg(feature = "encryption")]
     pub encryption_psk: Option<String>,
-}
-
-impl EncoderConfig {
-    /// Create a minimal config for the given codec and format.
-    pub fn new(codec: &str, format: SampleFormat) -> Self {
-        Self {
-            codec: codec.into(),
-            format,
-            options: String::new(),
-            #[cfg(feature = "encryption")]
-            encryption_psk: None,
-        }
-    }
 }
 
 /// Create an encoder from config.

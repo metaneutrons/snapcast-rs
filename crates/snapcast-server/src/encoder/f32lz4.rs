@@ -95,7 +95,6 @@ impl Encoder for F32Lz4Encoder {
         let frames = f32_bytes.len() / (4 * channels);
         tracing::trace!(input_bytes = f32_bytes.len(), frames, "F32LZ4 encoding");
         let compressed = lz4_flex::compress_prepend_size(&f32_bytes);
-        let duration_ms = self.format.frames_to_ms(frames);
 
         #[cfg(feature = "encryption")]
         let data = if let Some(ref mut enc) = self.encryptor {
@@ -107,7 +106,7 @@ impl Encoder for F32Lz4Encoder {
         #[cfg(not(feature = "encryption"))]
         let data = compressed;
 
-        Ok(EncodedChunk { data, duration_ms })
+        Ok(EncodedChunk { data })
     }
 }
 
@@ -131,6 +130,5 @@ mod tests {
         let pcm = vec![0u8; 960 * 4];
         let result = enc.encode(&pcm).unwrap();
         assert!(result.data.len() < pcm.len(), "expected compression");
-        assert!((result.duration_ms - 20.0).abs() < 0.1);
     }
 }

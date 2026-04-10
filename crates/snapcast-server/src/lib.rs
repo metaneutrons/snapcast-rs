@@ -90,12 +90,12 @@ pub struct WireChunkData {
 pub mod auth;
 #[cfg(feature = "encryption")]
 pub mod crypto;
-pub mod encoder;
+pub(crate) mod encoder;
 #[cfg(feature = "mdns")]
 pub mod mdns;
 pub mod session;
 pub mod state;
-pub mod stream;
+pub(crate) mod stream;
 pub mod time;
 
 /// Settings update pushed to a streaming client via binary protocol.

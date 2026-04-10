@@ -104,10 +104,6 @@ impl Encoder for OpusEncoder {
             }
         }
 
-        let duration_ms = self.format.frames_to_ms(total_frames);
-        Ok(EncodedChunk {
-            data: output,
-            duration_ms,
-        })
+        Ok(EncodedChunk { data: output })
     }
 }

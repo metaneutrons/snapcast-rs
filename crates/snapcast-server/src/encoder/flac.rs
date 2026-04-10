@@ -160,8 +160,7 @@ impl Encoder for FlacEncoder {
             }
 
             let data = (*self.callback_data).frame_buf.clone();
-            let duration_ms = self.format.frames_to_ms(frames);
-            Ok(EncodedChunk { data, duration_ms })
+            Ok(EncodedChunk { data })
         }
     }
 }

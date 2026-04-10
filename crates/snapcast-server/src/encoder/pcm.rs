@@ -7,6 +7,7 @@ use super::{EncodedChunk, Encoder};
 
 /// PCM passthrough encoder. Header is a 44-byte WAV header.
 pub struct PcmEncoder {
+    #[allow(dead_code)]
     format: SampleFormat,
     header: Vec<u8>,
 }
@@ -29,18 +30,8 @@ impl Encoder for PcmEncoder {
     }
 
     fn encode(&mut self, pcm: &[u8]) -> Result<EncodedChunk> {
-        let frame_size = self.format.frame_size() as usize;
-        let frames = if frame_size > 0 {
-            pcm.len() / frame_size
-        } else {
-            0
-        };
-        let duration_ms = self.format.frames_to_ms(frames);
-        tracing::trace!(codec = "pcm", input_bytes = pcm.len(), frames, "encode");
-        Ok(EncodedChunk {
-            data: pcm.to_vec(),
-            duration_ms,
-        })
+        tracing::trace!(codec = "pcm", input_bytes = pcm.len(), "encode");
+        Ok(EncodedChunk { data: pcm.to_vec() })
     }
 }
 
@@ -83,6 +74,5 @@ mod tests {
         let pcm = vec![0u8; 960 * 4]; // 960 frames, 4 bytes/frame
         let result = enc.encode(&pcm).unwrap();
         assert_eq!(result.data.len(), pcm.len());
-        assert!((result.duration_ms - 20.0).abs() < 0.01);
     }
 }

@@ -21,6 +21,15 @@ snapcast-rs/
 └── snapcast-tests      Integration tests
 ```
 
+| Crate | Role | Docs |
+|-------|------|------|
+| [snapcast-proto](crates/snapcast-proto) | Binary protocol, message serialization | [docs.rs](https://docs.rs/snapcast-proto) |
+| [snapcast-client](crates/snapcast-client) | Client library: embeddable, f32 audio output | [docs.rs](https://docs.rs/snapcast-client) |
+| [snapcast-server](crates/snapcast-server) | Server library: embeddable, f32 audio input | [docs.rs](https://docs.rs/snapcast-server) |
+| [snapclient-rs](crates/snapclient-rs) | Client binary: cpal audio output | — |
+| [snapserver-rs](crates/snapserver-rs) | Server binary: stream readers, JSON-RPC, HTTP | — |
+| [snapcast-tests](crates/snapcast-tests) | Integration tests | — |
+
 Both libraries are pure audio engines — no device I/O, no HTTP, no config files.
 
 ## Client Library API

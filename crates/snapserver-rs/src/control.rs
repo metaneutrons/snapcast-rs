@@ -10,7 +10,6 @@ use tokio::sync::{Mutex, broadcast, mpsc};
 
 use crate::auth::AuthConfig;
 use crate::jsonrpc::{self, RpcResult};
-use snapcast_server::ServerEvent;
 use snapcast_server::state::ServerState;
 
 /// Configuration for the control server.
@@ -20,7 +19,7 @@ pub struct ControlConfig {
     /// Shared server state.
     pub state: Arc<Mutex<ServerState>>,
     /// Event sender for extension point.
-    pub event_tx: mpsc::Sender<ServerEvent>,
+    pub event_tx: mpsc::Sender<crate::ControlEvent>,
     /// Notification broadcast sender.
     pub notify_tx: broadcast::Sender<Value>,
     /// Auth configuration.
@@ -105,7 +104,7 @@ pub async fn run_tcp(cfg: ControlConfig) -> Result<()> {
                                 if registered_methods.contains(&method_str) {
                                     // Registered method: forward and wait for response
                                     let (resp_tx, resp_rx) = tokio::sync::oneshot::channel();
-                                    let _ = event_tx.send(ServerEvent::JsonRpc {
+                                    let _ = event_tx.send(crate::ControlEvent::JsonRpc {
                                         client_id: client_id.clone(),
                                         request,
                                         response_tx: Some(resp_tx),
@@ -127,7 +126,7 @@ pub async fn run_tcp(cfg: ControlConfig) -> Result<()> {
                                     }
                                 } else if registered_notifications.contains(&method_str) {
                                     // Registered notification: forward, no response
-                                    let _ = event_tx.send(ServerEvent::JsonRpc {
+                                    let _ = event_tx.send(crate::ControlEvent::JsonRpc {
                                         client_id: client_id.clone(),
                                         request,
                                         response_tx: None,

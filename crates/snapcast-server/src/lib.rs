@@ -149,18 +149,6 @@ pub enum ServerEvent {
         /// Raw payload.
         payload: Vec<u8>,
     },
-    /// Custom JSON-RPC request forwarded from a control client.
-    ///
-    /// The binary's JSON-RPC handler emits this for unrecognized methods.
-    /// The embedding application handles them and responds via the oneshot channel.
-    JsonRpc {
-        /// Control client that sent the request.
-        client_id: String,
-        /// The full JSON-RPC request object.
-        request: serde_json::Value,
-        /// Response channel (`Some` for methods, `None` for notifications).
-        response_tx: Option<tokio::sync::oneshot::Sender<serde_json::Value>>,
-    },
 }
 
 /// Commands the consumer sends to the server.

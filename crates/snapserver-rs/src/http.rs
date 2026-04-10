@@ -13,14 +13,13 @@ use tokio::sync::{Mutex, broadcast, mpsc};
 
 use crate::auth::AuthConfig;
 use crate::jsonrpc::{self, RpcResult};
-use snapcast_server::ServerEvent;
 use snapcast_server::state::ServerState;
 
 /// Shared state for axum handlers.
 #[derive(Clone)]
 struct AppState {
     state: Arc<Mutex<ServerState>>,
-    event_tx: mpsc::Sender<ServerEvent>,
+    event_tx: mpsc::Sender<crate::ControlEvent>,
     notify_tx: broadcast::Sender<Value>,
     auth_config: Arc<AuthConfig>,
     cmd_tx: tokio::sync::mpsc::Sender<snapcast_server::ServerCommand>,
@@ -35,7 +34,7 @@ pub struct HttpConfig {
     /// Shared server state.
     pub state: Arc<Mutex<ServerState>>,
     /// Event sender for extension point.
-    pub event_tx: mpsc::Sender<ServerEvent>,
+    pub event_tx: mpsc::Sender<crate::ControlEvent>,
     /// Notification broadcast sender.
     pub notify_tx: broadcast::Sender<Value>,
     /// Auth configuration.
@@ -113,7 +112,7 @@ async fn http_jsonrpc_handler(
         RpcResult::Unknown => {
             let _ = app
                 .event_tx
-                .send(ServerEvent::JsonRpc {
+                .send(crate::ControlEvent::JsonRpc {
                     response_tx: None,
                     client_id: "http".into(),
                     request,
@@ -161,7 +160,7 @@ async fn handle_ws(mut socket: WebSocket, app: AppState) {
                         }
                     }
                     RpcResult::Unknown => {
-                        let _ = app.event_tx.send(ServerEvent::JsonRpc { response_tx: None,
+                        let _ = app.event_tx.send(crate::ControlEvent::JsonRpc { response_tx: None,
                             client_id: "websocket".into(),
                             request,
                         }).await;

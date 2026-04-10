@@ -8,6 +8,20 @@ mod stream;
 use clap::Parser;
 use snapcast_server::{ServerCommand, ServerEvent, SnapServer};
 
+/// JSON-RPC event forwarded from control/HTTP handlers to the binary's event loop.
+#[derive(Debug)]
+pub enum ControlEvent {
+    /// Unrecognized JSON-RPC method or registered notification.
+    JsonRpc {
+        /// Control client that sent the request.
+        client_id: String,
+        /// The full JSON-RPC request object.
+        request: serde_json::Value,
+        /// Response channel (`Some` for methods, `None` for notifications).
+        response_tx: Option<tokio::sync::oneshot::Sender<serde_json::Value>>,
+    },
+}
+
 /// Snapcast server — synchronized multiroom audio server.
 #[derive(Parser, Debug)]
 #[command(version, about)]
@@ -167,8 +181,7 @@ fn main() -> anyhow::Result<()> {
         let notifications = std::sync::Arc::new(std::collections::HashSet::<String>::new());
 
         // Event channel for control servers (separate from library events)
-        let (ctrl_event_tx, mut ctrl_event_rx) =
-            tokio::sync::mpsc::channel::<snapcast_server::ServerEvent>(256);
+        let (ctrl_event_tx, mut ctrl_event_rx) = tokio::sync::mpsc::channel::<ControlEvent>(256);
 
         // TCP JSON-RPC control
         let control_cfg = control::ControlConfig {
@@ -204,7 +217,17 @@ fn main() -> anyhow::Result<()> {
         });
 
         // Drain control events (JSON-RPC extension point)
-        tokio::spawn(async move { while let Some(_event) = ctrl_event_rx.recv().await {} });
+        tokio::spawn(async move {
+            while let Some(event) = ctrl_event_rx.recv().await {
+                match event {
+                    ControlEvent::JsonRpc {
+                        client_id, request, ..
+                    } => {
+                        tracing::debug!(client_id, ?request, "Unhandled JSON-RPC");
+                    }
+                }
+            }
+        });
 
         // Log events
         tokio::spawn(async move {
@@ -218,11 +241,6 @@ fn main() -> anyhow::Result<()> {
                     }
                     ServerEvent::StreamStatus { stream_id, status } => {
                         tracing::info!(stream_id, status, "Stream status");
-                    }
-                    ServerEvent::JsonRpc {
-                        client_id, request, ..
-                    } => {
-                        tracing::debug!(client_id, ?request, "Unhandled JSON-RPC");
                     }
                     _ => {}
                 }

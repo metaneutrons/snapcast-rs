@@ -21,26 +21,11 @@ use crate::ServerEvent;
 use crate::WireChunkData;
 use crate::time::now_usec;
 
-#[allow(dead_code)]
-/// Info about a connected streaming client.
-#[derive(Debug, Clone)]
-pub struct ClientInfo {
-    /// Unique client ID (from Hello).
-    pub id: String,
-    /// Client hostname.
-    pub host_name: String,
-    /// MAC address.
-    pub mac: String,
-    /// Whether the client is currently connected.
-    pub connected: bool,
-}
-
 /// Manages all streaming client sessions.
 pub struct SessionServer {
     port: u16,
     buffer_ms: i32,
     auth: Option<Arc<dyn crate::auth::AuthValidator>>,
-    clients: Arc<Mutex<HashMap<String, ClientInfo>>>,
     settings_senders: Arc<Mutex<HashMap<String, mpsc::Sender<ClientSettingsUpdate>>>>,
     #[cfg(feature = "custom-protocol")]
     custom_senders: Arc<Mutex<HashMap<String, mpsc::Sender<CustomOutbound>>>>,
@@ -71,7 +56,6 @@ impl SessionServer {
             port,
             buffer_ms,
             auth,
-            clients: Arc::new(Mutex::new(HashMap::new())),
             settings_senders: Arc::new(Mutex::new(HashMap::new())),
             #[cfg(feature = "custom-protocol")]
             custom_senders: Arc::new(Mutex::new(HashMap::new())),
@@ -104,7 +88,6 @@ impl SessionServer {
             tracing::info!(%peer, "Client connecting");
 
             let chunk_sub = chunk_rx.subscribe();
-            let clients = Arc::clone(&self.clients);
             let settings_senders = Arc::clone(&self.settings_senders);
             #[cfg(feature = "custom-protocol")]
             let custom_senders = Arc::clone(&self.custom_senders);
@@ -126,7 +109,6 @@ impl SessionServer {
                     settings_rx,
                     #[cfg(feature = "custom-protocol")]
                     custom_rx,
-                    &clients,
                     &settings_senders,
                     #[cfg(feature = "custom-protocol")]
                     &custom_senders,
@@ -149,18 +131,6 @@ impl SessionServer {
         }
     }
 
-    /// Get list of connected clients.
-    #[allow(dead_code)]
-    pub async fn connected_clients(&self) -> Vec<ClientInfo> {
-        self.clients
-            .lock()
-            .await
-            .values()
-            .filter(|c| c.connected)
-            .cloned()
-            .collect()
-    }
-
     /// Send a custom binary protocol message to a specific client.
     #[cfg(feature = "custom-protocol")]
     pub async fn send_custom(&self, client_id: &str, type_id: u16, payload: Vec<u8>) {
@@ -177,7 +147,6 @@ async fn handle_client(
     chunk_rx: broadcast::Receiver<WireChunkData>,
     settings_rx: mpsc::Receiver<ClientSettingsUpdate>,
     #[cfg(feature = "custom-protocol")] custom_rx: mpsc::Receiver<CustomOutbound>,
-    clients: &Mutex<HashMap<String, ClientInfo>>,
     settings_senders: &Mutex<HashMap<String, mpsc::Sender<ClientSettingsUpdate>>>,
     #[cfg(feature = "custom-protocol")] custom_senders: &Mutex<
         HashMap<String, mpsc::Sender<CustomOutbound>>,
@@ -239,17 +208,8 @@ async fn handle_client(
         }
     }
 
-    // Register client + settings channel
+    // Register settings channel
     {
-        clients.lock().await.insert(
-            client_id.clone(),
-            ClientInfo {
-                id: client_id.clone(),
-                host_name: hello.host_name.clone(),
-                mac: hello.mac.clone(),
-                connected: true,
-            },
-        );
         settings_senders
             .lock()
             .await
@@ -318,12 +278,6 @@ async fn handle_client(
     .await;
 
     // Cleanup
-    {
-        let mut map = clients.lock().await;
-        if let Some(c) = map.get_mut(&client_id) {
-            c.connected = false;
-        }
-    }
     settings_senders.lock().await.remove(&client_id);
     #[cfg(feature = "custom-protocol")]
     custom_senders.lock().await.remove(&client_id);

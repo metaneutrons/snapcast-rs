@@ -9,16 +9,14 @@ use axum::extract::ws::{Message, WebSocket, WebSocketUpgrade};
 use axum::response::IntoResponse;
 use axum::routing::get;
 use serde_json::Value;
-use tokio::sync::{Mutex, broadcast, mpsc};
+use tokio::sync::{broadcast, mpsc};
 
 use crate::auth::AuthConfig;
 use crate::jsonrpc::{self, RpcResult};
-use snapcast_server::state::ServerState;
 
 /// Shared state for axum handlers.
 #[derive(Clone)]
 struct AppState {
-    state: Arc<Mutex<ServerState>>,
     event_tx: mpsc::Sender<crate::ControlEvent>,
     notify_tx: broadcast::Sender<Value>,
     auth_config: Arc<AuthConfig>,
@@ -31,8 +29,6 @@ pub(crate) struct HttpConfig {
     pub port: u16,
     /// Snapweb document root (None = disabled).
     pub doc_root: Option<String>,
-    /// Shared server state.
-    pub state: Arc<Mutex<ServerState>>,
     /// Event sender for extension point.
     pub event_tx: mpsc::Sender<crate::ControlEvent>,
     /// Notification broadcast sender.
@@ -46,18 +42,16 @@ pub(crate) struct HttpConfig {
 /// Start the HTTP server with JSON-RPC + WebSocket + optional Snapweb.
 pub(crate) async fn run_http(cfg: HttpConfig) -> Result<()> {
     let app_state = AppState {
-        state: cfg.state,
         event_tx: cfg.event_tx,
         notify_tx: cfg.notify_tx,
         auth_config: cfg.auth_config,
-        cmd_tx: cfg.cmd_tx.clone(),
+        cmd_tx: cfg.cmd_tx,
     };
 
     let mut app = Router::new()
         .route("/jsonrpc", get(ws_handler).post(http_jsonrpc_handler))
         .with_state(app_state);
 
-    // Serve Snapweb static files if doc_root is set
     if let Some(ref root) = cfg.doc_root {
         let serve = tower_http::services::ServeDir::new(root);
         app = app.fallback_service(serve);
@@ -78,7 +72,6 @@ async fn http_jsonrpc_handler(
     headers: axum::http::HeaderMap,
     body: String,
 ) -> impl IntoResponse {
-    // Auth check
     let auth_header = headers
         .get(axum::http::header::AUTHORIZATION)
         .and_then(|v| v.to_str().ok());
@@ -96,7 +89,7 @@ async fn http_jsonrpc_handler(
         }));
     };
 
-    match jsonrpc::handle_request(&request, &app.state, &app.auth_config, &app.cmd_tx).await {
+    match jsonrpc::handle_request(&request, &app.auth_config, &app.cmd_tx).await {
         RpcResult::Response {
             response,
             notification,
@@ -146,10 +139,7 @@ async fn handle_ws(mut socket: WebSocket, app: AppState) {
                     continue;
                 };
 
-                match jsonrpc::handle_request(
-                    &request, &app.state, &app.auth_config,
-                    &app.cmd_tx,
-                ).await {
+                match jsonrpc::handle_request(&request, &app.auth_config, &app.cmd_tx).await {
                     RpcResult::Response { response, notification } => {
                         if socket.send(Message::Text(response.to_string().into())).await.is_err() { break }
                         if let Some(n) = notification {
@@ -157,7 +147,8 @@ async fn handle_ws(mut socket: WebSocket, app: AppState) {
                         }
                     }
                     RpcResult::Unknown => {
-                        let _ = app.event_tx.send(crate::ControlEvent::JsonRpc { response_tx: None,
+                        let _ = app.event_tx.send(crate::ControlEvent::JsonRpc {
+                            response_tx: None,
                             client_id: "websocket".into(),
                             request,
                         }).await;

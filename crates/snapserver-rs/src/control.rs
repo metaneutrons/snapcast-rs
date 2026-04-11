@@ -6,18 +6,15 @@ use anyhow::{Context, Result};
 use serde_json::Value;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::net::TcpListener;
-use tokio::sync::{Mutex, broadcast, mpsc};
+use tokio::sync::{broadcast, mpsc};
 
 use crate::auth::AuthConfig;
 use crate::jsonrpc::{self, RpcResult};
-use snapcast_server::state::ServerState;
 
 /// Configuration for the control server.
 pub(crate) struct ControlConfig {
     /// TCP port.
     pub port: u16,
-    /// Shared server state.
-    pub state: Arc<Mutex<ServerState>>,
     /// Event sender for extension point.
     pub event_tx: mpsc::Sender<crate::ControlEvent>,
     /// Notification broadcast sender.
@@ -41,7 +38,6 @@ pub(crate) async fn run_tcp(cfg: ControlConfig) -> Result<()> {
         let (stream, peer) = listener.accept().await?;
         tracing::debug!(%peer, "Control client connected");
 
-        let state = Arc::clone(&cfg.state);
         let event_tx = cfg.event_tx.clone();
         let notify_tx = cfg.notify_tx.clone();
         let mut notify_rx = cfg.notify_tx.subscribe();
@@ -85,7 +81,7 @@ pub(crate) async fn run_tcp(cfg: ControlConfig) -> Result<()> {
                             continue;
                         }
 
-                        match jsonrpc::handle_request(&request, &state, &auth_config, &cmd_tx).await {
+                        match jsonrpc::handle_request(&request, &auth_config, &cmd_tx).await {
                             RpcResult::Response { response, notification } => {
                                 // Mark as authenticated if Server.Authenticate succeeded
                                 if method == "Server.Authenticate" && response["result"]["ok"] == true {
@@ -99,7 +95,6 @@ pub(crate) async fn run_tcp(cfg: ControlConfig) -> Result<()> {
                             RpcResult::Unknown => {
                                 let method_str = method.to_string();
                                 if registered_methods.contains(&method_str) {
-                                    // Registered method: forward and wait for response
                                     let (resp_tx, resp_rx) = tokio::sync::oneshot::channel();
                                     let _ = event_tx.send(crate::ControlEvent::JsonRpc {
                                         client_id: client_id.clone(),
@@ -122,14 +117,12 @@ pub(crate) async fn run_tcp(cfg: ControlConfig) -> Result<()> {
                                         }
                                     }
                                 } else if registered_notifications.contains(&method_str) {
-                                    // Registered notification: forward, no response
                                     let _ = event_tx.send(crate::ControlEvent::JsonRpc {
                                         client_id: client_id.clone(),
                                         request,
                                         response_tx: None,
                                     }).await;
                                 } else {
-                                    // Unknown method
                                     let err = serde_json::json!({
                                         "jsonrpc": "2.0", "id": request["id"],
                                         "error": {"code": -32601, "message": "Method not found"}

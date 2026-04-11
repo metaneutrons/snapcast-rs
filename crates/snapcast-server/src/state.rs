@@ -166,13 +166,62 @@ impl ServerState {
         self.groups.retain(|g| !g.clients.is_empty());
     }
 
-    /// Move a client to a different group.
-    pub fn move_client_to_group(&mut self, client_id: &str, group_id: &str) {
-        tracing::debug!(client_id, group_id, "moving client to group");
-        self.remove_client_from_groups(client_id);
+    /// Set the clients of a group (C++ Group.SetClients semantics).
+    ///
+    /// - Clients removed from the target group get their own new group (inheriting the stream).
+    /// - Clients added are moved from their old groups (empty old groups are removed).
+    /// - If the target group ends up empty, it is removed.
+    pub fn set_group_clients(&mut self, group_id: &str, client_ids: &[String]) {
+        // Find the target group's stream for inheritance
+        let stream_id = self
+            .groups
+            .iter()
+            .find(|g| g.id == group_id)
+            .map(|g| g.stream_id.clone())
+            .unwrap_or_default();
+
+        // 1. Evict clients NOT in the new list → create new group for each
         if let Some(group) = self.groups.iter_mut().find(|g| g.id == group_id) {
-            group.clients.push(client_id.to_string());
+            let evicted: Vec<String> = group
+                .clients
+                .iter()
+                .filter(|c| !client_ids.contains(c))
+                .cloned()
+                .collect();
+            group.clients.retain(|c| client_ids.contains(c));
+            for cid in evicted {
+                let new_group = Group {
+                    id: generate_id(),
+                    name: String::new(),
+                    stream_id: stream_id.clone(),
+                    muted: false,
+                    clients: vec![cid],
+                };
+                self.groups.push(new_group);
+            }
         }
+
+        // 2. Add clients to the target group (move from old groups)
+        for cid in client_ids {
+            let already_in_target = self
+                .groups
+                .iter()
+                .any(|g| g.id == group_id && g.clients.contains(cid));
+            if already_in_target {
+                continue;
+            }
+            // Remove from old group
+            for group in &mut self.groups {
+                group.clients.retain(|c| c != cid);
+            }
+            // Add to target
+            if let Some(group) = self.groups.iter_mut().find(|g| g.id == group_id) {
+                group.clients.push(cid.clone());
+            }
+        }
+
+        // 3. Remove empty groups
+        self.groups.retain(|g| !g.clients.is_empty());
     }
 
     /// Set a group's stream.
@@ -267,20 +316,27 @@ mod tests {
     }
 
     #[test]
-    fn move_client() {
+    fn set_group_clients_moves_and_evicts() {
         let mut state = ServerState::default();
         state.get_or_create_client("c1", "h1", "m1");
         state.get_or_create_client("c2", "h2", "m2");
-        state.group_for_client("c1", "s1");
+        state.get_or_create_client("c3", "h3", "m3");
+        let g1 = state.group_for_client("c1", "s1").id.clone();
         state.group_for_client("c2", "s1");
+        state.group_for_client("c3", "s1");
+        assert_eq!(state.groups.len(), 3);
 
+        // Move c2 and c3 into g1 (c1's group)
+        state.set_group_clients(&g1, &["c1".into(), "c2".into(), "c3".into()]);
+        assert_eq!(state.groups.len(), 1);
+        assert_eq!(state.groups[0].clients.len(), 3);
+
+        // Evict c2 — should get its own group inheriting the stream
+        state.set_group_clients(&g1, &["c1".into(), "c3".into()]);
         assert_eq!(state.groups.len(), 2);
-
-        let g2_id = state.groups[1].id.clone();
-        state.move_client_to_group("c1", &g2_id);
-
-        assert_eq!(state.groups.len(), 1); // empty group removed
-        assert_eq!(state.groups[0].clients.len(), 2);
+        let evicted_group = state.groups.iter().find(|g| g.id != g1).unwrap();
+        assert_eq!(evicted_group.clients, vec!["c2"]);
+        assert_eq!(evicted_group.stream_id, "s1");
     }
 
     #[test]

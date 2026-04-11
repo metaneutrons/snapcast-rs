@@ -178,9 +178,6 @@ fn main() -> anyhow::Result<()> {
         }
 
         // JSON-RPC control servers
-        let shared_state = std::sync::Arc::new(tokio::sync::Mutex::new(
-            snapcast_server::state::ServerState::default(),
-        ));
         let (notify_tx, _) = tokio::sync::broadcast::channel::<serde_json::Value>(256);
         let auth_cfg = std::sync::Arc::new(auth::AuthConfig::default());
         let methods = std::sync::Arc::new(std::collections::HashSet::<String>::new());
@@ -192,7 +189,6 @@ fn main() -> anyhow::Result<()> {
         // TCP JSON-RPC control
         let control_cfg = control::ControlConfig {
             port: server_config.control_port,
-            state: std::sync::Arc::clone(&shared_state),
             event_tx: ctrl_event_tx.clone(),
             notify_tx: notify_tx.clone(),
             auth_config: std::sync::Arc::clone(&auth_cfg),
@@ -210,7 +206,6 @@ fn main() -> anyhow::Result<()> {
         let http_cfg = http::HttpConfig {
             port: server_config.http_port,
             doc_root: server_config.doc_root.clone(),
-            state: std::sync::Arc::clone(&shared_state),
             event_tx: ctrl_event_tx.clone(),
             notify_tx: notify_tx.clone(),
             auth_config: std::sync::Arc::clone(&auth_cfg),

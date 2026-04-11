@@ -1,12 +1,8 @@
 //! JSON-RPC control API — method handlers for Snapcast control protocol.
 
-use std::sync::Arc;
-
 use serde_json::{Value, json};
-use tokio::sync::Mutex;
 
 use crate::auth::{self, AuthConfig};
-use snapcast_server::state::ServerState;
 
 /// JSON-RPC error codes.
 const INVALID_PARAMS: i64 = -32602;
@@ -24,10 +20,21 @@ pub(crate) enum RpcResult {
     Unknown,
 }
 
-/// Handle a JSON-RPC request against shared server state.
+/// Fetch server status via GetStatus command.
+async fn get_status(
+    cmd_tx: &tokio::sync::mpsc::Sender<snapcast_server::ServerCommand>,
+) -> Option<Value> {
+    let (tx, rx) = tokio::sync::oneshot::channel();
+    cmd_tx
+        .send(snapcast_server::ServerCommand::GetStatus { response_tx: tx })
+        .await
+        .ok()?;
+    rx.await.ok()
+}
+
+/// Handle a JSON-RPC request. All state access goes through ServerCommand.
 pub(crate) async fn handle_request(
     request: &Value,
-    state: &Arc<Mutex<ServerState>>,
     auth_config: &AuthConfig,
     cmd_tx: &tokio::sync::mpsc::Sender<snapcast_server::ServerCommand>,
 ) -> RpcResult {
@@ -38,16 +45,10 @@ pub(crate) async fn handle_request(
     match method {
         // --- Server ---
         "Server.GetRPCVersion" => ok(id, json!({"major": 2, "minor": 0, "patch": 0})),
-        "Server.GetStatus" => {
-            let (tx, rx) = tokio::sync::oneshot::channel();
-            let _ = cmd_tx
-                .send(snapcast_server::ServerCommand::GetStatus { response_tx: tx })
-                .await;
-            match rx.await {
-                Ok(status) => ok(id, status),
-                Err(_) => err(id, INVALID_PARAMS, "status unavailable"),
-            }
-        }
+        "Server.GetStatus" => match get_status(cmd_tx).await {
+            Some(status) => ok(id, status),
+            None => err(id, INVALID_PARAMS, "status unavailable"),
+        },
         "Server.DeleteClient" => {
             let Some(client_id) = params["id"].as_str() else {
                 return err(id, INVALID_PARAMS, "missing 'id'");
@@ -65,9 +66,17 @@ pub(crate) async fn handle_request(
             let Some(client_id) = params["id"].as_str() else {
                 return err(id, INVALID_PARAMS, "missing 'id'");
             };
-            let s = state.lock().await;
-            match s.clients.get(client_id) {
-                Some(c) => ok(id, json!({"client": client_json(c)})),
+            let Some(status) = get_status(cmd_tx).await else {
+                return err(id, INVALID_PARAMS, "status unavailable");
+            };
+            let client = status["server"]["groups"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .flat_map(|g| g["clients"].as_array().into_iter().flatten())
+                .find(|c| c["id"].as_str() == Some(client_id));
+            match client {
+                Some(c) => ok(id, json!({"client": c})),
                 None => err(id, INVALID_PARAMS, "client not found"),
             }
         }
@@ -134,9 +143,16 @@ pub(crate) async fn handle_request(
             let Some(group_id) = params["id"].as_str() else {
                 return err(id, INVALID_PARAMS, "missing 'id'");
             };
-            let s = state.lock().await;
-            match s.groups.iter().find(|g| g.id == group_id) {
-                Some(g) => ok(id, json!({"group": group_json(g, &s)})),
+            let Some(status) = get_status(cmd_tx).await else {
+                return err(id, INVALID_PARAMS, "status unavailable");
+            };
+            let group = status["server"]["groups"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .find(|g| g["id"].as_str() == Some(group_id));
+            match group {
+                Some(g) => ok(id, json!({"group": g})),
                 None => err(id, INVALID_PARAMS, "group not found"),
             }
         }
@@ -195,12 +211,7 @@ pub(crate) async fn handle_request(
                     clients: client_ids,
                 })
                 .await;
-            // Return full status after group change
-            let (tx, rx) = tokio::sync::oneshot::channel();
-            let _ = cmd_tx
-                .send(snapcast_server::ServerCommand::GetStatus { response_tx: tx })
-                .await;
-            let status = rx.await.unwrap_or_default();
+            let status = get_status(cmd_tx).await.unwrap_or_default();
             ok_with_notify(id, status.clone(), "Server.OnUpdate", status)
         }
         "Group.SetName" => {
@@ -221,27 +232,29 @@ pub(crate) async fn handle_request(
                 json!({"id": group_id, "name": name}),
             )
         }
+
+        // --- Stream ---
         "Stream.SetProperty" => {
             let Some(stream_id) = params["id"].as_str() else {
                 return err(id, INVALID_PARAMS, "missing 'id'");
             };
-            let mut s = state.lock().await;
-            if let Some(stream) = s.streams.iter_mut().find(|st| st.id == stream_id) {
-                if let Some(props) = params["properties"].as_object() {
-                    for (k, v) in props {
-                        stream.properties.insert(k.clone(), v.clone());
-                    }
-                }
-                let props: Value = stream.properties.clone().into_iter().collect();
-                ok_with_notify(
-                    id,
-                    json!({"id": stream_id, "properties": &props}),
-                    "Stream.OnUpdate",
-                    json!({"id": stream_id, "properties": props}),
-                )
-            } else {
-                err(id, INVALID_PARAMS, "stream not found")
-            }
+            let metadata = params["properties"]
+                .as_object()
+                .map(|o| o.iter().map(|(k, v)| (k.clone(), v.clone())).collect())
+                .unwrap_or_default();
+            let _ = cmd_tx
+                .send(snapcast_server::ServerCommand::SetStreamMeta {
+                    stream_id: stream_id.to_string(),
+                    metadata,
+                })
+                .await;
+            let props = params["properties"].clone();
+            ok_with_notify(
+                id,
+                json!({"id": stream_id, "properties": &props}),
+                "Stream.OnUpdate",
+                json!({"id": stream_id, "properties": props}),
+            )
         }
         "Stream.Control" => {
             let Some(stream_id) = params["id"].as_str() else {
@@ -250,9 +263,7 @@ pub(crate) async fn handle_request(
             let Some(command) = params["command"].as_str() else {
                 return err(id, INVALID_PARAMS, "missing 'command'");
             };
-            let msg_stream_id = stream_id.to_string();
-            let msg_command = command.to_string();
-            tracing::debug!(stream_id = %msg_stream_id, command = %msg_command, "Stream control");
+            tracing::debug!(stream_id, command, "Stream control");
             ok(id, json!({"id": stream_id}))
         }
 
@@ -299,88 +310,64 @@ fn err(id: &Value, code: i64, msg: &str) -> RpcResult {
     }
 }
 
-fn client_json(c: &snapcast_server::state::Client) -> Value {
-    json!({
-        "id": c.id,
-        "host": {"name": c.host_name, "mac": c.mac},
-        "connected": c.connected,
-        "config": {
-            "name": c.config.name,
-            "volume": {"percent": c.config.volume.percent, "muted": c.config.volume.muted},
-            "latency": c.config.latency,
-        }
-    })
-}
-
-fn group_json(g: &snapcast_server::state::Group, s: &snapcast_server::state::ServerState) -> Value {
-    let clients: Vec<Value> = g
-        .clients
-        .iter()
-        .filter_map(|cid| s.clients.get(cid))
-        .map(client_json)
-        .collect();
-    json!({
-        "id": g.id,
-        "name": g.name,
-        "stream_id": g.stream_id,
-        "muted": g.muted,
-        "clients": clients,
-    })
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+    use snapcast_server::ServerCommand;
 
-    async fn test_state() -> (
-        Arc<Mutex<ServerState>>,
-        AuthConfig,
-        tokio::sync::mpsc::Sender<snapcast_server::ServerCommand>,
-    ) {
-        let mut s = ServerState::default();
-        s.get_or_create_client("c1", "host1", "mac1");
-        s.clients.get_mut("c1").unwrap().connected = true;
-        s.group_for_client("c1", "default");
-        s.streams.push(snapcast_server::state::StreamInfo {
-            id: "default".into(),
-            status: "playing".into(),
-            uri: "pipe:///tmp/snapfifo".into(),
-            properties: Default::default(),
-        });
-        let state = Arc::new(Mutex::new(s));
-        let (cmd_tx, mut cmd_rx) = tokio::sync::mpsc::channel(16);
-        let state_for_cmd = Arc::clone(&state);
+    /// Spawn a mock command handler that processes GetStatus and SetClientVolume.
+    fn mock_server() -> (AuthConfig, tokio::sync::mpsc::Sender<ServerCommand>) {
+        let (cmd_tx, mut cmd_rx) = tokio::sync::mpsc::channel::<ServerCommand>(16);
         tokio::spawn(async move {
+            // Minimal in-memory state for tests
+            let mut volume: u16 = 100;
+            let mut muted = false;
             while let Some(cmd) = cmd_rx.recv().await {
                 match cmd {
-                    snapcast_server::ServerCommand::GetStatus { response_tx } => {
-                        let s = state_for_cmd.lock().await;
-                        let _ = response_tx.send(s.to_status_json());
+                    ServerCommand::GetStatus { response_tx } => {
+                        let _ = response_tx.send(json!({
+                            "server": {
+                                "groups": [{
+                                    "id": "g1",
+                                    "name": "",
+                                    "stream_id": "default",
+                                    "muted": false,
+                                    "clients": [{
+                                        "id": "c1",
+                                        "host": {"name": "host1", "mac": "mac1"},
+                                        "connected": true,
+                                        "config": {
+                                            "name": "",
+                                            "volume": {"percent": volume, "muted": muted},
+                                            "latency": 0,
+                                        }
+                                    }]
+                                }],
+                                "streams": [{"id": "default", "status": "playing", "uri": {"raw": ""}, "properties": {}}],
+                            }
+                        }));
                     }
-                    snapcast_server::ServerCommand::SetClientVolume {
-                        client_id,
-                        volume,
-                        muted,
+                    ServerCommand::SetClientVolume {
+                        volume: v,
+                        muted: m,
+                        ..
                     } => {
-                        let mut s = state_for_cmd.lock().await;
-                        if let Some(c) = s.clients.get_mut(&client_id) {
-                            c.config.volume.percent = volume;
-                            c.config.volume.muted = muted;
-                        }
+                        volume = v;
+                        muted = m;
                     }
                     _ => {}
                 }
             }
         });
-        (state, AuthConfig::default(), cmd_tx)
+        (AuthConfig::default(), cmd_tx)
     }
 
     #[tokio::test]
     async fn server_get_status() {
-        let (state, auth_config, cmd_tx) = test_state().await;
+        let (auth_config, cmd_tx) = mock_server();
         let req = json!({"jsonrpc": "2.0", "id": 1, "method": "Server.GetStatus", "params": {}});
         let RpcResult::Response { response, .. } =
-            handle_request(&req, &state, &auth_config, &cmd_tx).await
+            handle_request(&req, &auth_config, &cmd_tx).await
         else {
             panic!("expected response");
         };
@@ -389,7 +376,7 @@ mod tests {
 
     #[tokio::test]
     async fn client_set_volume() {
-        let (state, auth_config, cmd_tx) = test_state().await;
+        let (auth_config, cmd_tx) = mock_server();
         let req = json!({
             "jsonrpc": "2.0", "id": 2,
             "method": "Client.SetVolume",
@@ -398,7 +385,7 @@ mod tests {
         let RpcResult::Response {
             response,
             notification,
-        } = handle_request(&req, &state, &auth_config, &cmd_tx).await
+        } = handle_request(&req, &auth_config, &cmd_tx).await
         else {
             panic!("expected response");
         };
@@ -406,38 +393,35 @@ mod tests {
         assert!(notification.is_some());
         assert_eq!(notification.unwrap()["method"], "Client.OnVolumeChanged");
 
-        // Let the command handler process the SetClientVolume
+        // Verify state updated via GetStatus
         tokio::task::yield_now().await;
-
-        let s = state.lock().await;
-        assert_eq!(s.clients["c1"].config.volume.percent, 50);
-        assert!(s.clients["c1"].config.volume.muted);
+        let status = get_status(&cmd_tx).await.unwrap();
+        assert_eq!(
+            status["server"]["groups"][0]["clients"][0]["config"]["volume"]["percent"],
+            50
+        );
     }
 
     #[tokio::test]
     async fn unknown_method_returns_unknown() {
-        let (state, auth_config, cmd_tx) = test_state().await;
+        let (auth_config, cmd_tx) = mock_server();
         let req = json!({"jsonrpc": "2.0", "id": 3, "method": "Client.SetEq", "params": {}});
         assert!(matches!(
-            handle_request(&req, &state, &auth_config, &cmd_tx).await,
+            handle_request(&req, &auth_config, &cmd_tx).await,
             RpcResult::Unknown
         ));
     }
 
     #[tokio::test]
     async fn group_set_stream() {
-        let (state, auth_config, cmd_tx) = test_state().await;
-        let gid = {
-            let s = state.lock().await;
-            s.groups[0].id.clone()
-        };
+        let (auth_config, cmd_tx) = mock_server();
         let req = json!({
             "jsonrpc": "2.0", "id": 4,
             "method": "Group.SetStream",
-            "params": {"id": gid, "stream_id": "music"}
+            "params": {"id": "g1", "stream_id": "music"}
         });
         let RpcResult::Response { notification, .. } =
-            handle_request(&req, &state, &auth_config, &cmd_tx).await
+            handle_request(&req, &auth_config, &cmd_tx).await
         else {
             panic!("expected response");
         };

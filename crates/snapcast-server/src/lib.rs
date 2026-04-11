@@ -91,12 +91,12 @@ pub struct WireChunkData {
 
 pub mod auth;
 #[cfg(feature = "encryption")]
-pub mod crypto;
+pub(crate) mod crypto;
 pub(crate) mod encoder;
 #[cfg(feature = "mdns")]
 pub(crate) mod mdns;
 pub(crate) mod session;
-pub mod state;
+pub(crate) mod state;
 pub(crate) mod stream;
 pub mod time;
 
@@ -632,12 +632,7 @@ impl SnapServer {
                         }
                         Some(ServerCommand::SetGroupClients { group_id, clients }) => {
                             let mut s = shared_state.lock().await;
-                            for cid in &clients {
-                                s.remove_client_from_groups(cid);
-                            }
-                            if let Some(g) = s.groups.iter_mut().find(|g| g.id == group_id) {
-                                g.clients = clients;
-                            }
+                            s.set_group_clients(&group_id, &clients);
                             save_state(&s);
                             drop(s);
                             // Structural change — mirrors Server.OnUpdate in C++ snapserver

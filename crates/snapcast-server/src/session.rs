@@ -375,9 +375,7 @@ async fn handle_client(
         routing_rx,
         #[cfg(feature = "custom-protocol")]
         custom_rx,
-        #[cfg(feature = "custom-protocol")]
         event_tx.clone(),
-        #[cfg(feature = "custom-protocol")]
         client_id.clone(),
         ctx,
     )
@@ -410,15 +408,18 @@ async fn session_loop(
     mut settings_rx: mpsc::Receiver<ClientSettingsUpdate>,
     mut routing_rx: watch::Receiver<SessionRouting>,
     #[cfg(feature = "custom-protocol")] mut custom_rx: mpsc::Receiver<CustomOutbound>,
-    #[cfg(feature = "custom-protocol")] event_tx: mpsc::Sender<ServerEvent>,
-    #[cfg(feature = "custom-protocol")] client_id: String,
+    event_tx: mpsc::Sender<ServerEvent>,
+    client_id: String,
     ctx: &SessionContext,
 ) -> Result<()> {
     let (mut reader, mut writer) = stream.split();
     let mut routing = routing_rx.borrow().clone();
 
     loop {
-        // Drain any pending custom outbound messages before blocking on select
+        // Drain pending custom outbound before blocking on select.
+        // tokio::select! doesn't support #[cfg] on arms, so custom messages
+        // are drained via try_recv. This adds up to one select cycle of latency
+        // (~20ms at 48kHz) which is fine for low-frequency control messages.
         #[cfg(feature = "custom-protocol")]
         while let Ok(msg) = custom_rx.try_recv() {
             let frame = serialize_msg(
@@ -477,6 +478,20 @@ async fn session_loop(
                             msg.base.id,
                         )?;
                         writer.write_all(&frame).await.context("write time")?;
+                    }
+                    MessagePayload::ClientInfo(info) => {
+                        {
+                            let mut s = ctx.shared_state.lock().await;
+                            if let Some(c) = s.clients.get_mut(&client_id) {
+                                c.config.volume.percent = info.volume;
+                                c.config.volume.muted = info.muted;
+                            }
+                        }
+                        let _ = event_tx.send(ServerEvent::ClientVolumeChanged {
+                            client_id: client_id.clone(),
+                            volume: info.volume,
+                            muted: info.muted,
+                        }).await;
                     }
                     #[cfg(feature = "custom-protocol")]
                     MessagePayload::Custom(payload) => {

@@ -34,8 +34,6 @@ pub struct SessionRouting {
     pub group_muted: bool,
 }
 
-// ── Codec registry ────────────────────────────────────────────
-
 /// Per-stream codec header, stored at stream registration time.
 #[derive(Debug, Clone)]
 pub struct StreamCodecInfo {
@@ -45,23 +43,91 @@ pub struct StreamCodecInfo {
     pub header: Vec<u8>,
 }
 
-// ── Session context ───────────────────────────────────────────
+// ── Session context (private fields, method API) ──────────────
 
-/// Shared context for all sessions — replaces argument explosion.
-pub struct SessionContext {
-    pub buffer_ms: i32,
-    pub auth: Option<Arc<dyn crate::auth::AuthValidator>>,
-    pub send_audio_to_muted: bool,
-    pub settings_senders: Mutex<HashMap<String, mpsc::Sender<ClientSettingsUpdate>>>,
+/// Shared context for all sessions.
+struct SessionContext {
+    buffer_ms: i32,
+    auth: Option<Arc<dyn crate::auth::AuthValidator>>,
+    send_audio_to_muted: bool,
+    settings_senders: Mutex<HashMap<String, mpsc::Sender<ClientSettingsUpdate>>>,
     #[cfg(feature = "custom-protocol")]
-    pub custom_senders: Mutex<HashMap<String, mpsc::Sender<CustomOutbound>>>,
-    pub routing_senders: Mutex<HashMap<String, watch::Sender<SessionRouting>>>,
-    pub codec_headers: Mutex<HashMap<String, StreamCodecInfo>>,
-    pub shared_state: Arc<tokio::sync::Mutex<crate::state::ServerState>>,
-    pub default_stream: String,
+    custom_senders: Mutex<HashMap<String, mpsc::Sender<CustomOutbound>>>,
+    routing_senders: Mutex<HashMap<String, watch::Sender<SessionRouting>>>,
+    codec_headers: Mutex<HashMap<String, StreamCodecInfo>>,
+    shared_state: Arc<tokio::sync::Mutex<crate::state::ServerState>>,
+    default_stream: String,
 }
 
-// ── Session server ────────────────────────────────────────────
+impl SessionContext {
+    /// Build routing for a single client from server state.
+    /// State lock must be held by caller.
+    fn build_routing(state: &crate::state::ServerState, client_id: &str) -> Option<SessionRouting> {
+        let group = state
+            .groups
+            .iter()
+            .find(|g| g.clients.contains(&client_id.to_string()))?;
+        let client_muted = state
+            .clients
+            .get(client_id)
+            .map(|c| c.config.volume.muted)
+            .unwrap_or(false);
+        Some(SessionRouting {
+            stream_id: group.stream_id.clone(),
+            client_muted,
+            group_muted: group.muted,
+        })
+    }
+
+    /// Send routing update to a single client's watch channel.
+    async fn push_routing(&self, client_id: &str) {
+        let s = self.shared_state.lock().await;
+        if let Some(routing) = Self::build_routing(&s, client_id) {
+            let senders = self.routing_senders.lock().await;
+            if let Some(tx) = senders.get(client_id) {
+                let _ = tx.send(routing);
+            }
+        }
+    }
+
+    /// Send routing updates to all clients in a group.
+    async fn push_routing_for_group(&self, group_id: &str) {
+        let s = self.shared_state.lock().await;
+        let senders = self.routing_senders.lock().await;
+        let Some(group) = s.groups.iter().find(|g| g.id == group_id) else {
+            return;
+        };
+        for client_id in &group.clients {
+            if let Some(routing) = Self::build_routing(&s, client_id)
+                && let Some(tx) = senders.get(client_id)
+            {
+                let _ = tx.send(routing);
+            }
+        }
+    }
+
+    /// Send routing updates to all connected sessions.
+    async fn push_routing_all(&self) {
+        let s = self.shared_state.lock().await;
+        let senders = self.routing_senders.lock().await;
+        for group in &s.groups {
+            for client_id in &group.clients {
+                if let Some(routing) = Self::build_routing(&s, client_id)
+                    && let Some(tx) = senders.get(client_id)
+                {
+                    let _ = tx.send(routing);
+                }
+            }
+        }
+    }
+
+    /// Get codec header for a stream. Returns None if not registered.
+    async fn codec_header_for(&self, stream_id: &str) -> Option<StreamCodecInfo> {
+        self.codec_headers.lock().await.get(stream_id).cloned()
+    }
+}
+
+// ── Session server (public API) ───────────────────────────────
 
 /// Manages all streaming client sessions.
 pub struct SessionServer {
@@ -125,82 +191,19 @@ impl SessionServer {
         }
     }
 
-    /// Update routing for a single client from current server state.
-    pub async fn update_routing_for_client(
-        &self,
-        client_id: &str,
-        shared_state: &tokio::sync::Mutex<crate::state::ServerState>,
-    ) {
-        let s = shared_state.lock().await;
-        let senders = self.ctx.routing_senders.lock().await;
-        if let Some(tx) = senders.get(client_id)
-            && let Some(group) = s
-                .groups
-                .iter()
-                .find(|g| g.clients.contains(&client_id.to_string()))
-        {
-            let client_muted = s
-                .clients
-                .get(client_id)
-                .map(|c| c.config.volume.muted)
-                .unwrap_or(false);
-            let _ = tx.send(SessionRouting {
-                stream_id: group.stream_id.clone(),
-                client_muted,
-                group_muted: group.muted,
-            });
-        }
+    /// Update routing for a single client.
+    pub async fn update_routing_for_client(&self, client_id: &str) {
+        self.ctx.push_routing(client_id).await;
     }
 
     /// Update routing for all clients in a group.
-    pub async fn update_routing_for_group(
-        &self,
-        group_id: &str,
-        shared_state: &tokio::sync::Mutex<crate::state::ServerState>,
-    ) {
-        let s = shared_state.lock().await;
-        let senders = self.ctx.routing_senders.lock().await;
-        if let Some(group) = s.groups.iter().find(|g| g.id == group_id) {
-            for client_id in &group.clients {
-                if let Some(tx) = senders.get(client_id) {
-                    let client_muted = s
-                        .clients
-                        .get(client_id)
-                        .map(|c| c.config.volume.muted)
-                        .unwrap_or(false);
-                    let _ = tx.send(SessionRouting {
-                        stream_id: group.stream_id.clone(),
-                        client_muted,
-                        group_muted: group.muted,
-                    });
-                }
-            }
-        }
+    pub async fn update_routing_for_group(&self, group_id: &str) {
+        self.ctx.push_routing_for_group(group_id).await;
     }
 
     /// Update routing for all connected sessions (after structural changes).
-    pub async fn update_routing_all(
-        &self,
-        shared_state: &tokio::sync::Mutex<crate::state::ServerState>,
-    ) {
-        let s = shared_state.lock().await;
-        let senders = self.ctx.routing_senders.lock().await;
-        for group in &s.groups {
-            for client_id in &group.clients {
-                if let Some(tx) = senders.get(client_id) {
-                    let client_muted = s
-                        .clients
-                        .get(client_id)
-                        .map(|c| c.config.volume.muted)
-                        .unwrap_or(false);
-                    let _ = tx.send(SessionRouting {
-                        stream_id: group.stream_id.clone(),
-                        client_muted,
-                        group_muted: group.muted,
-                    });
-                }
-            }
-        }
+    pub async fn update_routing_all(&self) {
+        self.ctx.push_routing_all().await;
     }
 
     /// Run the session server — accepts connections and spawns per-client tasks.
@@ -247,7 +250,6 @@ async fn handle_client(
     ctx: &SessionContext,
     event_tx: mpsc::Sender<ServerEvent>,
 ) -> Result<()> {
-    // 1. Read Hello
     let hello_msg = read_frame_from(&mut stream).await?;
     let hello = match hello_msg.payload {
         MessagePayload::Hello(h) => h,
@@ -257,47 +259,41 @@ async fn handle_client(
     let client_id = hello.id.clone();
     tracing::info!(id = %client_id, name = %hello.host_name, mac = %hello.mac, "Client hello");
 
-    // 1b. Validate auth if required
     if let Some(validator) = &ctx.auth {
         validate_auth(validator.as_ref(), &hello, &mut stream, &client_id).await?;
     }
 
-    // 2. Register + determine initial routing
+    // Register channels
     let (settings_tx, settings_rx) = mpsc::channel(16);
     #[cfg(feature = "custom-protocol")]
     let (custom_tx, custom_rx) = mpsc::channel(64);
 
-    let initial_routing;
-    let initial_stream_id;
-    {
-        ctx.settings_senders
-            .lock()
-            .await
-            .insert(client_id.clone(), settings_tx);
-        #[cfg(feature = "custom-protocol")]
-        ctx.custom_senders
-            .lock()
-            .await
-            .insert(client_id.clone(), custom_tx);
+    ctx.settings_senders
+        .lock()
+        .await
+        .insert(client_id.clone(), settings_tx);
+    #[cfg(feature = "custom-protocol")]
+    ctx.custom_senders
+        .lock()
+        .await
+        .insert(client_id.clone(), custom_tx);
 
+    // Register in state + build initial routing
+    let initial_stream_id;
+    let initial_routing;
+    {
         let mut s = ctx.shared_state.lock().await;
         let c = s.get_or_create_client(&client_id, &hello.host_name, &hello.mac);
         c.connected = true;
         s.group_for_client(&client_id, &ctx.default_stream);
 
-        let group = s.groups.iter().find(|g| g.clients.contains(&client_id));
-        initial_stream_id = group
-            .map(|g| g.stream_id.clone())
-            .unwrap_or_else(|| ctx.default_stream.clone());
-        initial_routing = SessionRouting {
-            stream_id: initial_stream_id.clone(),
-            client_muted: s
-                .clients
-                .get(&client_id)
-                .map(|c| c.config.volume.muted)
-                .unwrap_or(false),
-            group_muted: group.map(|g| g.muted).unwrap_or(false),
-        };
+        initial_routing =
+            SessionContext::build_routing(&s, &client_id).unwrap_or_else(|| SessionRouting {
+                stream_id: ctx.default_stream.clone(),
+                client_muted: false,
+                group_muted: false,
+            });
+        initial_stream_id = initial_routing.stream_id.clone();
     }
 
     let (routing_tx, routing_rx) = watch::channel(initial_routing);
@@ -314,38 +310,52 @@ async fn handle_client(
         })
         .await;
 
-    // 3. Send ServerSettings
-    let ss = ServerSettings {
-        buffer_ms: ctx.buffer_ms,
-        latency: 0,
-        volume: 100,
-        muted: false,
-    };
+    // ServerSettings
     send_msg(
         &mut stream,
         MessageType::ServerSettings,
-        &MessagePayload::ServerSettings(ss),
+        &MessagePayload::ServerSettings(ServerSettings {
+            buffer_ms: ctx.buffer_ms,
+            latency: 0,
+            volume: 100,
+            muted: false,
+        }),
     )
     .await?;
 
-    // 4. Send CodecHeader for the client's stream
-    send_codec_header_for_stream(&mut stream, &initial_stream_id, ctx).await?;
+    // CodecHeader for client's stream
+    match ctx.codec_header_for(&initial_stream_id).await {
+        Some(info) => {
+            send_msg(
+                &mut stream,
+                MessageType::CodecHeader,
+                &MessagePayload::CodecHeader(CodecHeader {
+                    codec: info.codec,
+                    payload: info.header,
+                }),
+            )
+            .await?;
+        }
+        None => {
+            tracing::warn!(stream = %initial_stream_id, client = %client_id, "No codec header registered for stream");
+        }
+    }
 
-    // 5. Main loop
-    #[cfg(feature = "custom-protocol")]
+    // Main loop
     let result = session_loop(
         &mut stream,
         chunk_rx,
         settings_rx,
         routing_rx,
+        #[cfg(feature = "custom-protocol")]
         custom_rx,
+        #[cfg(feature = "custom-protocol")]
         event_tx.clone(),
+        #[cfg(feature = "custom-protocol")]
         client_id.clone(),
         ctx,
     )
     .await;
-    #[cfg(not(feature = "custom-protocol"))]
-    let result = session_loop(&mut stream, chunk_rx, settings_rx, routing_rx, ctx).await;
 
     // Cleanup
     ctx.settings_senders.lock().await.remove(&client_id);
@@ -363,6 +373,131 @@ async fn handle_client(
         .await;
 
     result
+}
+
+// ── Session loop (single function, cfg on custom-protocol arms) ──
+
+#[allow(clippy::too_many_arguments)]
+async fn session_loop(
+    stream: &mut TcpStream,
+    mut chunk_rx: broadcast::Receiver<WireChunkData>,
+    mut settings_rx: mpsc::Receiver<ClientSettingsUpdate>,
+    mut routing_rx: watch::Receiver<SessionRouting>,
+    #[cfg(feature = "custom-protocol")] mut custom_rx: mpsc::Receiver<CustomOutbound>,
+    #[cfg(feature = "custom-protocol")] event_tx: mpsc::Sender<ServerEvent>,
+    #[cfg(feature = "custom-protocol")] client_id: String,
+    ctx: &SessionContext,
+) -> Result<()> {
+    let (mut reader, mut writer) = stream.split();
+    let mut routing = routing_rx.borrow().clone();
+
+    loop {
+        tokio::select! {
+            chunk = chunk_rx.recv() => {
+                let chunk = chunk.context("broadcast closed")?;
+                if !should_send_chunk(&chunk, &routing, ctx.send_audio_to_muted) {
+                    continue;
+                }
+                write_chunk(&mut writer, chunk).await?;
+            }
+            Ok(()) = routing_rx.changed() => {
+                let new = routing_rx.borrow().clone();
+                if new.stream_id != routing.stream_id {
+                    tracing::debug!(old = %routing.stream_id, new = %new.stream_id, "Stream switch");
+                    if let Some(info) = ctx.codec_header_for(&new.stream_id).await {
+                        let frame = serialize_msg(
+                            MessageType::CodecHeader,
+                            &MessagePayload::CodecHeader(CodecHeader {
+                                codec: info.codec,
+                                payload: info.header,
+                            }),
+                            0,
+                        )?;
+                        writer.write_all(&frame).await.context("write codec header")?;
+                    }
+                }
+                routing = new;
+            }
+            msg = read_frame_from(&mut reader) => {
+                let msg = msg?;
+                match msg.payload {
+                    MessagePayload::Time(t) => {
+                        let frame = serialize_msg(
+                            MessageType::Time,
+                            &MessagePayload::Time(Time { latency: t.latency }),
+                            msg.base.id,
+                        )?;
+                        writer.write_all(&frame).await.context("write time")?;
+                    }
+                    #[cfg(feature = "custom-protocol")]
+                    MessagePayload::Custom(payload) => {
+                        if let MessageType::Custom(type_id) = msg.base.msg_type {
+                            let _ = event_tx.send(ServerEvent::CustomMessage {
+                                client_id: client_id.clone(),
+                                message: snapcast_proto::CustomMessage::new(type_id, payload),
+                            }).await;
+                        }
+                    }
+                    _ => {}
+                }
+            }
+            update = settings_rx.recv() => {
+                let Some(update) = update else { continue };
+                write_settings(&mut writer, update).await?;
+            }
+        }
+    }
+}
+
+// ── Helpers ───────────────────────────────────────────────────
+
+/// Decide whether to send a chunk to this session.
+#[inline]
+fn should_send_chunk(
+    chunk: &WireChunkData,
+    routing: &SessionRouting,
+    send_audio_to_muted: bool,
+) -> bool {
+    if chunk.stream_id != routing.stream_id {
+        return false;
+    }
+    if !send_audio_to_muted && (routing.client_muted || routing.group_muted) {
+        return false;
+    }
+    true
+}
+
+async fn write_chunk<W: AsyncWriteExt + Unpin>(writer: &mut W, chunk: WireChunkData) -> Result<()> {
+    let wc = WireChunk {
+        timestamp: Timeval::from_usec(chunk.timestamp_usec),
+        payload: chunk.data,
+    };
+    let frame = serialize_msg(MessageType::WireChunk, &MessagePayload::WireChunk(wc), 0)?;
+    writer.write_all(&frame).await.context("write chunk")
+}
+
+async fn write_settings<W: AsyncWriteExt + Unpin>(
+    writer: &mut W,
+    update: ClientSettingsUpdate,
+) -> Result<()> {
+    let ss = ServerSettings {
+        buffer_ms: update.buffer_ms,
+        latency: update.latency,
+        volume: update.volume,
+        muted: update.muted,
+    };
+    let frame = serialize_msg(
+        MessageType::ServerSettings,
+        &MessagePayload::ServerSettings(ss),
+        0,
+    )?;
+    writer.write_all(&frame).await.context("write settings")?;
+    tracing::debug!(
+        volume = update.volume,
+        latency = update.latency,
+        "Pushed settings"
+    );
+    Ok(())
 }
 
 async fn validate_auth(
@@ -405,209 +540,6 @@ async fn validate_auth(
             anyhow::bail!("Client {client_id}: {e}");
         }
     }
-}
-
-/// Send the codec header for a specific stream (or default).
-async fn send_codec_header_for_stream(
-    stream: &mut TcpStream,
-    stream_id: &str,
-    ctx: &SessionContext,
-) -> Result<()> {
-    let headers = ctx.codec_headers.lock().await;
-    let info = headers
-        .get(stream_id)
-        .or_else(|| headers.get(&ctx.default_stream));
-    if let Some(info) = info {
-        let ch = CodecHeader {
-            codec: info.codec.clone(),
-            payload: info.header.clone(),
-        };
-        send_msg(
-            stream,
-            MessageType::CodecHeader,
-            &MessagePayload::CodecHeader(ch),
-        )
-        .await?;
-    }
-    Ok(())
-}
-
-// ── Session loop ──────────────────────────────────────────────
-
-#[cfg(not(feature = "custom-protocol"))]
-async fn session_loop(
-    stream: &mut TcpStream,
-    mut chunk_rx: broadcast::Receiver<WireChunkData>,
-    mut settings_rx: mpsc::Receiver<ClientSettingsUpdate>,
-    mut routing_rx: watch::Receiver<SessionRouting>,
-    ctx: &SessionContext,
-) -> Result<()> {
-    let (mut reader, mut writer) = stream.split();
-    let mut routing = routing_rx.borrow().clone();
-
-    loop {
-        tokio::select! {
-            chunk = chunk_rx.recv() => {
-                let chunk = chunk.context("broadcast closed")?;
-                if !should_send_chunk(&chunk, &routing, ctx.send_audio_to_muted) {
-                    continue;
-                }
-                write_chunk(&mut writer, chunk).await?;
-            }
-            Ok(()) = routing_rx.changed() => {
-                let new = routing_rx.borrow().clone();
-                if new.stream_id != routing.stream_id {
-                    tracing::debug!(old = %routing.stream_id, new = %new.stream_id, "Stream switch");
-                    // Send new codec header for the new stream
-                    let headers = ctx.codec_headers.lock().await;
-                    if let Some(info) = headers.get(&new.stream_id) {
-                        let ch = CodecHeader { codec: info.codec.clone(), payload: info.header.clone() };
-                        let frame = serialize_msg(MessageType::CodecHeader, &MessagePayload::CodecHeader(ch), 0)?;
-                        writer.write_all(&frame).await.context("write codec header")?;
-                    }
-                }
-                routing = new;
-            }
-            msg = read_frame_from(&mut reader) => {
-                let msg = msg?;
-                if let MessagePayload::Time(t) = msg.payload {
-                    let response = Time { latency: t.latency };
-                    let frame = serialize_msg(MessageType::Time, &MessagePayload::Time(response), msg.base.id)?;
-                    writer.write_all(&frame).await.context("write time")?;
-                }
-            }
-            update = settings_rx.recv() => {
-                let Some(update) = update else { continue };
-                write_settings(&mut writer, update).await?;
-            }
-        }
-    }
-}
-
-#[cfg(feature = "custom-protocol")]
-async fn session_loop(
-    stream: &mut TcpStream,
-    mut chunk_rx: broadcast::Receiver<WireChunkData>,
-    mut settings_rx: mpsc::Receiver<ClientSettingsUpdate>,
-    mut routing_rx: watch::Receiver<SessionRouting>,
-    mut custom_rx: mpsc::Receiver<CustomOutbound>,
-    event_tx: mpsc::Sender<ServerEvent>,
-    client_id: String,
-    ctx: &SessionContext,
-) -> Result<()> {
-    let (mut reader, mut writer) = stream.split();
-    let mut routing = routing_rx.borrow().clone();
-
-    loop {
-        tokio::select! {
-            chunk = chunk_rx.recv() => {
-                let chunk = chunk.context("broadcast closed")?;
-                if !should_send_chunk(&chunk, &routing, ctx.send_audio_to_muted) {
-                    continue;
-                }
-                write_chunk(&mut writer, chunk).await?;
-            }
-            Ok(()) = routing_rx.changed() => {
-                let new = routing_rx.borrow().clone();
-                if new.stream_id != routing.stream_id {
-                    tracing::debug!(old = %routing.stream_id, new = %new.stream_id, "Stream switch");
-                    let headers = ctx.codec_headers.lock().await;
-                    if let Some(info) = headers.get(&new.stream_id) {
-                        let ch = CodecHeader { codec: info.codec.clone(), payload: info.header.clone() };
-                        let frame = serialize_msg(MessageType::CodecHeader, &MessagePayload::CodecHeader(ch), 0)?;
-                        writer.write_all(&frame).await.context("write codec header")?;
-                    }
-                }
-                routing = new;
-            }
-            msg = read_frame_from(&mut reader) => {
-                let msg = msg?;
-                match msg.payload {
-                    MessagePayload::Time(t) => {
-                        let response = Time { latency: t.latency };
-                        let frame = serialize_msg(MessageType::Time, &MessagePayload::Time(response), msg.base.id)?;
-                        writer.write_all(&frame).await.context("write time")?;
-                    }
-                    MessagePayload::Custom(payload) => {
-                        if let MessageType::Custom(type_id) = msg.base.msg_type {
-                            let _ = event_tx.send(ServerEvent::CustomMessage {
-                                client_id: client_id.clone(),
-                                message: snapcast_proto::CustomMessage::new(type_id, payload),
-                            }).await;
-                        }
-                    }
-                    _ => {}
-                }
-            }
-            update = settings_rx.recv() => {
-                let Some(update) = update else { continue };
-                write_settings(&mut writer, update).await?;
-            }
-            outbound = custom_rx.recv() => {
-                if let Some(msg) = outbound {
-                    let frame = serialize_msg(
-                        MessageType::Custom(msg.type_id),
-                        &MessagePayload::Custom(msg.payload),
-                        0,
-                    )?;
-                    writer.write_all(&frame).await.context("write custom")?;
-                }
-            }
-        }
-    }
-}
-
-// ── Helpers ───────────────────────────────────────────────────
-
-/// Decide whether to send a chunk to this session.
-#[inline]
-fn should_send_chunk(
-    chunk: &WireChunkData,
-    routing: &SessionRouting,
-    send_audio_to_muted: bool,
-) -> bool {
-    // Wrong stream → skip
-    if chunk.stream_id != routing.stream_id {
-        return false;
-    }
-    // Muted → skip (unless config says otherwise)
-    if !send_audio_to_muted && (routing.client_muted || routing.group_muted) {
-        return false;
-    }
-    true
-}
-
-async fn write_chunk<W: AsyncWriteExt + Unpin>(writer: &mut W, chunk: WireChunkData) -> Result<()> {
-    let wc = WireChunk {
-        timestamp: Timeval::from_usec(chunk.timestamp_usec),
-        payload: chunk.data,
-    };
-    let frame = serialize_msg(MessageType::WireChunk, &MessagePayload::WireChunk(wc), 0)?;
-    writer.write_all(&frame).await.context("write chunk")
-}
-
-async fn write_settings<W: AsyncWriteExt + Unpin>(
-    writer: &mut W,
-    update: ClientSettingsUpdate,
-) -> Result<()> {
-    let ss = ServerSettings {
-        buffer_ms: update.buffer_ms,
-        latency: update.latency,
-        volume: update.volume,
-        muted: update.muted,
-    };
-    let frame = serialize_msg(
-        MessageType::ServerSettings,
-        &MessagePayload::ServerSettings(ss),
-        0,
-    )?;
-    writer.write_all(&frame).await.context("write settings")?;
-    tracing::debug!(
-        volume = update.volume,
-        latency = update.latency,
-        "Pushed settings"
-    );
-    Ok(())
 }
 
 fn serialize_msg(
@@ -658,6 +590,8 @@ fn now_timeval() -> Timeval {
     Timeval::from_usec(now_usec())
 }
 
+// ── Tests ─────────────────────────────────────────────────────
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -678,73 +612,124 @@ mod tests {
         }
     }
 
+    // ── should_send_chunk ─────────────────────────────────────
+
     #[test]
     fn matching_stream_unmuted_sends() {
-        let r = routing("zone1", false, false);
-        assert!(should_send_chunk(&chunk("zone1"), &r, false));
+        assert!(should_send_chunk(
+            &chunk("z1"),
+            &routing("z1", false, false),
+            false
+        ));
     }
 
     #[test]
     fn wrong_stream_skips() {
-        let r = routing("zone1", false, false);
-        assert!(!should_send_chunk(&chunk("zone2"), &r, false));
+        assert!(!should_send_chunk(
+            &chunk("z2"),
+            &routing("z1", false, false),
+            false
+        ));
     }
 
     #[test]
     fn client_muted_skips() {
-        let r = routing("zone1", true, false);
-        assert!(!should_send_chunk(&chunk("zone1"), &r, false));
+        assert!(!should_send_chunk(
+            &chunk("z1"),
+            &routing("z1", true, false),
+            false
+        ));
     }
 
     #[test]
     fn group_muted_skips() {
-        let r = routing("zone1", false, true);
-        assert!(!should_send_chunk(&chunk("zone1"), &r, false));
+        assert!(!should_send_chunk(
+            &chunk("z1"),
+            &routing("z1", false, true),
+            false
+        ));
     }
 
     #[test]
-    fn muted_but_send_audio_to_muted_sends() {
-        let r = routing("zone1", true, false);
-        assert!(should_send_chunk(&chunk("zone1"), &r, true));
+    fn send_audio_to_muted_overrides() {
+        assert!(should_send_chunk(
+            &chunk("z1"),
+            &routing("z1", true, true),
+            true
+        ));
     }
 
     #[test]
-    fn group_muted_but_send_audio_to_muted_sends() {
-        let r = routing("zone1", false, true);
-        assert!(should_send_chunk(&chunk("zone1"), &r, true));
+    fn wrong_stream_ignores_send_audio_to_muted() {
+        assert!(!should_send_chunk(
+            &chunk("z2"),
+            &routing("z1", false, false),
+            true
+        ));
+    }
+
+    // ── build_routing ─────────────────────────────────────────
+
+    #[test]
+    fn build_routing_finds_client_in_group() {
+        let mut state = crate::state::ServerState::default();
+        state.get_or_create_client("c1", "host", "mac");
+        state.group_for_client("c1", "stream1");
+        let r = SessionContext::build_routing(&state, "c1").unwrap();
+        assert_eq!(r.stream_id, "stream1");
+        assert!(!r.client_muted);
+        assert!(!r.group_muted);
     }
 
     #[test]
-    fn wrong_stream_always_skips_even_with_send_audio_to_muted() {
-        let r = routing("zone1", false, false);
-        assert!(!should_send_chunk(&chunk("zone2"), &r, true));
+    fn build_routing_reflects_mute() {
+        let mut state = crate::state::ServerState::default();
+        let c = state.get_or_create_client("c1", "host", "mac");
+        c.config.volume.muted = true;
+        state.group_for_client("c1", "stream1");
+        if let Some(g) = state
+            .groups
+            .iter_mut()
+            .find(|g| g.clients.contains(&"c1".to_string()))
+        {
+            g.muted = true;
+        }
+        let r = SessionContext::build_routing(&state, "c1").unwrap();
+        assert!(r.client_muted);
+        assert!(r.group_muted);
     }
 
     #[test]
-    fn routing_watch_updates() {
-        let r1 = routing("zone1", false, false);
-        let r2 = routing("zone2", false, false);
-        let (tx, rx) = watch::channel(r1.clone());
-        assert_eq!(*rx.borrow(), r1);
-        tx.send(r2.clone()).unwrap();
-        assert_eq!(*rx.borrow(), r2);
+    fn build_routing_returns_none_for_unknown_client() {
+        let state = crate::state::ServerState::default();
+        assert!(SessionContext::build_routing(&state, "unknown").is_none());
+    }
+
+    // ── watch integration ─────────────────────────────────────
+
+    #[test]
+    fn routing_watch_delivers_updates() {
+        let (tx, rx) = watch::channel(routing("z1", false, false));
+        assert_eq!(rx.borrow().stream_id, "z1");
+        tx.send(routing("z2", true, false)).unwrap();
+        assert_eq!(rx.borrow().stream_id, "z2");
+        assert!(rx.borrow().client_muted);
     }
 
     #[test]
-    fn unmute_restores_routing() {
-        let muted = routing("zone1", true, false);
-        assert!(!should_send_chunk(&chunk("zone1"), &muted, false));
-        let unmuted = routing("zone1", false, false);
-        assert!(should_send_chunk(&chunk("zone1"), &unmuted, false));
+    fn unmute_cycle() {
+        let r_muted = routing("z1", true, false);
+        let r_unmuted = routing("z1", false, false);
+        assert!(!should_send_chunk(&chunk("z1"), &r_muted, false));
+        assert!(should_send_chunk(&chunk("z1"), &r_unmuted, false));
     }
 
     #[test]
     fn stream_switch_changes_filter() {
-        let r1 = routing("zone1", false, false);
-        assert!(should_send_chunk(&chunk("zone1"), &r1, false));
-        assert!(!should_send_chunk(&chunk("zone2"), &r1, false));
-        let r2 = routing("zone2", false, false);
-        assert!(!should_send_chunk(&chunk("zone1"), &r2, false));
-        assert!(should_send_chunk(&chunk("zone2"), &r2, false));
+        let r1 = routing("z1", false, false);
+        let r2 = routing("z2", false, false);
+        assert!(should_send_chunk(&chunk("z1"), &r1, false));
+        assert!(!should_send_chunk(&chunk("z1"), &r2, false));
+        assert!(should_send_chunk(&chunk("z2"), &r2, false));
     }
 }

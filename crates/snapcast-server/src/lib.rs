@@ -94,7 +94,7 @@ pub mod auth;
 pub mod crypto;
 pub(crate) mod encoder;
 #[cfg(feature = "mdns")]
-pub mod mdns;
+pub(crate) mod mdns;
 pub mod session;
 pub mod state;
 pub(crate) mod stream;

@@ -43,6 +43,8 @@ pub struct SessionServer {
     settings_senders: Arc<Mutex<HashMap<String, mpsc::Sender<ClientSettingsUpdate>>>>,
     #[cfg(feature = "custom-protocol")]
     custom_senders: Arc<Mutex<HashMap<String, mpsc::Sender<CustomOutbound>>>>,
+    shared_state: Arc<tokio::sync::Mutex<crate::state::ServerState>>,
+    default_stream: String,
 }
 
 /// Outbound custom message to a specific client.
@@ -61,6 +63,8 @@ impl SessionServer {
         port: u16,
         buffer_ms: i32,
         auth: Option<Arc<dyn crate::auth::AuthValidator>>,
+        shared_state: Arc<tokio::sync::Mutex<crate::state::ServerState>>,
+        default_stream: String,
     ) -> Self {
         Self {
             port,
@@ -70,6 +74,8 @@ impl SessionServer {
             settings_senders: Arc::new(Mutex::new(HashMap::new())),
             #[cfg(feature = "custom-protocol")]
             custom_senders: Arc::new(Mutex::new(HashMap::new())),
+            shared_state,
+            default_stream,
         }
     }
 
@@ -106,6 +112,8 @@ impl SessionServer {
             let auth = self.auth.clone();
             let codec = codec.clone();
             let codec_header = codec_header.clone();
+            let shared_state = Arc::clone(&self.shared_state);
+            let default_stream = self.default_stream.clone();
 
             tokio::spawn(async move {
                 let (settings_tx, settings_rx) = mpsc::channel(16);
@@ -129,6 +137,8 @@ impl SessionServer {
                     buffer_ms,
                     &codec,
                     &codec_header,
+                    &shared_state,
+                    &default_stream,
                 )
                 .await;
                 if let Err(e) = result {
@@ -177,6 +187,8 @@ async fn handle_client(
     buffer_ms: i32,
     codec: &str,
     codec_header: &[u8],
+    shared_state: &tokio::sync::Mutex<crate::state::ServerState>,
+    default_stream: &str,
 ) -> Result<()> {
     // 1. Read Hello
     let hello_msg = read_frame_from(&mut stream).await?;
@@ -255,6 +267,14 @@ async fn handle_client(
         })
         .await;
 
+    // Register in server state (creates group if needed)
+    {
+        let mut s = shared_state.lock().await;
+        let c = s.get_or_create_client(&client_id, &hello.host_name, &hello.mac);
+        c.connected = true;
+        s.group_for_client(&client_id, default_stream);
+    }
+
     // 2. Send ServerSettings
     let ss = ServerSettings {
         buffer_ms,
@@ -305,6 +325,12 @@ async fn handle_client(
     settings_senders.lock().await.remove(&client_id);
     #[cfg(feature = "custom-protocol")]
     custom_senders.lock().await.remove(&client_id);
+    {
+        let mut s = shared_state.lock().await;
+        if let Some(c) = s.clients.get_mut(&client_id) {
+            c.connected = false;
+        }
+    }
     let _ = event_tx
         .send(ServerEvent::ClientDisconnected { id: client_id })
         .await;

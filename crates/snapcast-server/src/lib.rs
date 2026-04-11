@@ -467,7 +467,24 @@ impl SnapServer {
         let chunk_tx = self.chunk_tx.clone();
         let streams = std::mem::take(&mut self.streams);
         let mut default_enc = Some(default_enc);
+        let mut first_stream_name = String::new();
+
+        // Shared state for command handlers
+        let shared_state = Arc::new(tokio::sync::Mutex::new(state::ServerState::default()));
+
         for (name, stream_cfg, rx) in streams {
+            if first_stream_name.is_empty() {
+                first_stream_name = name.clone();
+            }
+            {
+                let mut s = shared_state.lock().await;
+                s.streams.push(state::StreamInfo {
+                    id: name.clone(),
+                    status: "idle".into(),
+                    uri: String::new(),
+                    properties: Default::default(),
+                });
+            }
             let enc = if stream_cfg.codec.is_none() && stream_cfg.sample_format.is_none() {
                 if let Some(enc) = default_enc.take() {
                     enc
@@ -498,6 +515,8 @@ impl SnapServer {
             self.config.stream_port,
             self.config.buffer_ms as i32,
             self.config.auth.clone(),
+            Arc::clone(&shared_state),
+            first_stream_name,
         ));
         let session_for_run = Arc::clone(&session_srv);
         let session_event_tx = event_tx.clone();
@@ -510,9 +529,6 @@ impl SnapServer {
                 tracing::error!(error = %e, "Session server error");
             }
         });
-
-        // Shared state for command handlers
-        let shared_state = Arc::new(tokio::sync::Mutex::new(state::ServerState::default()));
 
         // Main loop
         loop {

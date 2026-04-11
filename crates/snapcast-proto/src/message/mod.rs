@@ -26,7 +26,9 @@ pub enum MessageType {
     Time,
     /// Client hello (type 5).
     Hello,
-    // 6 is unused (was StreamTags)
+    // 6 = StreamTags (deprecated, but C++ server still sends it)
+    /// Stream tags / metadata (type 6, deprecated).
+    StreamTags,
     /// Client info (type 7).
     ClientInfo,
     /// Error (type 8).
@@ -34,23 +36,27 @@ pub enum MessageType {
     /// Application-defined message (type 9+).
     #[cfg(feature = "custom-protocol")]
     Custom(u16),
+    /// Unrecognized message type — payload is skipped/ignored.
+    Unknown(u16),
 }
 
 impl MessageType {
-    /// Parse from a raw `u16` value.
-    pub fn from_u16(value: u16) -> Option<Self> {
+    /// Parse from a raw `u16` value. Never fails — unknown types become `Unknown(n)`.
+    pub fn from_u16(value: u16) -> Self {
         match value {
-            0 => Some(Self::Base),
-            1 => Some(Self::CodecHeader),
-            2 => Some(Self::WireChunk),
-            3 => Some(Self::ServerSettings),
-            4 => Some(Self::Time),
-            5 => Some(Self::Hello),
-            7 => Some(Self::ClientInfo),
-            8 => Some(Self::Error),
+            0 => Self::Base,
+            1 => Self::CodecHeader,
+            2 => Self::WireChunk,
+            3 => Self::ServerSettings,
+            4 => Self::Time,
+            5 => Self::Hello,
+            6 => Self::StreamTags,
+            7 => Self::ClientInfo,
+            8 => Self::Error,
             #[cfg(feature = "custom-protocol")]
-            9.. => Some(Self::Custom(value)),
-            _ => None,
+            9.. => Self::Custom(value),
+            #[cfg(not(feature = "custom-protocol"))]
+            _ => Self::Unknown(value),
         }
     }
 }
@@ -64,10 +70,12 @@ impl From<MessageType> for u16 {
             MessageType::ServerSettings => 3,
             MessageType::Time => 4,
             MessageType::Hello => 5,
+            MessageType::StreamTags => 6,
             MessageType::ClientInfo => 7,
             MessageType::Error => 8,
             #[cfg(feature = "custom-protocol")]
             MessageType::Custom(id) => id,
+            MessageType::Unknown(id) => id,
         }
     }
 }
@@ -90,24 +98,27 @@ mod tests {
         ];
         for mt in types {
             let raw: u16 = mt.into();
-            assert_eq!(MessageType::from_u16(raw), Some(mt));
+            assert_eq!(MessageType::from_u16(raw), mt);
         }
     }
 
     #[test]
-    fn unknown_message_type_returns_none() {
-        assert_eq!(MessageType::from_u16(6), None);
+    fn unknown_message_type_returns_unknown() {
+        assert_eq!(MessageType::from_u16(6), MessageType::StreamTags);
         #[cfg(not(feature = "custom-protocol"))]
         {
-            assert_eq!(MessageType::from_u16(9), None);
-            assert_eq!(MessageType::from_u16(u16::MAX), None);
+            assert_eq!(MessageType::from_u16(9), MessageType::Unknown(9));
+            assert_eq!(
+                MessageType::from_u16(u16::MAX),
+                MessageType::Unknown(u16::MAX)
+            );
         }
         #[cfg(feature = "custom-protocol")]
         {
-            assert_eq!(MessageType::from_u16(9), Some(MessageType::Custom(9)));
+            assert_eq!(MessageType::from_u16(9), MessageType::Custom(9));
             assert_eq!(
                 MessageType::from_u16(u16::MAX),
-                Some(MessageType::Custom(u16::MAX))
+                MessageType::Custom(u16::MAX)
             );
         }
     }

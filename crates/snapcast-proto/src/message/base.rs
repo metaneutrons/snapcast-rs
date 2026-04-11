@@ -46,8 +46,7 @@ impl BaseMessage {
     /// Deserialize a base message header from a reader.
     pub fn read_from<R: Read>(r: &mut R) -> Result<Self, ProtoError> {
         let raw_type = r.read_u16::<LittleEndian>()?;
-        let msg_type =
-            MessageType::from_u16(raw_type).ok_or(ProtoError::UnknownMessageType(raw_type))?;
+        let msg_type = MessageType::from_u16(raw_type);
         let id = r.read_u16::<LittleEndian>()?;
         let refers_to = r.read_u16::<LittleEndian>()?;
         let sent = Timeval::read_from(r)?;
@@ -149,20 +148,15 @@ mod tests {
     }
 
     #[test]
-    fn unknown_type_returns_error() {
+    fn unknown_type_returns_unknown_variant() {
         let mut bad_bytes = HELLO_HEADER_BYTES;
         bad_bytes[0] = 0xFF;
         bad_bytes[1] = 0xFF;
         let mut cursor = io::Cursor::new(&bad_bytes);
+        let msg = BaseMessage::read_from(&mut cursor).unwrap();
         #[cfg(not(feature = "custom-protocol"))]
-        {
-            let err = BaseMessage::read_from(&mut cursor).unwrap_err();
-            assert!(matches!(err, ProtoError::UnknownMessageType(0xFFFF)));
-        }
+        assert_eq!(msg.msg_type, MessageType::Unknown(0xFFFF));
         #[cfg(feature = "custom-protocol")]
-        {
-            let msg = BaseMessage::read_from(&mut cursor).unwrap();
-            assert_eq!(msg.msg_type, MessageType::Custom(0xFFFF));
-        }
+        assert_eq!(msg.msg_type, MessageType::Custom(0xFFFF));
     }
 }

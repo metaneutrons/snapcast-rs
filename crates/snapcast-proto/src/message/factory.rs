@@ -38,6 +38,8 @@ pub enum MessagePayload {
     ClientInfo(ClientInfo),
     /// Error payload.
     Error(Error),
+    /// Stream tags (type 6, deprecated). Raw bytes.
+    StreamTags(Vec<u8>),
     /// Custom raw payload (type 9+).
     #[cfg(feature = "custom-protocol")]
     Custom(Vec<u8>),
@@ -58,9 +60,8 @@ pub fn deserialize(base: BaseMessage, payload: &[u8]) -> Result<TypedMessage, Pr
         MessageType::WireChunk => MessagePayload::WireChunk(WireChunk::read_from(&mut cursor)?),
         MessageType::ClientInfo => MessagePayload::ClientInfo(ClientInfo::read_from(&mut cursor)?),
         MessageType::Error => MessagePayload::Error(Error::read_from(&mut cursor)?),
-        MessageType::Base => {
-            return Err(ProtoError::UnknownMessageType(0));
-        }
+        MessageType::StreamTags => MessagePayload::StreamTags(payload.to_vec()),
+        MessageType::Base | MessageType::Unknown(_) => MessagePayload::StreamTags(payload.to_vec()),
         #[cfg(feature = "custom-protocol")]
         MessageType::Custom(_) => MessagePayload::Custom(payload.to_vec()),
     };
@@ -80,6 +81,7 @@ pub fn serialize(base: &mut BaseMessage, payload: &MessagePayload) -> Result<Vec
         MessagePayload::WireChunk(m) => m.write_to(&mut payload_buf)?,
         MessagePayload::ClientInfo(m) => m.write_to(&mut payload_buf)?,
         MessagePayload::Error(m) => m.write_to(&mut payload_buf)?,
+        MessagePayload::StreamTags(data) => payload_buf.extend_from_slice(data),
         #[cfg(feature = "custom-protocol")]
         MessagePayload::Custom(data) => payload_buf.extend_from_slice(data),
     }
@@ -193,9 +195,10 @@ mod tests {
     }
 
     #[test]
-    fn deserialize_base_type_returns_error() {
+    fn deserialize_base_type_returns_raw() {
         let base = make_base(MessageType::Base, 0);
-        assert!(deserialize(base, &[]).is_err());
+        let msg = deserialize(base, &[]).unwrap();
+        assert!(matches!(msg.payload, MessagePayload::StreamTags(_)));
     }
 
     #[test]

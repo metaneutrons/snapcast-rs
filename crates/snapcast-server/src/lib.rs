@@ -191,6 +191,17 @@ pub enum ServerEvent {
     /// when the group topology changes. Mirrors `Server.OnUpdate` in the C++ snapserver.
     /// The consumer should re-read server status via `GetStatus`.
     ServerUpdated,
+    /// A stream control command was received (play, pause, next, seek, etc.).
+    ///
+    /// The library forwards this to the embedder since it doesn't own stream readers.
+    StreamControl {
+        /// Stream ID.
+        stream_id: String,
+        /// Command name.
+        command: String,
+        /// Optional parameters.
+        params: serde_json::Value,
+    },
     /// Custom binary protocol message from a streaming client.
     #[cfg(feature = "custom-protocol")]
     CustomMessage {
@@ -267,6 +278,27 @@ pub enum ServerCommand {
         stream_id: String,
         /// Metadata key-value pairs.
         metadata: std::collections::HashMap<String, serde_json::Value>,
+    },
+    /// Dynamically add a stream source.
+    AddStream {
+        /// Stream source URI (e.g. `pipe:///tmp/snapfifo?name=default`).
+        uri: String,
+        /// Response: the stream ID assigned.
+        response_tx: tokio::sync::oneshot::Sender<Result<String, String>>,
+    },
+    /// Remove a stream source.
+    RemoveStream {
+        /// Stream ID to remove.
+        stream_id: String,
+    },
+    /// Forward a control command to a stream (play, pause, next, etc.).
+    StreamControl {
+        /// Stream ID.
+        stream_id: String,
+        /// Command name (e.g. "next", "previous", "pause", "seek").
+        command: String,
+        /// Optional command parameter (e.g. seek position).
+        params: serde_json::Value,
     },
     /// Get full server status.
     GetStatus {
@@ -654,6 +686,46 @@ impl SnapServer {
                             }
                             drop(s);
                             let _ = event_tx.try_send(ServerEvent::StreamStatus { stream_id, status: "playing".into() });
+                        }
+                        Some(ServerCommand::AddStream { uri, response_tx }) => {
+                            // Parse stream name from URI query param, or use the URI as ID
+                            let name = uri.split("name=").nth(1)
+                                .and_then(|s| s.split('&').next())
+                                .unwrap_or("dynamic")
+                                .to_string();
+                            let mut s = shared_state.lock().await;
+                            if s.streams.iter().any(|st| st.id == name) {
+                                let _ = response_tx.send(Err(format!("Stream '{name}' already exists")));
+                            } else {
+                                s.streams.push(state::StreamInfo {
+                                    id: name.clone(),
+                                    status: "idle".into(),
+                                    uri: uri.clone(),
+                                    properties: Default::default(),
+                                });
+                                save_state(&s);
+                                drop(s);
+                                let _ = event_tx.try_send(ServerEvent::ServerUpdated);
+                                let _ = response_tx.send(Ok(name));
+                            }
+                        }
+                        Some(ServerCommand::RemoveStream { stream_id }) => {
+                            let mut s = shared_state.lock().await;
+                            s.streams.retain(|st| st.id != stream_id);
+                            // Clear stream_id on groups that referenced this stream
+                            for g in &mut s.groups {
+                                if g.stream_id == stream_id {
+                                    g.stream_id.clear();
+                                }
+                            }
+                            save_state(&s);
+                            drop(s);
+                            let _ = event_tx.try_send(ServerEvent::ServerUpdated);
+                        }
+                        Some(ServerCommand::StreamControl { stream_id, command, params }) => {
+                            tracing::debug!(stream_id, command, ?params, "Stream control forwarded");
+                            // Forward to embedder via event — the library doesn't own stream readers
+                            let _ = event_tx.try_send(ServerEvent::StreamControl { stream_id, command, params });
                         }
                         Some(ServerCommand::GetStatus { response_tx }) => {
                             let s = shared_state.lock().await;

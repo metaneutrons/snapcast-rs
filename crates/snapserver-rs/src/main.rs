@@ -233,24 +233,120 @@ fn main() -> anyhow::Result<()> {
             }
         });
 
-        // Log events
+        // Broadcast server events as JSON-RPC notifications
+        let event_notify_tx = notify_tx.clone();
+        let event_cmd_tx = server.command_sender();
         tokio::spawn(async move {
             while let Some(event) = events.recv().await {
-                match event {
-                    ServerEvent::ClientConnected { id, name, .. } => {
-                        tracing::info!(id, name, "Client connected");
+                let notification: Option<serde_json::Value> = match event {
+                    ServerEvent::ClientConnected { id, .. } => {
+                        tracing::info!(id, "Client connected");
+                        // Fetch fresh client data from status
+                        let client_json = get_client_from_status(&event_cmd_tx, &id).await;
+                        Some(serde_json::json!({
+                            "jsonrpc": "2.0",
+                            "method": "Client.OnConnect",
+                            "params": {"id": id, "client": client_json}
+                        }))
                     }
                     ServerEvent::ClientDisconnected { id } => {
                         tracing::info!(id, "Client disconnected");
+                        let client_json = get_client_from_status(&event_cmd_tx, &id).await;
+                        Some(serde_json::json!({
+                            "jsonrpc": "2.0",
+                            "method": "Client.OnDisconnect",
+                            "params": {"id": id, "client": client_json}
+                        }))
                     }
+                    ServerEvent::ClientVolumeChanged {
+                        client_id,
+                        volume,
+                        muted,
+                    } => Some(serde_json::json!({
+                        "jsonrpc": "2.0",
+                        "method": "Client.OnVolumeChanged",
+                        "params": {"id": client_id, "volume": {"percent": volume, "muted": muted}}
+                    })),
+                    ServerEvent::ClientLatencyChanged { client_id, latency } => {
+                        Some(serde_json::json!({
+                            "jsonrpc": "2.0",
+                            "method": "Client.OnLatencyChanged",
+                            "params": {"id": client_id, "latency": latency}
+                        }))
+                    }
+                    ServerEvent::ClientNameChanged { client_id, name } => Some(serde_json::json!({
+                        "jsonrpc": "2.0",
+                        "method": "Client.OnNameChanged",
+                        "params": {"id": client_id, "name": name}
+                    })),
+                    ServerEvent::GroupStreamChanged {
+                        group_id,
+                        stream_id,
+                    } => Some(serde_json::json!({
+                        "jsonrpc": "2.0",
+                        "method": "Group.OnStreamChanged",
+                        "params": {"id": group_id, "stream_id": stream_id}
+                    })),
+                    ServerEvent::GroupMuteChanged { group_id, muted } => Some(serde_json::json!({
+                        "jsonrpc": "2.0",
+                        "method": "Group.OnMute",
+                        "params": {"id": group_id, "mute": muted}
+                    })),
+                    ServerEvent::GroupNameChanged { group_id, name } => Some(serde_json::json!({
+                        "jsonrpc": "2.0",
+                        "method": "Group.OnNameChanged",
+                        "params": {"id": group_id, "name": name}
+                    })),
                     ServerEvent::StreamStatus { stream_id, status } => {
                         tracing::info!(stream_id, status, "Stream status");
+                        None // Stream status changes are not notifications in C++ protocol
                     }
-                    _ => {}
+                    ServerEvent::ServerUpdated => {
+                        let status = get_full_status(&event_cmd_tx).await;
+                        Some(serde_json::json!({
+                            "jsonrpc": "2.0",
+                            "method": "Server.OnUpdate",
+                            "params": status
+                        }))
+                    }
+                    _ => None,
+                };
+                if let Some(n) = notification {
+                    let _ = event_notify_tx.send(n);
                 }
             }
         });
 
         server.run().await
     })
+}
+
+/// Fetch full server status as JSON via GetStatus command.
+async fn get_full_status(cmd_tx: &tokio::sync::mpsc::Sender<ServerCommand>) -> serde_json::Value {
+    let (tx, rx) = tokio::sync::oneshot::channel();
+    if cmd_tx
+        .send(ServerCommand::GetStatus { response_tx: tx })
+        .await
+        .is_ok()
+        && let Ok(status) = rx.await
+    {
+        return serde_json::to_value(status).unwrap_or_default();
+    }
+    serde_json::Value::Null
+}
+
+/// Find a client in the current status by ID.
+async fn get_client_from_status(
+    cmd_tx: &tokio::sync::mpsc::Sender<ServerCommand>,
+    client_id: &str,
+) -> serde_json::Value {
+    let status = get_full_status(cmd_tx).await;
+    status["server"]["groups"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .flat_map(|g| g["clients"].as_array().into_iter().flatten())
+        .find(|c| c["id"].as_str() == Some(client_id))
+        .cloned()
+        .unwrap_or_default()
 }

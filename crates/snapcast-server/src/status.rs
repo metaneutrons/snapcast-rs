@@ -177,7 +177,7 @@ pub struct Stream {
     /// Stream ID.
     pub id: String,
     /// Stream properties (MPRIS-style metadata).
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub properties: Option<StreamProperties>,
     /// Playback status.
     pub status: StreamStatus,

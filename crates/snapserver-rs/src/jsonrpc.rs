@@ -264,8 +264,46 @@ pub(crate) async fn handle_request(
             let Some(command) = params["command"].as_str() else {
                 return err(id, INVALID_PARAMS, "missing 'command'");
             };
-            tracing::debug!(stream_id, command, "Stream control");
+            let _ = cmd_tx
+                .send(snapcast_server::ServerCommand::StreamControl {
+                    stream_id: stream_id.to_string(),
+                    command: command.to_string(),
+                    params: params["params"].clone(),
+                })
+                .await;
             ok(id, json!({"id": stream_id}))
+        }
+        "Stream.AddStream" => {
+            let Some(stream_uri) = params["streamUri"].as_str() else {
+                return err(id, INVALID_PARAMS, "missing 'streamUri'");
+            };
+            let (tx, rx) = tokio::sync::oneshot::channel();
+            let _ = cmd_tx
+                .send(snapcast_server::ServerCommand::AddStream {
+                    uri: stream_uri.to_string(),
+                    response_tx: tx,
+                })
+                .await;
+            match rx.await {
+                Ok(Ok(stream_id)) => {
+                    let status = get_status(cmd_tx).await.unwrap_or_default();
+                    ok_with_notify(id, json!({"id": stream_id}), "Server.OnUpdate", status)
+                }
+                Ok(Err(e)) => err(id, INVALID_PARAMS, &e),
+                Err(_) => err(id, INVALID_PARAMS, "command failed"),
+            }
+        }
+        "Stream.RemoveStream" => {
+            let Some(stream_id) = params["id"].as_str() else {
+                return err(id, INVALID_PARAMS, "missing 'id'");
+            };
+            let _ = cmd_tx
+                .send(snapcast_server::ServerCommand::RemoveStream {
+                    stream_id: stream_id.to_string(),
+                })
+                .await;
+            let status = get_status(cmd_tx).await.unwrap_or_default();
+            ok_with_notify(id, json!({"id": stream_id}), "Server.OnUpdate", status)
         }
 
         // --- Auth ---

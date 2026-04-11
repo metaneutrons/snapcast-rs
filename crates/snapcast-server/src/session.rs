@@ -21,6 +21,7 @@ use crate::ServerEvent;
 use crate::WireChunkData;
 use crate::time::now_usec;
 
+#[allow(dead_code)]
 /// Info about a connected streaming client.
 #[derive(Debug, Clone)]
 pub struct ClientInfo {
@@ -149,6 +150,7 @@ impl SessionServer {
     }
 
     /// Get list of connected clients.
+    #[allow(dead_code)]
     pub async fn connected_clients(&self) -> Vec<ClientInfo> {
         self.clients
             .lock()

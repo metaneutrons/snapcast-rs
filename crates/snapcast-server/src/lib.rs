@@ -95,7 +95,7 @@ pub mod crypto;
 pub(crate) mod encoder;
 #[cfg(feature = "mdns")]
 pub(crate) mod mdns;
-pub mod session;
+pub(crate) mod session;
 pub mod state;
 pub(crate) mod stream;
 pub mod time;
@@ -117,6 +117,7 @@ pub struct ClientSettingsUpdate {
 
 /// Events emitted by the server to the consumer.
 #[derive(Debug)]
+#[non_exhaustive]
 pub enum ServerEvent {
     /// A client connected via the binary protocol.
     ClientConnected {
@@ -201,6 +202,7 @@ pub enum ServerEvent {
 
 /// Commands the consumer sends to the server.
 #[derive(Debug)]
+#[non_exhaustive]
 pub enum ServerCommand {
     /// Set a client's volume.
     SetClientVolume {

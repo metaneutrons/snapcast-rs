@@ -69,8 +69,8 @@ struct Cli {
 
     /// Disable mDNS advertisement
     #[cfg(feature = "mdns")]
-    #[arg(long)]
-    no_mdns: bool,
+    #[arg(long = "mdns-disable")]
+    mdns_disable: bool,
 
     /// mDNS service name (default: Snapserver)
     #[cfg(feature = "mdns")]
@@ -105,7 +105,7 @@ fn main() -> anyhow::Result<()> {
             #[cfg(feature = "encryption")]
             encryption_psk: cli.encryption_psk,
             #[cfg(feature = "mdns")]
-            no_mdns: cli.no_mdns,
+            no_mdns: cli.mdns_disable,
             #[cfg(feature = "mdns")]
             mdns_name: cli.mdns_name,
         },

@@ -14,12 +14,8 @@ const MAGIC: &[u8; 4] = b"F32L";
 
 /// Fill buffer with random bytes (uses system RNG).
 #[cfg(feature = "encryption")]
-fn getrandom(buf: &mut [u8]) {
-    use std::io::Read;
-    std::fs::File::open("/dev/urandom")
-        .expect("open /dev/urandom")
-        .read_exact(buf)
-        .expect("read /dev/urandom");
+fn random_bytes(buf: &mut [u8]) {
+    getrandom::fill(buf).expect("OS RNG unavailable");
 }
 
 /// F32 LZ4 encoder — compresses f32 audio with LZ4.
@@ -57,7 +53,7 @@ impl F32Lz4Encoder {
     #[cfg(feature = "encryption")]
     pub fn with_encryption(mut self, psk: &str) -> Self {
         let mut salt = [0u8; 16];
-        getrandom(&mut salt);
+        random_bytes(&mut salt);
         self.encryptor = Some(crate::crypto::ChunkEncryptor::new(psk, &salt));
         // Append encryption marker + salt to header
         self.header.extend_from_slice(b"ENC\0");

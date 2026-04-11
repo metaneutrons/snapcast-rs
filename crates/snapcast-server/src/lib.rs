@@ -642,6 +642,8 @@ impl SnapServer {
                                     muted: c.config.volume.muted,
                                 }).await;
                             }
+                            save_state(&s);
+                            drop(s);
                             let _ = event_tx.try_send(ServerEvent::ClientLatencyChanged { client_id, latency });
                         }
                         Some(ServerCommand::SetClientName { client_id, name }) => {
@@ -696,6 +698,7 @@ impl SnapServer {
                             save_state(&s);
                             drop(s);
                             let _ = event_tx.try_send(ServerEvent::ServerUpdated);
+                            session_srv.update_routing_all().await;
                         }
                         Some(ServerCommand::SetStreamMeta { stream_id, metadata }) => {
                             let mut s = shared_state.lock().await;

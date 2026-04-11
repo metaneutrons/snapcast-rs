@@ -276,7 +276,7 @@ impl ServerState {
             .iter()
             .map(|s| status::Stream {
                 id: s.id.clone(),
-                status: s.status.clone(),
+                status: status::StreamStatus::from(s.status.as_str()),
                 uri: status::StreamUri {
                     raw: s.uri.clone(),
                     ..Default::default()

@@ -351,7 +351,7 @@ mod tests {
                                 }],
                                 streams: vec![status::Stream {
                                     id: "default".into(),
-                                    status: "playing".into(),
+                                    status: status::StreamStatus::Playing,
                                     ..Default::default()
                                 }],
                                 ..Default::default()

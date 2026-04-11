@@ -179,10 +179,36 @@ pub struct Stream {
     /// Stream properties (MPRIS-style metadata).
     #[serde(default)]
     pub properties: Option<StreamProperties>,
-    /// Status: "playing", "idle", "unknown", "disabled".
-    pub status: String,
+    /// Playback status.
+    pub status: StreamStatus,
     /// Source URI.
     pub uri: StreamUri,
+}
+
+/// Stream playback status.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum StreamStatus {
+    /// No audio data flowing.
+    #[default]
+    Idle,
+    /// Audio data actively streaming.
+    Playing,
+    /// Stream disabled by configuration.
+    Disabled,
+    /// Status not recognized.
+    Unknown,
+}
+
+impl From<&str> for StreamStatus {
+    fn from(s: &str) -> Self {
+        match s {
+            "playing" => Self::Playing,
+            "idle" => Self::Idle,
+            "disabled" => Self::Disabled,
+            _ => Self::Unknown,
+        }
+    }
 }
 
 /// Parsed stream URI components.

@@ -67,6 +67,16 @@ struct Cli {
     #[arg(long = "source")]
     sources: Vec<String>,
 
+    /// Disable mDNS advertisement
+    #[cfg(feature = "mdns")]
+    #[arg(long)]
+    no_mdns: bool,
+
+    /// mDNS service name (default: Snapserver)
+    #[cfg(feature = "mdns")]
+    #[arg(long)]
+    mdns_name: Option<String>,
+
     /// Log filter
     #[arg(long, default_value = "info")]
     logfilter: String,
@@ -94,6 +104,10 @@ fn main() -> anyhow::Result<()> {
             sources: cli.sources,
             #[cfg(feature = "encryption")]
             encryption_psk: cli.encryption_psk,
+            #[cfg(feature = "mdns")]
+            no_mdns: cli.no_mdns,
+            #[cfg(feature = "mdns")]
+            mdns_name: cli.mdns_name,
         },
     );
 

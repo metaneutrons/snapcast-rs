@@ -108,6 +108,10 @@ pub(crate) struct CliOverrides {
     pub sources: Vec<String>,
     #[cfg(feature = "encryption")]
     pub encryption_psk: Option<String>,
+    #[cfg(feature = "mdns")]
+    pub no_mdns: bool,
+    #[cfg(feature = "mdns")]
+    pub mdns_name: Option<String>,
 }
 
 /// Merge CLI overrides into config.
@@ -139,6 +143,15 @@ pub(crate) fn merge_cli(mut config: BinaryConfig, cli: CliOverrides) -> BinaryCo
     #[cfg(feature = "encryption")]
     if let Some(v) = cli.encryption_psk {
         config.server.encryption_psk = Some(v);
+    }
+    #[cfg(feature = "mdns")]
+    {
+        if cli.no_mdns {
+            config.server.mdns_enabled = false;
+        }
+        if let Some(v) = cli.mdns_name {
+            config.server.mdns_name = v;
+        }
     }
 
     // Resolve f32lz4e → f32lz4 + default PSK (if no explicit PSK set)
@@ -208,6 +221,10 @@ mod tests {
                 codec: None,
                 sampleformat: None,
                 sources: vec![],
+                #[cfg(feature = "mdns")]
+                no_mdns: false,
+                #[cfg(feature = "mdns")]
+                mdns_name: None,
             },
         );
         assert_eq!(merged.server.stream_port, 9704);

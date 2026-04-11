@@ -350,6 +350,9 @@ pub struct ServerConfig {
     /// Enable mDNS advertisement. Default: true (when mdns feature is compiled in).
     #[cfg(feature = "mdns")]
     pub mdns_enabled: bool,
+    /// mDNS service name. Default: "Snapserver".
+    #[cfg(feature = "mdns")]
+    pub mdns_name: String,
     /// Auth validator for streaming clients. `None` = no auth required.
     pub auth: Option<std::sync::Arc<dyn auth::AuthValidator>>,
     /// Pre-shared key for f32lz4 encryption. `None` = no encryption.
@@ -372,6 +375,8 @@ impl Default for ServerConfig {
             mdns_service_type: "_snapcast._tcp.local.".into(),
             #[cfg(feature = "mdns")]
             mdns_enabled: true,
+            #[cfg(feature = "mdns")]
+            mdns_name: "Snapserver".into(),
             auth: None,
             #[cfg(feature = "encryption")]
             encryption_psk: None,
@@ -509,9 +514,13 @@ impl SnapServer {
         // Advertise via mDNS (protocol-level discovery)
         #[cfg(feature = "mdns")]
         let _mdns = if self.config.mdns_enabled {
-            mdns::MdnsAdvertiser::new(self.config.stream_port, &self.config.mdns_service_type)
-                .map_err(|e| tracing::warn!(error = %e, "mDNS advertisement failed"))
-                .ok()
+            mdns::MdnsAdvertiser::new(
+                self.config.stream_port,
+                &self.config.mdns_service_type,
+                &self.config.mdns_name,
+            )
+            .map_err(|e| tracing::warn!(error = %e, "mDNS advertisement failed"))
+            .ok()
         } else {
             None
         };

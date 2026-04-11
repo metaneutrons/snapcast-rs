@@ -52,11 +52,14 @@ impl ChunkEncryptor {
     }
 }
 
-/// Audio chunk decryptor.
+/// Audio chunk decryptor — see `snapcast-client` crate for the client-side implementation.
+/// Kept here only for roundtrip tests.
+#[cfg(test)]
 pub struct ChunkDecryptor {
     cipher: ChaCha20Poly1305,
 }
 
+#[cfg(test)]
 impl ChunkDecryptor {
     /// Create from PSK and session salt.
     pub fn new(psk: &str, salt: &[u8]) -> Self {

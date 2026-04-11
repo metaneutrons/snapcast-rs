@@ -267,6 +267,7 @@ async fn handle_client(
     event_tx: mpsc::Sender<ServerEvent>,
 ) -> Result<()> {
     let hello_msg = read_frame_from(&mut stream).await?;
+    let hello_id = hello_msg.base.id;
     let hello = match hello_msg.payload {
         MessagePayload::Hello(h) => h,
         _ => anyhow::bail!("expected Hello, got {:?}", hello_msg.base.msg_type),
@@ -326,9 +327,8 @@ async fn handle_client(
         })
         .await;
 
-    // ServerSettings
-    send_msg(
-        &mut stream,
+    // ServerSettings (refers_to must match Hello id for client's pending request)
+    let ss_frame = serialize_msg(
         MessageType::ServerSettings,
         &MessagePayload::ServerSettings(ServerSettings {
             buffer_ms: ctx.buffer_ms,
@@ -336,8 +336,12 @@ async fn handle_client(
             volume: 100,
             muted: false,
         }),
-    )
-    .await?;
+        hello_id,
+    )?;
+    stream
+        .write_all(&ss_frame)
+        .await
+        .context("write server settings")?;
 
     // CodecHeader for client's stream
     match ctx.codec_header_for(&initial_stream_id).await {

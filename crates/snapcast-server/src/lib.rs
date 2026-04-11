@@ -258,6 +258,13 @@ pub enum ServerCommand {
         /// Client ID.
         client_id: String,
     },
+    /// Set stream metadata (artist, title, album, etc.).
+    SetStreamMeta {
+        /// Stream ID.
+        stream_id: String,
+        /// Metadata key-value pairs.
+        metadata: std::collections::HashMap<String, serde_json::Value>,
+    },
     /// Get full server status.
     GetStatus {
         /// Response channel.
@@ -302,6 +309,8 @@ pub struct ServerConfig {
     /// Pre-shared key for f32lz4 encryption. `None` = no encryption.
     #[cfg(feature = "encryption")]
     pub encryption_psk: Option<String>,
+    /// Path to persist server state (clients, groups). `None` = no persistence.
+    pub state_file: Option<std::path::PathBuf>,
 }
 
 impl Default for ServerConfig {
@@ -315,6 +324,7 @@ impl Default for ServerConfig {
             auth: None,
             #[cfg(feature = "encryption")]
             encryption_psk: None,
+            state_file: None,
         }
     }
 }
@@ -470,7 +480,13 @@ impl SnapServer {
         let mut first_stream_name = String::new();
 
         // Shared state for command handlers
-        let shared_state = Arc::new(tokio::sync::Mutex::new(state::ServerState::default()));
+        let initial_state = self
+            .config
+            .state_file
+            .as_ref()
+            .map(|p| state::ServerState::load(p))
+            .unwrap_or_default();
+        let shared_state = Arc::new(tokio::sync::Mutex::new(initial_state));
 
         for (name, stream_cfg, rx) in streams {
             if first_stream_name.is_empty() {
@@ -530,6 +546,15 @@ impl SnapServer {
             }
         });
 
+        let state_file = self.config.state_file.clone();
+        let save_state = |s: &state::ServerState| {
+            if let Some(ref path) = state_file {
+                let _ = s
+                    .save(path)
+                    .map_err(|e| tracing::warn!(error = %e, "Failed to save state"));
+            }
+        };
+
         // Main loop
         loop {
             tokio::select! {
@@ -546,6 +571,8 @@ impl SnapServer {
                                 c.config.volume.percent = volume;
                                 c.config.volume.muted = muted;
                             }
+                            save_state(&s);
+                            drop(s);
                             session_srv.push_settings(ClientSettingsUpdate {
                                 client_id: client_id.clone(),
                                 buffer_ms: self.config.buffer_ms as i32,
@@ -572,10 +599,15 @@ impl SnapServer {
                             if let Some(c) = s.clients.get_mut(&client_id) {
                                 c.config.name = name.clone();
                             }
+                            save_state(&s);
+                            drop(s);
                             let _ = event_tx.try_send(ServerEvent::ClientNameChanged { client_id, name });
                         }
                         Some(ServerCommand::SetGroupStream { group_id, stream_id }) => {
-                            shared_state.lock().await.set_group_stream(&group_id, &stream_id);
+                            let mut s = shared_state.lock().await;
+                            s.set_group_stream(&group_id, &stream_id);
+                            save_state(&s);
+                            drop(s);
                             let _ = event_tx.try_send(ServerEvent::GroupStreamChanged { group_id, stream_id });
                         }
                         Some(ServerCommand::SetGroupMute { group_id, muted }) => {
@@ -583,6 +615,8 @@ impl SnapServer {
                             if let Some(g) = s.groups.iter_mut().find(|g| g.id == group_id) {
                                 g.muted = muted;
                             }
+                            save_state(&s);
+                            drop(s);
                             let _ = event_tx.try_send(ServerEvent::GroupMuteChanged { group_id, muted });
                         }
                         Some(ServerCommand::SetGroupName { group_id, name }) => {
@@ -590,6 +624,8 @@ impl SnapServer {
                             if let Some(g) = s.groups.iter_mut().find(|g| g.id == group_id) {
                                 g.name = name.clone();
                             }
+                            save_state(&s);
+                            drop(s);
                             let _ = event_tx.try_send(ServerEvent::GroupNameChanged { group_id, name });
                         }
                         Some(ServerCommand::SetGroupClients { group_id, clients }) => {
@@ -600,6 +636,8 @@ impl SnapServer {
                             if let Some(g) = s.groups.iter_mut().find(|g| g.id == group_id) {
                                 g.clients = clients;
                             }
+                            save_state(&s);
+                            drop(s);
                             // Structural change — mirrors Server.OnUpdate in C++ snapserver
                             let _ = event_tx.try_send(ServerEvent::ServerUpdated);
                         }
@@ -607,8 +645,17 @@ impl SnapServer {
                             let mut s = shared_state.lock().await;
                             s.remove_client_from_groups(&client_id);
                             s.clients.remove(&client_id);
+                            save_state(&s);
                             drop(s);
                             let _ = event_tx.try_send(ServerEvent::ServerUpdated);
+                        }
+                        Some(ServerCommand::SetStreamMeta { stream_id, metadata }) => {
+                            let mut s = shared_state.lock().await;
+                            if let Some(stream) = s.streams.iter_mut().find(|st| st.id == stream_id) {
+                                stream.properties = metadata;
+                            }
+                            drop(s);
+                            let _ = event_tx.try_send(ServerEvent::StreamStatus { stream_id, status: "playing".into() });
                         }
                         Some(ServerCommand::GetStatus { response_tx }) => {
                             let s = shared_state.lock().await;

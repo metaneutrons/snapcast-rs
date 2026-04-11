@@ -223,6 +223,7 @@ impl ServerState {
                     "id": s.id,
                     "status": s.status,
                     "uri": { "raw": s.uri },
+                    "properties": s.properties,
                 })
             })
             .collect();

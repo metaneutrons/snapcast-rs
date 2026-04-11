@@ -178,6 +178,13 @@ pub enum ServerEvent {
         /// New status.
         status: String,
     },
+    /// Stream metadata/properties changed.
+    StreamMetaChanged {
+        /// Stream identifier.
+        stream_id: String,
+        /// Updated properties.
+        metadata: std::collections::HashMap<String, serde_json::Value>,
+    },
     /// A group's name changed.
     GroupNameChanged {
         /// Group ID.
@@ -682,10 +689,10 @@ impl SnapServer {
                         Some(ServerCommand::SetStreamMeta { stream_id, metadata }) => {
                             let mut s = shared_state.lock().await;
                             if let Some(stream) = s.streams.iter_mut().find(|st| st.id == stream_id) {
-                                stream.properties = metadata;
+                                stream.properties = metadata.clone();
                             }
                             drop(s);
-                            let _ = event_tx.try_send(ServerEvent::StreamStatus { stream_id, status: "playing".into() });
+                            let _ = event_tx.try_send(ServerEvent::StreamMetaChanged { stream_id, metadata });
                         }
                         Some(ServerCommand::AddStream { uri, response_tx }) => {
                             // Parse stream name from URI query param, or use the URI as ID

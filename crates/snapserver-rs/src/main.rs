@@ -299,8 +299,29 @@ fn main() -> anyhow::Result<()> {
                     })),
                     ServerEvent::StreamStatus { stream_id, status } => {
                         tracing::info!(stream_id, status, "Stream status");
-                        None // Stream status changes are not notifications in C++ protocol
+                        // Fetch full stream object for the notification
+                        let full_status = get_full_status(&event_cmd_tx).await;
+                        let stream_json = full_status["server"]["streams"]
+                            .as_array()
+                            .into_iter()
+                            .flatten()
+                            .find(|s| s["id"].as_str() == Some(&stream_id))
+                            .cloned()
+                            .unwrap_or_default();
+                        Some(serde_json::json!({
+                            "jsonrpc": "2.0",
+                            "method": "Stream.OnUpdate",
+                            "params": {"id": stream_id, "stream": stream_json}
+                        }))
                     }
+                    ServerEvent::StreamMetaChanged {
+                        stream_id,
+                        metadata,
+                    } => Some(serde_json::json!({
+                        "jsonrpc": "2.0",
+                        "method": "Stream.OnProperties",
+                        "params": {"id": stream_id, "properties": metadata}
+                    })),
                     ServerEvent::ServerUpdated => {
                         let status = get_full_status(&event_cmd_tx).await;
                         Some(serde_json::json!({

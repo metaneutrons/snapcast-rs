@@ -46,6 +46,22 @@ pub struct StreamCodecInfo {
 // ── Session context (private fields, method API) ──────────────
 
 /// Shared context for all sessions.
+///
+/// # Lock ordering
+///
+/// When acquiring multiple locks, always follow this order to prevent deadlocks:
+///
+/// 1. `shared_state` (server state — groups, clients, streams)
+/// 2. `routing_senders` (per-client watch channels)
+/// 3. `settings_senders` / `custom_senders` (per-client mpsc channels)
+/// 4. `codec_headers` (per-stream codec info)
+///
+/// Never hold a lower-numbered lock while acquiring a higher-numbered one.
+/// In practice, most paths only need one or two locks:
+/// - Routing updates: `shared_state` → `routing_senders`
+/// - Settings push: `settings_senders` only
+/// - Codec lookup: `codec_headers` only
+/// - Client registration: `shared_state`, then separately `routing_senders`
 struct SessionContext {
     buffer_ms: i32,
     auth: Option<Arc<dyn crate::auth::AuthValidator>>,

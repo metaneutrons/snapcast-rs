@@ -421,7 +421,17 @@ async fn session_loop(
 
         tokio::select! {
             chunk = chunk_rx.recv() => {
-                let chunk = chunk.context("broadcast closed")?;
+                let chunk = match chunk {
+                    Ok(c) => c,
+                    Err(broadcast::error::RecvError::Lagged(n)) => {
+                        tracing::warn!(skipped = n, "Broadcast lagged");
+                        continue;
+                    }
+                    Err(broadcast::error::RecvError::Closed) => {
+                        tracing::warn!("Broadcast closed");
+                        anyhow::bail!("broadcast closed");
+                    }
+                };
                 if !should_send_chunk(&chunk, &routing, ctx.send_audio_to_muted) {
                     continue;
                 }
@@ -448,10 +458,12 @@ async fn session_loop(
             msg = read_frame_from(&mut reader) => {
                 let msg = msg?;
                 match msg.payload {
-                    MessagePayload::Time(t) => {
+                    MessagePayload::Time(_t) => {
+                        // latency = server_received - client_sent (c2s one-way estimate)
+                        let latency = msg.base.received - msg.base.sent;
                         let frame = serialize_msg(
                             MessageType::Time,
-                            &MessagePayload::Time(Time { latency: t.latency }),
+                            &MessagePayload::Time(Time { latency }),
                             msg.base.id,
                         )?;
                         writer.write_all(&frame).await.context("write time")?;

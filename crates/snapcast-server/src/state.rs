@@ -296,11 +296,24 @@ impl ServerState {
 
 fn generate_id() -> String {
     use std::time::{SystemTime, UNIX_EPOCH};
+    // Seed from time, mix with random-ish bits — matches C++ UUID format
     let t = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .unwrap_or_default()
-        .as_nanos();
-    format!("{t:032x}")
+        .as_nanos() as u64;
+    // Use wrapping arithmetic to spread bits across a 128-bit space
+    let a = t.wrapping_mul(6364136223846793005);
+    let b = t.wrapping_mul(1442695040888963407).wrapping_add(a);
+    format!(
+        "{:08x}-{:04x}-{:04x}-{:04x}-{:04x}{:04x}{:04x}",
+        (a >> 32) as u32,
+        (a >> 16) as u16,
+        (a & 0xffff) as u16,
+        (b >> 48) as u16,
+        (b >> 32) as u16,
+        (b >> 16) as u16,
+        b as u16,
+    )
 }
 
 #[cfg(test)]
@@ -374,5 +387,20 @@ mod tests {
         let status = state.to_status();
         assert_eq!(status.server.groups.len(), 1);
         assert_eq!(status.server.groups[0].clients.len(), 1);
+    }
+
+    #[test]
+    fn generate_id_is_uuid_format() {
+        let id = generate_id();
+        // xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx
+        let parts: Vec<&str> = id.split('-').collect();
+        assert_eq!(parts.len(), 5, "expected 5 UUID parts, got: {id}");
+        assert_eq!(parts[0].len(), 8);
+        assert_eq!(parts[1].len(), 4);
+        assert_eq!(parts[2].len(), 4);
+        assert_eq!(parts[3].len(), 4);
+        assert_eq!(parts[4].len(), 12);
+        // All hex
+        assert!(id.replace('-', "").chars().all(|c| c.is_ascii_hexdigit()));
     }
 }

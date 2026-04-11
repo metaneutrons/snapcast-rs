@@ -295,25 +295,7 @@ impl ServerState {
 }
 
 fn generate_id() -> String {
-    use std::time::{SystemTime, UNIX_EPOCH};
-    // Seed from time, mix with random-ish bits — matches C++ UUID format
-    let t = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_nanos() as u64;
-    // Use wrapping arithmetic to spread bits across a 128-bit space
-    let a = t.wrapping_mul(6364136223846793005);
-    let b = t.wrapping_mul(1442695040888963407).wrapping_add(a);
-    format!(
-        "{:08x}-{:04x}-{:04x}-{:04x}-{:04x}{:04x}{:04x}",
-        (a >> 32) as u32,
-        (a >> 16) as u16,
-        (a & 0xffff) as u16,
-        (b >> 48) as u16,
-        (b >> 32) as u16,
-        (b >> 16) as u16,
-        b as u16,
-    )
+    uuid::Uuid::new_v4().to_string()
 }
 
 #[cfg(test)]

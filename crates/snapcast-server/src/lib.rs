@@ -630,12 +630,13 @@ impl SnapServer {
                                 c.config.volume.percent = volume;
                                 c.config.volume.muted = muted;
                             }
+                            let latency = s.clients.get(&client_id).map(|c| c.config.latency).unwrap_or(0);
                             save_state(&s);
                             drop(s);
                             session_srv.push_settings(ClientSettingsUpdate {
                                 client_id: client_id.clone(),
                                 buffer_ms: self.config.buffer_ms as i32,
-                                latency: 0, volume, muted,
+                                latency, volume, muted,
                             }).await;
                             let _ = event_tx.try_send(ServerEvent::ClientVolumeChanged { client_id: client_id.clone(), volume, muted });
                             session_srv.update_routing_for_client(&client_id).await;
@@ -752,6 +753,7 @@ impl SnapServer {
                             save_state(&s);
                             drop(s);
                             let _ = event_tx.try_send(ServerEvent::ServerUpdated);
+                            session_srv.update_routing_all().await;
                         }
                         Some(ServerCommand::StreamControl { stream_id, command, params }) => {
                             tracing::debug!(stream_id, command, ?params, "Stream control forwarded");

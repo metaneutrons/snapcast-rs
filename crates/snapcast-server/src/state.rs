@@ -129,6 +129,11 @@ impl ServerState {
                     config: ClientConfig::default(),
                 },
             );
+        } else {
+            // Update host info on reconnect (may change after OS reinstall etc.)
+            let c = self.clients.get_mut(id).unwrap();
+            c.host_name = host_name.to_string();
+            c.mac = mac.to_string();
         }
         self.clients.get_mut(id).expect("just inserted")
     }

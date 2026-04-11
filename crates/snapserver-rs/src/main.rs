@@ -240,8 +240,6 @@ fn main() -> anyhow::Result<()> {
             while let Some(event) = events.recv().await {
                 let notification: Option<serde_json::Value> = match event {
                     ServerEvent::ClientConnected { id, .. } => {
-                        tracing::info!(id, "Client connected");
-                        // Fetch fresh client data from status
                         let client_json = get_client_from_status(&event_cmd_tx, &id).await;
                         Some(serde_json::json!({
                             "jsonrpc": "2.0",
@@ -250,7 +248,6 @@ fn main() -> anyhow::Result<()> {
                         }))
                     }
                     ServerEvent::ClientDisconnected { id } => {
-                        tracing::info!(id, "Client disconnected");
                         let client_json = get_client_from_status(&event_cmd_tx, &id).await;
                         Some(serde_json::json!({
                             "jsonrpc": "2.0",

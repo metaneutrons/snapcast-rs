@@ -20,6 +20,7 @@
 
 pub mod message;
 pub mod sample_format;
+pub mod status;
 pub mod types;
 
 #[cfg(feature = "custom-protocol")]

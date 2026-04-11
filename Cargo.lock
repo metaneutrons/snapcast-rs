@@ -2430,6 +2430,7 @@ dependencies = [
  "serde_json",
  "sha2",
  "snapcast-proto",
+ "socket2 0.5.10",
  "subtle",
  "tokio",
  "tracing",

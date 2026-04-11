@@ -18,6 +18,7 @@ snapcast-server = { path = "crates/snapcast-server", version = "0.5.0" }
 
 # Async runtime
 tokio = { version = "1", features = ["full"] }
+socket2 = { version = "0.5", features = ["all"] }
 
 # Serialization
 serde = { version = "1", features = ["derive"] }

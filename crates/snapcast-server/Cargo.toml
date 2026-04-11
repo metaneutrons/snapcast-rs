@@ -17,6 +17,7 @@ sha2 = { workspace = true, optional = true }
 subtle = { workspace = true }
 snapcast-proto = { workspace = true }
 tokio = { workspace = true }
+socket2 = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 tracing = { workspace = true }

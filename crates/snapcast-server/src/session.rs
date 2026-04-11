@@ -233,6 +233,10 @@ impl SessionServer {
 
         loop {
             let (stream, peer) = listener.accept().await?;
+            stream.set_nodelay(true).ok();
+            let ka = socket2::TcpKeepalive::new().with_time(std::time::Duration::from_secs(10));
+            let sock = socket2::SockRef::from(&stream);
+            sock.set_tcp_keepalive(&ka).ok();
             tracing::info!(%peer, "Client connecting");
 
             let chunk_sub = chunk_rx.subscribe();
@@ -298,10 +302,17 @@ async fn handle_client(
     // Register in state + build initial routing
     let initial_stream_id;
     let initial_routing;
+    let client_settings;
     {
         let mut s = ctx.shared_state.lock().await;
         let c = s.get_or_create_client(&client_id, &hello.host_name, &hello.mac);
         c.connected = true;
+        client_settings = ServerSettings {
+            buffer_ms: ctx.buffer_ms,
+            latency: c.config.latency,
+            volume: c.config.volume.percent,
+            muted: c.config.volume.muted,
+        };
         s.group_for_client(&client_id, &ctx.default_stream);
 
         initial_routing =
@@ -330,12 +341,7 @@ async fn handle_client(
     // ServerSettings (refers_to must match Hello id for client's pending request)
     let ss_frame = serialize_msg(
         MessageType::ServerSettings,
-        &MessagePayload::ServerSettings(ServerSettings {
-            buffer_ms: ctx.buffer_ms,
-            latency: 0,
-            volume: 100,
-            muted: false,
-        }),
+        &MessagePayload::ServerSettings(client_settings),
         hello_id,
     )?;
     stream
@@ -611,6 +617,8 @@ async fn send_msg(
 }
 
 async fn read_frame_from<R: AsyncReadExt + Unpin>(reader: &mut R) -> Result<TypedMessage> {
+    const MAX_PAYLOAD_SIZE: u32 = 2 * 1024 * 1024; // 2 MiB
+
     let mut header_buf = [0u8; BaseMessage::HEADER_SIZE];
     reader
         .read_exact(&mut header_buf)
@@ -619,6 +627,11 @@ async fn read_frame_from<R: AsyncReadExt + Unpin>(reader: &mut R) -> Result<Type
     let mut base =
         BaseMessage::read_from(&mut &header_buf[..]).map_err(|e| anyhow::anyhow!("parse: {e}"))?;
     base.received = now_timeval();
+    anyhow::ensure!(
+        base.size <= MAX_PAYLOAD_SIZE,
+        "payload too large: {} bytes",
+        base.size
+    );
     let mut payload_buf = vec![0u8; base.size as usize];
     if !payload_buf.is_empty() {
         reader

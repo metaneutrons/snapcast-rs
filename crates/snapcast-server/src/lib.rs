@@ -621,6 +621,9 @@ impl SnapServer {
                                 latency: 0, volume, muted,
                             }).await;
                             let _ = event_tx.try_send(ServerEvent::ClientVolumeChanged { client_id, volume, muted });
+                            if muted {
+                                session_srv.update_routing().await;
+                            }
                         }
                         Some(ServerCommand::SetClientLatency { client_id, latency }) => {
                             let mut s = shared_state.lock().await;
@@ -651,6 +654,7 @@ impl SnapServer {
                             save_state(&s);
                             drop(s);
                             let _ = event_tx.try_send(ServerEvent::GroupStreamChanged { group_id, stream_id });
+                            session_srv.update_routing().await;
                         }
                         Some(ServerCommand::SetGroupMute { group_id, muted }) => {
                             let mut s = shared_state.lock().await;
@@ -660,6 +664,7 @@ impl SnapServer {
                             save_state(&s);
                             drop(s);
                             let _ = event_tx.try_send(ServerEvent::GroupMuteChanged { group_id, muted });
+                            session_srv.update_routing().await;
                         }
                         Some(ServerCommand::SetGroupName { group_id, name }) => {
                             let mut s = shared_state.lock().await;
@@ -677,6 +682,7 @@ impl SnapServer {
                             drop(s);
                             // Structural change — mirrors Server.OnUpdate in C++ snapserver
                             let _ = event_tx.try_send(ServerEvent::ServerUpdated);
+                            session_srv.update_routing().await;
                         }
                         Some(ServerCommand::DeleteClient { client_id }) => {
                             let mut s = shared_state.lock().await;

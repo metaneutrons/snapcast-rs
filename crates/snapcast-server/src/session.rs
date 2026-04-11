@@ -14,12 +14,23 @@ use snapcast_proto::message::wire_chunk::WireChunk;
 use snapcast_proto::types::Timeval;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
-use tokio::sync::{Mutex, broadcast, mpsc};
+use tokio::sync::{Mutex, broadcast, mpsc, watch};
 
 use crate::ClientSettingsUpdate;
 use crate::ServerEvent;
 use crate::WireChunkData;
 use crate::time::now_usec;
+
+/// Per-session routing state — updated when groups/streams/mute change.
+#[derive(Debug, Clone, PartialEq)]
+pub struct SessionRouting {
+    /// Stream ID this client should receive audio from.
+    pub stream_id: String,
+    /// Client is muted.
+    pub client_muted: bool,
+    /// Client's group is muted.
+    pub group_muted: bool,
+}
 
 /// Manages all streaming client sessions.
 pub struct SessionServer {
@@ -29,6 +40,8 @@ pub struct SessionServer {
     settings_senders: Arc<Mutex<HashMap<String, mpsc::Sender<ClientSettingsUpdate>>>>,
     #[cfg(feature = "custom-protocol")]
     custom_senders: Arc<Mutex<HashMap<String, mpsc::Sender<CustomOutbound>>>>,
+    /// Per-client routing watch senders — updated by command handlers.
+    routing_senders: Arc<Mutex<HashMap<String, watch::Sender<SessionRouting>>>>,
     shared_state: Arc<tokio::sync::Mutex<crate::state::ServerState>>,
     default_stream: String,
 }
@@ -59,6 +72,7 @@ impl SessionServer {
             settings_senders: Arc::new(Mutex::new(HashMap::new())),
             #[cfg(feature = "custom-protocol")]
             custom_senders: Arc::new(Mutex::new(HashMap::new())),
+            routing_senders: Arc::new(Mutex::new(HashMap::new())),
             shared_state,
             default_stream,
         }
@@ -69,6 +83,30 @@ impl SessionServer {
         let senders = self.settings_senders.lock().await;
         if let Some(tx) = senders.get(&update.client_id) {
             let _ = tx.send(update).await;
+        }
+    }
+
+    /// Update routing for all connected sessions from current server state.
+    ///
+    /// Called after SetGroupStream, SetGroupClients, SetGroupMute, SetClientVolume (mute).
+    pub async fn update_routing(&self) {
+        let s = self.shared_state.lock().await;
+        let senders = self.routing_senders.lock().await;
+        for group in &s.groups {
+            for client_id in &group.clients {
+                if let Some(tx) = senders.get(client_id) {
+                    let client_muted = s
+                        .clients
+                        .get(client_id)
+                        .map(|c| c.config.volume.muted)
+                        .unwrap_or(false);
+                    let _ = tx.send(SessionRouting {
+                        stream_id: group.stream_id.clone(),
+                        client_muted,
+                        group_muted: group.muted,
+                    });
+                }
+            }
         }
     }
 
@@ -91,6 +129,7 @@ impl SessionServer {
             let settings_senders = Arc::clone(&self.settings_senders);
             #[cfg(feature = "custom-protocol")]
             let custom_senders = Arc::clone(&self.custom_senders);
+            let routing_senders = Arc::clone(&self.routing_senders);
             let event_tx = event_tx.clone();
             let buffer_ms = self.buffer_ms;
             let auth = self.auth.clone();
@@ -112,6 +151,7 @@ impl SessionServer {
                     &settings_senders,
                     #[cfg(feature = "custom-protocol")]
                     &custom_senders,
+                    &routing_senders,
                     settings_tx,
                     #[cfg(feature = "custom-protocol")]
                     custom_tx,
@@ -151,6 +191,7 @@ async fn handle_client(
     #[cfg(feature = "custom-protocol")] custom_senders: &Mutex<
         HashMap<String, mpsc::Sender<CustomOutbound>>,
     >,
+    routing_senders: &Mutex<HashMap<String, watch::Sender<SessionRouting>>>,
     settings_tx: mpsc::Sender<ClientSettingsUpdate>,
     #[cfg(feature = "custom-protocol")] custom_tx: mpsc::Sender<CustomOutbound>,
     event_tx: mpsc::Sender<ServerEvent>,
@@ -208,7 +249,8 @@ async fn handle_client(
         }
     }
 
-    // Register settings channel
+    // Register settings + routing channels
+    let initial_routing;
     {
         settings_senders
             .lock()
@@ -219,7 +261,31 @@ async fn handle_client(
             .lock()
             .await
             .insert(client_id.clone(), custom_tx);
+
+        // Register in server state (creates group if needed)
+        let mut s = shared_state.lock().await;
+        let c = s.get_or_create_client(&client_id, &hello.host_name, &hello.mac);
+        c.connected = true;
+        s.group_for_client(&client_id, default_stream);
+
+        // Determine initial routing from group
+        let group = s.groups.iter().find(|g| g.clients.contains(&client_id));
+        initial_routing = SessionRouting {
+            stream_id: group.map(|g| g.stream_id.clone()).unwrap_or_default(),
+            client_muted: s
+                .clients
+                .get(&client_id)
+                .map(|c| c.config.volume.muted)
+                .unwrap_or(false),
+            group_muted: group.map(|g| g.muted).unwrap_or(false),
+        };
     }
+
+    let (routing_tx, routing_rx) = watch::channel(initial_routing);
+    routing_senders
+        .lock()
+        .await
+        .insert(client_id.clone(), routing_tx);
 
     let _ = event_tx
         .send(ServerEvent::ClientConnected {
@@ -228,14 +294,6 @@ async fn handle_client(
             mac: hello.mac.clone(),
         })
         .await;
-
-    // Register in server state (creates group if needed)
-    {
-        let mut s = shared_state.lock().await;
-        let c = s.get_or_create_client(&client_id, &hello.host_name, &hello.mac);
-        c.connected = true;
-        s.group_for_client(&client_id, default_stream);
-    }
 
     // 2. Send ServerSettings
     let ss = ServerSettings {
@@ -268,6 +326,7 @@ async fn handle_client(
         &mut stream,
         chunk_rx,
         settings_rx,
+        routing_rx,
         #[cfg(feature = "custom-protocol")]
         custom_rx,
         #[cfg(feature = "custom-protocol")]
@@ -279,6 +338,7 @@ async fn handle_client(
 
     // Cleanup
     settings_senders.lock().await.remove(&client_id);
+    routing_senders.lock().await.remove(&client_id);
     #[cfg(feature = "custom-protocol")]
     custom_senders.lock().await.remove(&client_id);
     {
@@ -298,6 +358,7 @@ async fn session_loop(
     stream: &mut TcpStream,
     mut chunk_rx: broadcast::Receiver<WireChunkData>,
     mut settings_rx: mpsc::Receiver<ClientSettingsUpdate>,
+    mut routing_rx: watch::Receiver<SessionRouting>,
     #[cfg(feature = "custom-protocol")] mut custom_rx: mpsc::Receiver<CustomOutbound>,
     #[cfg(feature = "custom-protocol")] event_tx: mpsc::Sender<ServerEvent>,
     #[cfg(feature = "custom-protocol")] client_id: String,
@@ -310,17 +371,34 @@ async fn session_loop(
         (rx, None, String::new())
     };
 
+    // Cache routing state locally — updated via watch
+    let mut routing = routing_rx.borrow().clone();
+
     loop {
         tokio::select! {
             chunk = chunk_rx.recv() => {
                 let chunk = chunk.context("broadcast closed")?;
-                let ts_usec = chunk.timestamp_usec;
+
+                // Filter: only send chunks for this session's stream
+                if chunk.stream_id != routing.stream_id {
+                    continue;
+                }
+
+                // Skip muted clients/groups (C++ parity: sendAudioToMutedClients=false)
+                if routing.client_muted || routing.group_muted {
+                    continue;
+                }
+
                 let wc = WireChunk {
-                    timestamp: Timeval::from_usec(ts_usec),
+                    timestamp: Timeval::from_usec(chunk.timestamp_usec),
                     payload: chunk.data,
                 };
                 let frame = serialize_msg(MessageType::WireChunk, &MessagePayload::WireChunk(wc), 0)?;
                 writer.write_all(&frame).await.context("write chunk")?;
+            }
+            Ok(()) = routing_rx.changed() => {
+                routing = routing_rx.borrow().clone();
+                tracing::debug!(stream = %routing.stream_id, client_muted = routing.client_muted, group_muted = routing.group_muted, "Routing updated");
             }
             msg = read_frame_from(&mut reader) => {
                 let msg = msg?;

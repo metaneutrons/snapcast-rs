@@ -345,7 +345,11 @@ pub struct ServerConfig {
     /// Default sample format. Default: 48000:16:2.
     pub sample_format: String,
     /// mDNS service type. Default: "_snapcast._tcp.local.".
+    #[cfg(feature = "mdns")]
     pub mdns_service_type: String,
+    /// Enable mDNS advertisement. Default: true (when mdns feature is compiled in).
+    #[cfg(feature = "mdns")]
+    pub mdns_enabled: bool,
     /// Auth validator for streaming clients. `None` = no auth required.
     pub auth: Option<std::sync::Arc<dyn auth::AuthValidator>>,
     /// Pre-shared key for f32lz4 encryption. `None` = no encryption.
@@ -364,7 +368,10 @@ impl Default for ServerConfig {
             buffer_ms: 1000,
             codec: default_codec().into(),
             sample_format: "48000:16:2".into(),
+            #[cfg(feature = "mdns")]
             mdns_service_type: "_snapcast._tcp.local.".into(),
+            #[cfg(feature = "mdns")]
+            mdns_enabled: true,
             auth: None,
             #[cfg(feature = "encryption")]
             encryption_psk: None,
@@ -501,10 +508,13 @@ impl SnapServer {
 
         // Advertise via mDNS (protocol-level discovery)
         #[cfg(feature = "mdns")]
-        let _mdns =
+        let _mdns = if self.config.mdns_enabled {
             mdns::MdnsAdvertiser::new(self.config.stream_port, &self.config.mdns_service_type)
                 .map_err(|e| tracing::warn!(error = %e, "mDNS advertisement failed"))
-                .ok();
+                .ok()
+        } else {
+            None
+        };
 
         // Create default encoder — used for codec header and first default stream
         let default_enc_config = encoder::EncoderConfig {

@@ -233,7 +233,7 @@ impl ServerState {
 
     /// Build typed status snapshot.
     pub fn to_status(&self) -> crate::status::ServerStatus {
-        use crate::status::*;
+        use crate::status;
         let groups = self
             .groups
             .iter()
@@ -242,24 +242,27 @@ impl ServerState {
                     .clients
                     .iter()
                     .filter_map(|cid| self.clients.get(cid))
-                    .map(|c| ClientStatus {
+                    .map(|c| status::Client {
                         id: c.id.clone(),
                         connected: c.connected,
-                        config: ClientConfig {
+                        config: status::ClientConfig {
                             name: c.config.name.clone(),
-                            volume: VolumeInfo {
+                            volume: status::Volume {
                                 percent: c.config.volume.percent,
                                 muted: c.config.volume.muted,
                             },
                             latency: c.config.latency,
+                            ..Default::default()
                         },
-                        host: HostInfo {
+                        host: status::Host {
                             name: c.host_name.clone(),
                             mac: c.mac.clone(),
+                            ..Default::default()
                         },
+                        ..Default::default()
                     })
                     .collect();
-                GroupStatus {
+                status::Group {
                     id: g.id.clone(),
                     name: g.name.clone(),
                     stream_id: g.stream_id.clone(),
@@ -271,14 +274,23 @@ impl ServerState {
         let streams = self
             .streams
             .iter()
-            .map(|s| StreamStatus {
+            .map(|s| status::Stream {
                 id: s.id.clone(),
                 status: s.status.clone(),
-                uri: s.uri.clone(),
-                properties: s.properties.clone(),
+                uri: status::StreamUri {
+                    raw: s.uri.clone(),
+                    ..Default::default()
+                },
+                ..Default::default()
             })
             .collect();
-        ServerStatus { groups, streams }
+        status::ServerStatus {
+            server: status::Server {
+                groups,
+                streams,
+                ..Default::default()
+            },
+        }
     }
 }
 
@@ -360,7 +372,7 @@ mod tests {
         state.get_or_create_client("c1", "host1", "mac1");
         state.group_for_client("c1", "default");
         let status = state.to_status();
-        assert_eq!(status.groups.len(), 1);
-        assert_eq!(status.groups[0].clients.len(), 1);
+        assert_eq!(status.server.groups.len(), 1);
+        assert_eq!(status.server.groups[0].clients.len(), 1);
     }
 }

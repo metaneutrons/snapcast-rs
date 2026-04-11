@@ -1,25 +1,162 @@
-//! Public read-only status types returned by [`GetStatus`](crate::ServerCommand::GetStatus).
+//! Public status types matching the Snapcast JSON-RPC wire format.
 //!
-//! These are the canonical types for server state queries. They derive
-//! `Serialize` so consumers can convert to JSON (or any other format)
-//! at their layer.
+//! Returned by [`GetStatus`](crate::ServerCommand::GetStatus). All types derive
+//! `Serialize` + `Deserialize` so they work for both the embedded server (serialize)
+//! and the process backend talking to C++ snapserver (deserialize).
 
 use std::collections::HashMap;
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
-/// Full server status snapshot.
-#[derive(Debug, Clone, Serialize)]
+/// Result of `Server.GetStatus`.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct ServerStatus {
-    /// All groups (each containing its clients).
-    pub groups: Vec<GroupStatus>,
-    /// All configured streams.
-    pub streams: Vec<StreamStatus>,
+    /// Full server state.
+    pub server: Server,
 }
 
+/// Top-level server state.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct Server {
+    /// Server host and version info.
+    pub server: ServerInfo,
+    /// All groups (each containing its clients).
+    pub groups: Vec<Group>,
+    /// All configured streams.
+    pub streams: Vec<Stream>,
+}
+
+/// Server host and software information.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct ServerInfo {
+    /// Server host details.
+    pub host: Host,
+    /// Snapserver software info.
+    pub snapserver: Snapserver,
+}
+
+/// Snapserver software information.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Snapserver {
+    /// Software name.
+    pub name: String,
+    /// Binary protocol version.
+    #[serde(rename = "protocolVersion")]
+    pub protocol_version: u32,
+    /// JSON-RPC control protocol version.
+    #[serde(rename = "controlProtocolVersion")]
+    pub control_protocol_version: u32,
+    /// Software version string.
+    pub version: String,
+}
+
+impl Default for Snapserver {
+    fn default() -> Self {
+        Self {
+            name: "snapcast-rs".into(),
+            protocol_version: 2,
+            control_protocol_version: 1,
+            version: env!("CARGO_PKG_VERSION").into(),
+        }
+    }
+}
+
+// ── Host ──────────────────────────────────────────────────────
+
+/// Host identification and platform info.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct Host {
+    /// CPU architecture.
+    #[serde(default)]
+    pub arch: String,
+    /// IP address.
+    #[serde(default)]
+    pub ip: String,
+    /// MAC address.
+    #[serde(default)]
+    pub mac: String,
+    /// Hostname.
+    #[serde(default)]
+    pub name: String,
+    /// Operating system.
+    #[serde(default)]
+    pub os: String,
+}
+
+// ── Client ────────────────────────────────────────────────────
+
+/// A Snapcast client (speaker endpoint).
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct Client {
+    /// Unique client ID.
+    pub id: String,
+    /// Whether currently connected.
+    pub connected: bool,
+    /// Client configuration (persisted).
+    pub config: ClientConfig,
+    /// Host information.
+    pub host: Host,
+    /// Snapclient software info.
+    #[serde(default)]
+    pub snapclient: Snapclient,
+    /// Last-seen timestamp.
+    #[serde(default, rename = "lastSeen")]
+    pub last_seen: LastSeen,
+}
+
+/// Client configuration (persisted across restarts).
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct ClientConfig {
+    /// Multi-instance identifier.
+    #[serde(default)]
+    pub instance: u32,
+    /// Additional latency in milliseconds.
+    pub latency: i32,
+    /// Display name.
+    pub name: String,
+    /// Volume settings.
+    pub volume: Volume,
+}
+
+/// Volume state.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct Volume {
+    /// Mute state.
+    pub muted: bool,
+    /// Volume percentage (0–100).
+    pub percent: u16,
+}
+
+/// Snapclient software information.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct Snapclient {
+    /// Software name.
+    #[serde(default)]
+    pub name: String,
+    /// Protocol version.
+    #[serde(default, rename = "protocolVersion")]
+    pub protocol_version: u32,
+    /// Software version string.
+    #[serde(default)]
+    pub version: String,
+}
+
+/// Last-seen timestamp (seconds + microseconds since epoch).
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct LastSeen {
+    /// Seconds since epoch.
+    #[serde(default)]
+    pub sec: u64,
+    /// Microseconds.
+    #[serde(default)]
+    pub usec: u64,
+}
+
+// ── Group ─────────────────────────────────────────────────────
+
 /// A group of clients sharing the same stream.
-#[derive(Debug, Clone, Serialize)]
-pub struct GroupStatus {
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct Group {
     /// Unique group ID.
     pub id: String,
     /// Display name.
@@ -29,60 +166,90 @@ pub struct GroupStatus {
     /// Group mute state.
     pub muted: bool,
     /// Clients in this group.
-    pub clients: Vec<ClientStatus>,
+    pub clients: Vec<Client>,
 }
 
-/// A connected or previously-seen client.
-#[derive(Debug, Clone, Serialize)]
-pub struct ClientStatus {
-    /// Unique client ID.
-    pub id: String,
-    /// Whether currently connected.
-    pub connected: bool,
-    /// Client configuration.
-    pub config: ClientConfig,
-    /// Host information.
-    pub host: HostInfo,
-}
-
-/// Client configuration (persisted across restarts).
-#[derive(Debug, Clone, Serialize)]
-pub struct ClientConfig {
-    /// Display name.
-    pub name: String,
-    /// Volume settings.
-    pub volume: VolumeInfo,
-    /// Additional latency in milliseconds.
-    pub latency: i32,
-}
-
-/// Volume state.
-#[derive(Debug, Clone, Serialize)]
-pub struct VolumeInfo {
-    /// Volume percentage (0–100).
-    pub percent: u16,
-    /// Mute state.
-    pub muted: bool,
-}
-
-/// Host identification.
-#[derive(Debug, Clone, Serialize)]
-pub struct HostInfo {
-    /// Hostname.
-    pub name: String,
-    /// MAC address.
-    pub mac: String,
-}
+// ── Stream ────────────────────────────────────────────────────
 
 /// An audio stream source.
-#[derive(Debug, Clone, Serialize)]
-pub struct StreamStatus {
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct Stream {
     /// Stream ID.
     pub id: String,
-    /// Status: "playing", "idle", "unknown".
+    /// Stream properties (MPRIS-style metadata).
+    #[serde(default)]
+    pub properties: Option<StreamProperties>,
+    /// Status: "playing", "idle", "unknown", "disabled".
     pub status: String,
     /// Source URI.
-    pub uri: String,
-    /// Stream properties (metadata).
-    pub properties: HashMap<String, serde_json::Value>,
+    pub uri: StreamUri,
+}
+
+/// Parsed stream URI components.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct StreamUri {
+    /// URI fragment.
+    #[serde(default)]
+    pub fragment: String,
+    /// Host component.
+    #[serde(default)]
+    pub host: String,
+    /// Path component.
+    #[serde(default)]
+    pub path: String,
+    /// Query parameters.
+    #[serde(default)]
+    pub query: HashMap<String, String>,
+    /// Raw URI string.
+    pub raw: String,
+    /// URI scheme (pipe, tcp, process, etc.).
+    #[serde(default)]
+    pub scheme: String,
+}
+
+/// Stream properties (MPRIS-style metadata and capabilities).
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct StreamProperties {
+    /// Playback status (Playing, Paused, Stopped).
+    #[serde(default)]
+    pub playback_status: Option<String>,
+    /// Loop status (None, Track, Playlist).
+    #[serde(default)]
+    pub loop_status: Option<String>,
+    /// Shuffle mode.
+    #[serde(default)]
+    pub shuffle: Option<bool>,
+    /// Volume (0–100).
+    #[serde(default)]
+    pub volume: Option<u16>,
+    /// Mute state.
+    #[serde(default)]
+    pub mute: Option<bool>,
+    /// Playback rate.
+    #[serde(default)]
+    pub rate: Option<f64>,
+    /// Position in seconds.
+    #[serde(default)]
+    pub position: Option<f64>,
+    /// Can skip to next track.
+    #[serde(default)]
+    pub can_go_next: bool,
+    /// Can skip to previous track.
+    #[serde(default)]
+    pub can_go_previous: bool,
+    /// Can start playback.
+    #[serde(default)]
+    pub can_play: bool,
+    /// Can pause playback.
+    #[serde(default)]
+    pub can_pause: bool,
+    /// Can seek within track.
+    #[serde(default)]
+    pub can_seek: bool,
+    /// Can control playback at all.
+    #[serde(default)]
+    pub can_control: bool,
+    /// Track metadata (artist, title, album, etc.).
+    #[serde(default)]
+    pub metadata: Option<serde_json::Value>,
 }

@@ -30,7 +30,7 @@ async fn get_status(
         .await
         .ok()?;
     let status = rx.await.ok()?;
-    Some(json!({"server": {"groups": status.groups, "streams": status.streams}}))
+    serde_json::to_value(status).ok()
 }
 
 /// Handle a JSON-RPC request. All state access goes through ServerCommand.
@@ -326,34 +326,36 @@ mod tests {
                 match cmd {
                     ServerCommand::GetStatus { response_tx } => {
                         let _ = response_tx.send(status::ServerStatus {
-                            groups: vec![status::GroupStatus {
-                                id: "g1".into(),
-                                name: String::new(),
-                                stream_id: "default".into(),
-                                muted: false,
-                                clients: vec![status::ClientStatus {
-                                    id: "c1".into(),
-                                    connected: true,
-                                    config: status::ClientConfig {
-                                        name: String::new(),
-                                        volume: status::VolumeInfo {
-                                            percent: volume,
-                                            muted,
+                            server: status::Server {
+                                groups: vec![status::Group {
+                                    id: "g1".into(),
+                                    stream_id: "default".into(),
+                                    clients: vec![status::Client {
+                                        id: "c1".into(),
+                                        connected: true,
+                                        config: status::ClientConfig {
+                                            volume: status::Volume {
+                                                percent: volume,
+                                                muted,
+                                            },
+                                            ..Default::default()
                                         },
-                                        latency: 0,
-                                    },
-                                    host: status::HostInfo {
-                                        name: "host1".into(),
-                                        mac: "mac1".into(),
-                                    },
+                                        host: status::Host {
+                                            name: "host1".into(),
+                                            mac: "mac1".into(),
+                                            ..Default::default()
+                                        },
+                                        ..Default::default()
+                                    }],
+                                    ..Default::default()
                                 }],
-                            }],
-                            streams: vec![status::StreamStatus {
-                                id: "default".into(),
-                                status: "playing".into(),
-                                uri: String::new(),
-                                properties: Default::default(),
-                            }],
+                                streams: vec![status::Stream {
+                                    id: "default".into(),
+                                    status: "playing".into(),
+                                    ..Default::default()
+                                }],
+                                ..Default::default()
+                            },
                         });
                     }
                     ServerCommand::SetClientVolume {

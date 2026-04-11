@@ -353,6 +353,8 @@ pub struct ServerConfig {
     pub encryption_psk: Option<String>,
     /// Path to persist server state (clients, groups). `None` = no persistence.
     pub state_file: Option<std::path::PathBuf>,
+    /// Send audio data to muted clients. Default: false (skip muted, saves bandwidth).
+    pub send_audio_to_muted: bool,
 }
 
 impl Default for ServerConfig {
@@ -367,6 +369,7 @@ impl Default for ServerConfig {
             #[cfg(feature = "encryption")]
             encryption_psk: None,
             state_file: None,
+            send_audio_to_muted: false,
         }
     }
 }
@@ -512,14 +515,13 @@ impl SnapServer {
             encryption_psk: self.config.encryption_psk.clone(),
         };
         let default_enc = encoder::create(&default_enc_config)?;
-        let codec = default_enc.name().to_string();
-        let codec_header = default_enc.header().to_vec();
 
         // Spawn per-stream encode loops — reuse default_enc for first default stream
         let chunk_tx = self.chunk_tx.clone();
         let streams = std::mem::take(&mut self.streams);
         let mut default_enc = Some(default_enc);
         let mut first_stream_name = String::new();
+        let mut stream_codecs: Vec<(String, String, Vec<u8>)> = Vec::new();
 
         // Shared state for command handlers
         let initial_state = self
@@ -565,6 +567,7 @@ impl SnapServer {
                 })?
             };
             tracing::info!(stream = %name, codec = enc.name(), %sample_format, "Stream registered");
+            stream_codecs.push((name.clone(), enc.name().to_string(), enc.header().to_vec()));
             spawn_stream_encoder(name, rx, enc, chunk_tx.clone());
         }
 
@@ -575,13 +578,20 @@ impl SnapServer {
             self.config.auth.clone(),
             Arc::clone(&shared_state),
             first_stream_name,
+            self.config.send_audio_to_muted,
         ));
+        // Register per-stream codec headers
+        for (stream_id, codec, header) in &stream_codecs {
+            session_srv
+                .register_stream_codec(stream_id, codec, header)
+                .await;
+        }
         let session_for_run = Arc::clone(&session_srv);
         let session_event_tx = event_tx.clone();
         let session_chunk_tx = self.chunk_tx.clone();
         let session_handle = tokio::spawn(async move {
             if let Err(e) = session_for_run
-                .run(session_chunk_tx, codec, codec_header, session_event_tx)
+                .run(session_chunk_tx, session_event_tx)
                 .await
             {
                 tracing::error!(error = %e, "Session server error");
@@ -620,10 +630,8 @@ impl SnapServer {
                                 buffer_ms: self.config.buffer_ms as i32,
                                 latency: 0, volume, muted,
                             }).await;
-                            let _ = event_tx.try_send(ServerEvent::ClientVolumeChanged { client_id, volume, muted });
-                            if muted {
-                                session_srv.update_routing().await;
-                            }
+                            let _ = event_tx.try_send(ServerEvent::ClientVolumeChanged { client_id: client_id.clone(), volume, muted });
+                            session_srv.update_routing_for_client(&client_id, &shared_state).await;
                         }
                         Some(ServerCommand::SetClientLatency { client_id, latency }) => {
                             let mut s = shared_state.lock().await;
@@ -653,8 +661,8 @@ impl SnapServer {
                             s.set_group_stream(&group_id, &stream_id);
                             save_state(&s);
                             drop(s);
-                            let _ = event_tx.try_send(ServerEvent::GroupStreamChanged { group_id, stream_id });
-                            session_srv.update_routing().await;
+                            let _ = event_tx.try_send(ServerEvent::GroupStreamChanged { group_id: group_id.clone(), stream_id });
+                            session_srv.update_routing_for_group(&group_id, &shared_state).await;
                         }
                         Some(ServerCommand::SetGroupMute { group_id, muted }) => {
                             let mut s = shared_state.lock().await;
@@ -663,8 +671,8 @@ impl SnapServer {
                             }
                             save_state(&s);
                             drop(s);
-                            let _ = event_tx.try_send(ServerEvent::GroupMuteChanged { group_id, muted });
-                            session_srv.update_routing().await;
+                            let _ = event_tx.try_send(ServerEvent::GroupMuteChanged { group_id: group_id.clone(), muted });
+                            session_srv.update_routing_for_group(&group_id, &shared_state).await;
                         }
                         Some(ServerCommand::SetGroupName { group_id, name }) => {
                             let mut s = shared_state.lock().await;
@@ -682,7 +690,7 @@ impl SnapServer {
                             drop(s);
                             // Structural change — mirrors Server.OnUpdate in C++ snapserver
                             let _ = event_tx.try_send(ServerEvent::ServerUpdated);
-                            session_srv.update_routing().await;
+                            session_srv.update_routing_all(&shared_state).await;
                         }
                         Some(ServerCommand::DeleteClient { client_id }) => {
                             let mut s = shared_state.lock().await;

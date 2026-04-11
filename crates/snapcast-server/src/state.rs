@@ -231,58 +231,54 @@ impl ServerState {
         }
     }
 
-    /// Build JSON status for the full server (matches C++ Server.GetStatus).
-    pub fn to_status_json(&self) -> serde_json::Value {
-        let groups: Vec<serde_json::Value> = self
+    /// Build typed status snapshot.
+    pub fn to_status(&self) -> crate::status::ServerStatus {
+        use crate::status::*;
+        let groups = self
             .groups
             .iter()
             .map(|g| {
-                let clients: Vec<serde_json::Value> = g
+                let clients = g
                     .clients
                     .iter()
                     .filter_map(|cid| self.clients.get(cid))
-                    .map(|c| {
-                        serde_json::json!({
-                            "id": c.id,
-                            "host": { "name": c.host_name, "mac": c.mac },
-                            "connected": c.connected,
-                            "config": {
-                                "name": c.config.name,
-                                "volume": { "percent": c.config.volume.percent, "muted": c.config.volume.muted },
-                                "latency": c.config.latency,
-                            }
-                        })
+                    .map(|c| ClientStatus {
+                        id: c.id.clone(),
+                        connected: c.connected,
+                        config: ClientConfig {
+                            name: c.config.name.clone(),
+                            volume: VolumeInfo {
+                                percent: c.config.volume.percent,
+                                muted: c.config.volume.muted,
+                            },
+                            latency: c.config.latency,
+                        },
+                        host: HostInfo {
+                            name: c.host_name.clone(),
+                            mac: c.mac.clone(),
+                        },
                     })
                     .collect();
-                serde_json::json!({
-                    "id": g.id,
-                    "name": g.name,
-                    "stream_id": g.stream_id,
-                    "muted": g.muted,
-                    "clients": clients,
-                })
+                GroupStatus {
+                    id: g.id.clone(),
+                    name: g.name.clone(),
+                    stream_id: g.stream_id.clone(),
+                    muted: g.muted,
+                    clients,
+                }
             })
             .collect();
-
-        let streams: Vec<serde_json::Value> = self
+        let streams = self
             .streams
             .iter()
-            .map(|s| {
-                serde_json::json!({
-                    "id": s.id,
-                    "status": s.status,
-                    "uri": { "raw": s.uri },
-                    "properties": s.properties,
-                })
+            .map(|s| StreamStatus {
+                id: s.id.clone(),
+                status: s.status.clone(),
+                uri: s.uri.clone(),
+                properties: s.properties.clone(),
             })
             .collect();
-
-        serde_json::json!({
-            "server": {
-                "groups": groups,
-                "streams": streams,
-            }
-        })
+        ServerStatus { groups, streams }
     }
 }
 
@@ -363,7 +359,8 @@ mod tests {
         let mut state = ServerState::default();
         state.get_or_create_client("c1", "host1", "mac1");
         state.group_for_client("c1", "default");
-        let status = state.to_status_json();
-        assert!(status["server"]["groups"].is_array());
+        let status = state.to_status();
+        assert_eq!(status.groups.len(), 1);
+        assert_eq!(status.groups[0].clients.len(), 1);
     }
 }

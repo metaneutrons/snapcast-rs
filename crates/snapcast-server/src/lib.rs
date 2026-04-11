@@ -97,6 +97,7 @@ pub(crate) mod encoder;
 pub(crate) mod mdns;
 pub(crate) mod session;
 pub(crate) mod state;
+pub mod status;
 pub(crate) mod stream;
 pub mod time;
 
@@ -270,7 +271,7 @@ pub enum ServerCommand {
     /// Get full server status.
     GetStatus {
         /// Response channel.
-        response_tx: tokio::sync::oneshot::Sender<serde_json::Value>,
+        response_tx: tokio::sync::oneshot::Sender<status::ServerStatus>,
     },
     /// Send a custom binary protocol message to a streaming client.
     #[cfg(feature = "custom-protocol")]
@@ -656,7 +657,7 @@ impl SnapServer {
                         }
                         Some(ServerCommand::GetStatus { response_tx }) => {
                             let s = shared_state.lock().await;
-                            let _ = response_tx.send(s.to_status_json());
+                            let _ = response_tx.send(s.to_status());
                         }
                         #[cfg(feature = "custom-protocol")]
                         Some(ServerCommand::SendToClient { client_id, message }) => {

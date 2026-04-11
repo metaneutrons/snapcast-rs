@@ -20,7 +20,7 @@ pub(crate) enum RpcResult {
     Unknown,
 }
 
-/// Fetch server status via GetStatus command.
+/// Fetch server status via GetStatus command, serialized to JSON.
 async fn get_status(
     cmd_tx: &tokio::sync::mpsc::Sender<snapcast_server::ServerCommand>,
 ) -> Option<Value> {
@@ -29,7 +29,8 @@ async fn get_status(
         .send(snapcast_server::ServerCommand::GetStatus { response_tx: tx })
         .await
         .ok()?;
-    rx.await.ok()
+    let status = rx.await.ok()?;
+    Some(json!({"server": {"groups": status.groups, "streams": status.streams}}))
 }
 
 /// Handle a JSON-RPC request. All state access goes through ServerCommand.
@@ -313,39 +314,47 @@ fn err(id: &Value, code: i64, msg: &str) -> RpcResult {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use snapcast_server::ServerCommand;
+    use snapcast_server::{ServerCommand, status};
 
     /// Spawn a mock command handler that processes GetStatus and SetClientVolume.
     fn mock_server() -> (AuthConfig, tokio::sync::mpsc::Sender<ServerCommand>) {
         let (cmd_tx, mut cmd_rx) = tokio::sync::mpsc::channel::<ServerCommand>(16);
         tokio::spawn(async move {
-            // Minimal in-memory state for tests
             let mut volume: u16 = 100;
             let mut muted = false;
             while let Some(cmd) = cmd_rx.recv().await {
                 match cmd {
                     ServerCommand::GetStatus { response_tx } => {
-                        let _ = response_tx.send(json!({
-                            "server": {
-                                "groups": [{
-                                    "id": "g1",
-                                    "name": "",
-                                    "stream_id": "default",
-                                    "muted": false,
-                                    "clients": [{
-                                        "id": "c1",
-                                        "host": {"name": "host1", "mac": "mac1"},
-                                        "connected": true,
-                                        "config": {
-                                            "name": "",
-                                            "volume": {"percent": volume, "muted": muted},
-                                            "latency": 0,
-                                        }
-                                    }]
+                        let _ = response_tx.send(status::ServerStatus {
+                            groups: vec![status::GroupStatus {
+                                id: "g1".into(),
+                                name: String::new(),
+                                stream_id: "default".into(),
+                                muted: false,
+                                clients: vec![status::ClientStatus {
+                                    id: "c1".into(),
+                                    connected: true,
+                                    config: status::ClientConfig {
+                                        name: String::new(),
+                                        volume: status::VolumeInfo {
+                                            percent: volume,
+                                            muted,
+                                        },
+                                        latency: 0,
+                                    },
+                                    host: status::HostInfo {
+                                        name: "host1".into(),
+                                        mac: "mac1".into(),
+                                    },
                                 }],
-                                "streams": [{"id": "default", "status": "playing", "uri": {"raw": ""}, "properties": {}}],
-                            }
-                        }));
+                            }],
+                            streams: vec![status::StreamStatus {
+                                id: "default".into(),
+                                status: "playing".into(),
+                                uri: String::new(),
+                                properties: Default::default(),
+                            }],
+                        });
                     }
                     ServerCommand::SetClientVolume {
                         volume: v,

@@ -408,6 +408,17 @@ async fn session_loop(
     let mut routing = routing_rx.borrow().clone();
 
     loop {
+        // Drain any pending custom outbound messages before blocking on select
+        #[cfg(feature = "custom-protocol")]
+        while let Ok(msg) = custom_rx.try_recv() {
+            let frame = serialize_msg(
+                MessageType::Custom(msg.type_id),
+                &MessagePayload::Custom(msg.payload),
+                0,
+            )?;
+            writer.write_all(&frame).await.context("write custom")?;
+        }
+
         tokio::select! {
             chunk = chunk_rx.recv() => {
                 let chunk = chunk.context("broadcast closed")?;

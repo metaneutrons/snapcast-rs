@@ -225,6 +225,8 @@ mod tests {
                 no_mdns: false,
                 #[cfg(feature = "mdns")]
                 mdns_name: None,
+                #[cfg(feature = "encryption")]
+                encryption_psk: None,
             },
         );
         assert_eq!(merged.server.stream_port, 9704);

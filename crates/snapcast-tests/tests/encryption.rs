@@ -72,7 +72,8 @@ async fn wrong_key_disconnects() {
         encryption_psk: Some("server-key".into()),
         ..ServerConfig::default()
     };
-    let (mut server, _events, _audio_tx) = SnapServer::new(server_config);
+    let (mut server, _events) = SnapServer::new(server_config);
+    let _audio_tx = server.add_stream("default");
     tokio::spawn(async move { server.run().await.ok() });
     tokio::time::sleep(std::time::Duration::from_millis(50)).await;
 

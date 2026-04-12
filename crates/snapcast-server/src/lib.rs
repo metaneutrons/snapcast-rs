@@ -146,6 +146,28 @@ impl F32AudioSender {
         }
         Ok(())
     }
+
+    /// Flush remaining samples (< 20ms) as a final short chunk.
+    /// Call at end-of-track to avoid losing the last few milliseconds.
+    pub async fn flush(&mut self) -> Result<(), mpsc::error::SendError<AudioFrame>> {
+        if self.buf.is_empty() {
+            return Ok(());
+        }
+        let chunk: Vec<f32> = self.buf.drain(..).collect();
+        let ch = self.channels.max(1) as usize;
+        let frames = (chunk.len() / ch) as u32;
+        let ts = self
+            .ts
+            .get_or_insert_with(|| time::ChunkTimestamper::new(self.sample_rate));
+        let timestamp_usec = ts.next(frames);
+        self.total_frames += frames as u64;
+        self.tx
+            .send(AudioFrame {
+                data: AudioData::F32(chunk),
+                timestamp_usec,
+            })
+            .await
+    }
 }
 
 /// An encoded audio chunk ready to be sent to clients.
@@ -507,7 +529,9 @@ fn spawn_stream_encoder(
                     let now = tokio::time::Instant::now();
                     let tick = next_tick.get_or_insert(now);
                     // Reset on gap (>500ms behind wall clock)
-                    if *tick + chunk_dur < now - std::time::Duration::from_millis(500) {
+                    if now.checked_duration_since(*tick + chunk_dur)
+                        > Some(std::time::Duration::from_millis(500))
+                    {
                         *tick = now;
                     }
                     *tick += chunk_dur;

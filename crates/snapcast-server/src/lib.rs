@@ -93,7 +93,6 @@ pub struct F32AudioSender {
     chunk_samples: usize,
     channels: u16,
     sample_rate: u32,
-    total_frames: u64,
     ts: Option<time::ChunkTimestamper>,
     last_send: std::time::Instant,
 }
@@ -107,7 +106,6 @@ impl F32AudioSender {
             chunk_samples,
             channels,
             sample_rate,
-            total_frames: 0,
             ts: None,
             last_send: std::time::Instant::now(),
         }
@@ -121,7 +119,6 @@ impl F32AudioSender {
     ) -> Result<(), mpsc::error::SendError<AudioFrame>> {
         let now = std::time::Instant::now();
         if now.duration_since(self.last_send) > std::time::Duration::from_millis(500) {
-            self.total_frames = 0;
             self.ts = None;
             self.buf.clear();
         }
@@ -136,7 +133,6 @@ impl F32AudioSender {
                 .ts
                 .get_or_insert_with(|| time::ChunkTimestamper::new(self.sample_rate));
             let timestamp_usec = ts.next(frames);
-            self.total_frames += frames as u64;
             self.tx
                 .send(AudioFrame {
                     data: AudioData::F32(chunk),
@@ -160,7 +156,6 @@ impl F32AudioSender {
             .ts
             .get_or_insert_with(|| time::ChunkTimestamper::new(self.sample_rate));
         let timestamp_usec = ts.next(frames);
-        self.total_frames += frames as u64;
         self.tx
             .send(AudioFrame {
                 data: AudioData::F32(chunk),

@@ -56,7 +56,10 @@ pub use snapcast_proto::{DEFAULT_SAMPLE_FORMAT, DEFAULT_STREAM_PORT};
 
 const EVENT_CHANNEL_SIZE: usize = 256;
 const COMMAND_CHANNEL_SIZE: usize = 64;
-const AUDIO_CHANNEL_SIZE: usize = 1;
+const AUDIO_CHANNEL_SIZE: usize = 256;
+
+/// Channel size for F32 embedded sources — backpressure from encoder pacing.
+const F32_CHANNEL_SIZE: usize = 1;
 
 /// Audio data pushed by the consumer — either f32 or raw PCM.
 #[derive(Debug, Clone)]
@@ -91,7 +94,7 @@ pub struct F32AudioSender {
     channels: u16,
     sample_rate: u32,
     total_frames: u64,
-    ts: time::ChunkTimestamper,
+    ts: Option<time::ChunkTimestamper>,
     last_send: std::time::Instant,
 }
 
@@ -105,7 +108,7 @@ impl F32AudioSender {
             channels,
             sample_rate,
             total_frames: 0,
-            ts: time::ChunkTimestamper::new(sample_rate),
+            ts: None,
             last_send: std::time::Instant::now(),
         }
     }
@@ -119,19 +122,20 @@ impl F32AudioSender {
         let now = std::time::Instant::now();
         if now.duration_since(self.last_send) > std::time::Duration::from_millis(500) {
             self.total_frames = 0;
-            self.ts = time::ChunkTimestamper::new(self.sample_rate);
+            self.ts = None;
             self.buf.clear();
         }
         self.last_send = now;
 
         self.buf.extend_from_slice(samples);
+        let ch = self.channels.max(1) as usize;
         while self.buf.len() >= self.chunk_samples {
             let chunk: Vec<f32> = self.buf.drain(..self.chunk_samples).collect();
-            let frames = (self.chunk_samples / self.channels.max(1) as usize) as u32;
-            if self.total_frames == 0 {
-                self.ts = time::ChunkTimestamper::new(self.sample_rate);
-            }
-            let timestamp_usec = self.ts.next(frames);
+            let frames = (self.chunk_samples / ch) as u32;
+            let ts = self
+                .ts
+                .get_or_insert_with(|| time::ChunkTimestamper::new(self.sample_rate));
+            let timestamp_usec = ts.next(frames);
             self.total_frames += frames as u64;
             self.tx
                 .send(AudioFrame {
@@ -483,6 +487,7 @@ fn spawn_stream_encoder(
     mut enc: Box<dyn encoder::Encoder>,
     chunk_tx: broadcast::Sender<WireChunkData>,
     sample_rate: u32,
+    channels: u16,
 ) {
     std::thread::spawn(move || {
         let rt = tokio::runtime::Builder::new_current_thread()
@@ -495,11 +500,16 @@ fn spawn_stream_encoder(
             while let Some(frame) = rx.recv().await {
                 // Pace F32 sources to realtime (pipe sources pace naturally via blocking read)
                 if let AudioData::F32(ref samples) = frame.data {
-                    let num_frames = samples.len() / 2; // stereo
+                    let num_frames = samples.len() / channels.max(1) as usize;
                     let chunk_dur = std::time::Duration::from_micros(
                         (num_frames as u64 * 1_000_000) / sample_rate as u64,
                     );
-                    let tick = next_tick.get_or_insert_with(tokio::time::Instant::now);
+                    let now = tokio::time::Instant::now();
+                    let tick = next_tick.get_or_insert(now);
+                    // Reset on gap (>500ms behind wall clock)
+                    if *tick + chunk_dur < now - std::time::Duration::from_millis(500) {
+                        *tick = now;
+                    }
                     *tick += chunk_dur;
                     tokio::time::sleep_until(*tick).await;
                 }
@@ -550,14 +560,18 @@ impl SnapServer {
     ///
     /// Returns an [`F32AudioSender`] that accepts variable-size F32 sample buffers
     /// and handles 20ms chunking, monotonic timestamps, and gap detection internally.
-    pub fn add_f32_stream(&mut self, name: &str) -> F32AudioSender {
-        let sf: SampleFormat = self
-            .config
-            .sample_format
-            .parse()
-            .expect("valid sample_format");
-        let tx = self.add_stream_with_config(name, StreamConfig::default());
-        F32AudioSender::new(tx, sf.rate(), sf.channels())
+    ///
+    /// # Errors
+    /// Returns an error if the server's `sample_format` cannot be parsed.
+    pub fn add_f32_stream(&mut self, name: &str) -> Result<F32AudioSender, String> {
+        let sf: SampleFormat =
+            self.config.sample_format.parse().map_err(|e| {
+                format!("invalid sample_format '{}': {e}", self.config.sample_format)
+            })?;
+        let (tx, rx) = mpsc::channel(F32_CHANNEL_SIZE);
+        self.streams
+            .push((name.to_string(), StreamConfig::default(), rx));
+        Ok(F32AudioSender::new(tx, sf.rate(), sf.channels()))
     }
 
     /// Add a named audio stream with per-stream codec/format overrides.
@@ -691,7 +705,14 @@ impl SnapServer {
             session_srv
                 .register_stream_codec(&name, enc.name(), enc.header())
                 .await;
-            spawn_stream_encoder(name, rx, enc, chunk_tx.clone(), sample_format.rate());
+            spawn_stream_encoder(
+                name,
+                rx,
+                enc,
+                chunk_tx.clone(),
+                sample_format.rate(),
+                sample_format.channels(),
+            );
         }
 
         let session_for_run = Arc::clone(&session_srv);

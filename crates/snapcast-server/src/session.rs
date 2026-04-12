@@ -400,6 +400,11 @@ async fn handle_client(
 }
 
 // ── Session loop (single function, cfg on custom-protocol arms) ──
+//
+// Custom-protocol outbound messages are drained via `try_recv` before each
+// `select!` iteration because `tokio::select!` doesn't support `#[cfg]` on arms.
+// This adds up to one select cycle of latency (~20ms at 48kHz) for custom
+// messages, which is acceptable for low-frequency control traffic.
 
 #[allow(clippy::too_many_arguments)]
 async fn session_loop(

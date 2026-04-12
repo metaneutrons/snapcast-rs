@@ -56,7 +56,7 @@ pub use snapcast_proto::{DEFAULT_SAMPLE_FORMAT, DEFAULT_STREAM_PORT};
 
 const EVENT_CHANNEL_SIZE: usize = 256;
 const COMMAND_CHANNEL_SIZE: usize = 64;
-const AUDIO_CHANNEL_SIZE: usize = 256;
+const AUDIO_CHANNEL_SIZE: usize = 1;
 
 /// Audio data pushed by the consumer — either f32 or raw PCM.
 #[derive(Debug, Clone)]
@@ -416,15 +416,27 @@ fn spawn_stream_encoder(
     mut rx: mpsc::Receiver<AudioFrame>,
     mut enc: Box<dyn encoder::Encoder>,
     chunk_tx: broadcast::Sender<WireChunkData>,
+    sample_rate: u32,
 ) {
     std::thread::spawn(move || {
         let rt = tokio::runtime::Builder::new_current_thread()
-            .enable_all()
+            .enable_time()
             .build()
             .expect("encoder runtime");
 
         rt.block_on(async {
+            let mut next_tick: Option<tokio::time::Instant> = None;
             while let Some(frame) = rx.recv().await {
+                // Pace F32 sources to realtime (pipe sources pace naturally via blocking read)
+                if let AudioData::F32(ref samples) = frame.data {
+                    let num_frames = samples.len() / 2; // stereo
+                    let chunk_dur = std::time::Duration::from_micros(
+                        (num_frames as u64 * 1_000_000) / sample_rate as u64,
+                    );
+                    let tick = next_tick.get_or_insert_with(tokio::time::Instant::now);
+                    *tick += chunk_dur;
+                    tokio::time::sleep_until(*tick).await;
+                }
                 match enc.encode(&frame.data) {
                     Ok(encoded) if !encoded.data.is_empty() => {
                         let _ = chunk_tx.send(WireChunkData {
@@ -599,7 +611,7 @@ impl SnapServer {
             session_srv
                 .register_stream_codec(&name, enc.name(), enc.header())
                 .await;
-            spawn_stream_encoder(name, rx, enc, chunk_tx.clone());
+            spawn_stream_encoder(name, rx, enc, chunk_tx.clone(), sample_format.rate());
         }
 
         let session_for_run = Arc::clone(&session_srv);

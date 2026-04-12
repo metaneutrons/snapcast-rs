@@ -313,7 +313,11 @@ impl Stream {
             && self.mini_buffer.median_simple().abs() > HARD_SYNC_MINI_MEDIAN_USEC
             && age_usec.abs() > HARD_SYNC_MIN_AGE_USEC
         {
-            tracing::info!("Hard sync: mini buffer full, |mini_median| > 50ms");
+            tracing::info!(
+                age_usec,
+                mini_median = self.mini_buffer.median_simple(),
+                "Hard sync: mini buffer full, |mini_median| > 50ms"
+            );
             self.hard_sync = true;
         } else if age_usec.abs() > HARD_SYNC_AGE_USEC {
             tracing::info!(age_usec, "Hard sync: |age| > 500ms");

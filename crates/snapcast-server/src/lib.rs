@@ -78,6 +78,72 @@ pub struct AudioFrame {
     pub timestamp_usec: i64,
 }
 
+/// Buffered sender for F32 audio that handles chunking, timestamping, and gap detection.
+///
+/// Accumulates variable-size F32 sample buffers and emits fixed-size 20ms chunks
+/// with monotonic timestamps. Automatically resets on playback gaps (>500ms).
+///
+/// Created by [`SnapServer::add_f32_stream`].
+pub struct F32AudioSender {
+    tx: mpsc::Sender<AudioFrame>,
+    buf: Vec<f32>,
+    chunk_samples: usize,
+    channels: u16,
+    sample_rate: u32,
+    total_frames: u64,
+    ts: time::ChunkTimestamper,
+    last_send: std::time::Instant,
+}
+
+impl F32AudioSender {
+    fn new(tx: mpsc::Sender<AudioFrame>, sample_rate: u32, channels: u16) -> Self {
+        let chunk_samples = (sample_rate as usize * 20 / 1000) * channels as usize;
+        Self {
+            tx,
+            buf: Vec::with_capacity(chunk_samples * 2),
+            chunk_samples,
+            channels,
+            sample_rate,
+            total_frames: 0,
+            ts: time::ChunkTimestamper::new(sample_rate),
+            last_send: std::time::Instant::now(),
+        }
+    }
+
+    /// Push interleaved F32 samples. Variable-size input is accumulated and
+    /// emitted as fixed 20ms chunks. Returns when all complete chunks are sent.
+    pub async fn send(
+        &mut self,
+        samples: &[f32],
+    ) -> Result<(), mpsc::error::SendError<AudioFrame>> {
+        let now = std::time::Instant::now();
+        if now.duration_since(self.last_send) > std::time::Duration::from_millis(500) {
+            self.total_frames = 0;
+            self.ts = time::ChunkTimestamper::new(self.sample_rate);
+            self.buf.clear();
+        }
+        self.last_send = now;
+
+        self.buf.extend_from_slice(samples);
+        while self.buf.len() >= self.chunk_samples {
+            let chunk: Vec<f32> = self.buf.drain(..self.chunk_samples).collect();
+            let frames = (self.chunk_samples / self.channels.max(1) as usize) as u32;
+            if self.total_frames == 0 {
+                self.ts = time::ChunkTimestamper::new(self.sample_rate);
+            }
+            let timestamp_usec = self.ts.next(frames);
+            self.total_frames += frames as u64;
+            self.tx
+                .send(AudioFrame {
+                    data: AudioData::F32(chunk),
+                    timestamp_usec,
+                })
+                .await?;
+        }
+        Ok(())
+    }
+}
+
 /// An encoded audio chunk ready to be sent to clients.
 #[derive(Debug, Clone)]
 pub struct WireChunkData {
@@ -478,6 +544,20 @@ impl SnapServer {
     /// Uses the server's default codec and sample format.
     pub fn add_stream(&mut self, name: &str) -> mpsc::Sender<AudioFrame> {
         self.add_stream_with_config(name, StreamConfig::default())
+    }
+
+    /// Add a named F32 audio stream with automatic chunking and timestamping.
+    ///
+    /// Returns an [`F32AudioSender`] that accepts variable-size F32 sample buffers
+    /// and handles 20ms chunking, monotonic timestamps, and gap detection internally.
+    pub fn add_f32_stream(&mut self, name: &str) -> F32AudioSender {
+        let sf: SampleFormat = self
+            .config
+            .sample_format
+            .parse()
+            .expect("valid sample_format");
+        let tx = self.add_stream_with_config(name, StreamConfig::default());
+        F32AudioSender::new(tx, sf.rate(), sf.channels())
     }
 
     /// Add a named audio stream with per-stream codec/format overrides.

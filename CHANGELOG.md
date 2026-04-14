@@ -1,5 +1,41 @@
 # Changelog
 
+## [0.6.0](https://github.com/metaneutrons/snapcast-rs/compare/v0.5.0...v0.6.0) (2026-04-12)
+
+
+### Features
+
+* --no-mdns and --mdns-name CLI flags for snapserver-rs ([30f7c35](https://github.com/metaneutrons/snapcast-rs/commit/30f7c3527d17429556329545381405fa76fa6a50))
+* add mdns_enabled config for runtime mDNS control ([0dfbea9](https://github.com/metaneutrons/snapcast-rs/commit/0dfbea9553a23c307da7c9c97001c7be9554b567))
+* full C++ API parity — AddStream, RemoveStream, StreamControl, notifications ([f780a91](https://github.com/metaneutrons/snapcast-rs/commit/f780a9101b456736afa67e70359b703358685da7))
+* **server:** add F32AudioSender for embedded audio sources ([958d380](https://github.com/metaneutrons/snapcast-rs/commit/958d380f2be6d407436de3eb6625f0b277094dc4))
+* **server:** add state persistence and SetStreamMeta command ([0fad761](https://github.com/metaneutrons/snapcast-rs/commit/0fad761bca1ea40985be2eae9ed6ac747cd94b87))
+* **server:** auto-register clients in state and create groups on connect ([086022f](https://github.com/metaneutrons/snapcast-rs/commit/086022f3f58ab08db90756a21f4850710da07b1e))
+* **server:** realtime pacing for F32 embedded sources ([b6caee3](https://github.com/metaneutrons/snapcast-rs/commit/b6caee365cde44df8328c38e5b4ab8405cdec250))
+* **server:** typed ServerStatus API — no more JSON in library boundary ([53decec](https://github.com/metaneutrons/snapcast-rs/commit/53decec0468285ff757e0be56a9707e9796b9c22))
+* **session:** per-stream chunk routing + mute filtering ([40b82e2](https://github.com/metaneutrons/snapcast-rs/commit/40b82e2af4e83c82f8cb29a3a90067fb12a722fb))
+* **status:** full C++ wire-format compatible types ([981bfcf](https://github.com/metaneutrons/snapcast-rs/commit/981bfcf0fa0ba9a51e072affb71af21c074f6edb))
+* **status:** typed StreamStatus enum with From&lt;&str&gt; conversion ([cee98fe](https://github.com/metaneutrons/snapcast-rs/commit/cee98fefb1a2c7f77aff5c18c5dcce58036df7a7))
+
+
+### Bug Fixes
+
+* correct Time response latency + handle broadcast lag ([556f41c](https://github.com/metaneutrons/snapcast-rs/commit/556f41c40d18abc3fe92b0707ecd340492209798))
+* custom-protocol session_loop — drain outbound before select ([b839f6c](https://github.com/metaneutrons/snapcast-rs/commit/b839f6c40d835fd72ff610625371b21b7bdbe54c))
+* gate server ChunkDecryptor to #[cfg(test)] only ([30ef650](https://github.com/metaneutrons/snapcast-rs/commit/30ef650cc7258c2a0699b9e6956dd4c994d9c621))
+* generate UUID-formatted group IDs matching C++ snapserver ([cf6c4a1](https://github.com/metaneutrons/snapcast-rs/commit/cf6c4a132aa0588718972f705aaeb9a7f933fb31))
+* handle ClientInfo (type 7) from streaming clients ([a840032](https://github.com/metaneutrons/snapcast-rs/commit/a84003290cea74ab6bff7df57b4e447c89e4ea24))
+* never disconnect on unknown message types ([d18169b](https://github.com/metaneutrons/snapcast-rs/commit/d18169bc3388b21b7349edaa8a1bbe06740d8389))
+* rename --no-mdns to --mdns-disable ([fa2f3d0](https://github.com/metaneutrons/snapcast-rs/commit/fa2f3d02d49a487f00489ed76abe13c0b7930df9))
+* **server:** add flush(), fix Instant underflow in encoder gap detection ([0ef253c](https://github.com/metaneutrons/snapcast-rs/commit/0ef253cd3e7856af04e01ae14e8db56f9a966505))
+* **server:** enterprise-grade fixes for F32AudioSender and encoder pacing ([1bb7ae0](https://github.com/metaneutrons/snapcast-rs/commit/1bb7ae01ca5f44135cae3f8ab475dcc8113d7e53))
+* set refersTo on ServerSettings to match Hello request id ([0b564d7](https://github.com/metaneutrons/snapcast-rs/commit/0b564d70004dac2698a210aa98050543fbcd0019))
+* Stream.OnProperties + Stream.OnUpdate notification broadcasting ([9195b0e](https://github.com/metaneutrons/snapcast-rs/commit/9195b0e0c36746be4209c53529b991cc467d4d0f))
+* **tests:** fix encryption test destructuring and missing stream/field ([f8d31fd](https://github.com/metaneutrons/snapcast-rs/commit/f8d31fd50c97aec35cd84aa14f3c1a8749a2f7c3))
+* three audit findings ([deb61b8](https://github.com/metaneutrons/snapcast-rs/commit/deb61b84843da9e18681cb6d2f426bc869be6ff0))
+* three enterprise-grade audit findings ([36d61b0](https://github.com/metaneutrons/snapcast-rs/commit/36d61b0ce4becb3989db35c3a3424cf9b6a9e77e))
+* three more audit findings ([d48d326](https://github.com/metaneutrons/snapcast-rs/commit/d48d326c6ed0387e8cf56d6e534154ab89e20f93))
+
 ## [0.5.0](https://github.com/metaneutrons/snapcast-rs/compare/v0.4.0...v0.5.0) (2026-04-10)
 
 

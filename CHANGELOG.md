@@ -1,5 +1,16 @@
 # Changelog
 
+## [0.7.0](https://github.com/metaneutrons/snapcast-rs/compare/v0.6.0...v0.7.0) (2026-04-15)
+
+
+### ⚠ BREAKING CHANGES
+
+* ClientConnected carries Hello struct instead of flat fields
+
+### Features
+
+* ClientConnected carries Hello struct instead of flat fields ([cc4fe01](https://github.com/metaneutrons/snapcast-rs/commit/cc4fe01db2c8f4e216c2d49748571cc95e4afd8c))
+
 ## [0.6.0](https://github.com/metaneutrons/snapcast-rs/compare/v0.5.0...v0.6.0) (2026-04-12)
 
 

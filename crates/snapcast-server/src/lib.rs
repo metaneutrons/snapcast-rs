@@ -29,8 +29,8 @@
 //! tokio::spawn(async move {
 //!     while let Some(event) = events.recv().await {
 //!         match event {
-//!             ServerEvent::ClientConnected { id, name, .. } => {
-//!                 tracing::info!(id, name, "Client connected");
+//!             ServerEvent::ClientConnected { id, ref hello } => {
+//!                 tracing::info!(id, name = hello.host_name, "Client connected");
 //!             }
 //!             _ => {}
 //!         }
@@ -52,6 +52,7 @@ pub use snapcast_proto::CustomMessage;
 #[cfg(feature = "encryption")]
 pub use snapcast_proto::DEFAULT_ENCRYPTION_PSK;
 pub use snapcast_proto::SampleFormat;
+pub use snapcast_proto::message::hello::Hello;
 pub use snapcast_proto::{DEFAULT_SAMPLE_FORMAT, DEFAULT_STREAM_PORT};
 
 const EVENT_CHANNEL_SIZE: usize = 256;
@@ -211,10 +212,8 @@ pub enum ServerEvent {
     ClientConnected {
         /// Unique client identifier.
         id: String,
-        /// Client hostname.
-        name: String,
-        /// Client MAC address.
-        mac: String,
+        /// The client's Hello message with all connection metadata.
+        hello: snapcast_proto::message::hello::Hello,
     },
     /// A client disconnected.
     ClientDisconnected {

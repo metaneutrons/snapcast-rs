@@ -333,8 +333,7 @@ async fn handle_client(
     let _ = event_tx
         .send(ServerEvent::ClientConnected {
             id: client_id.clone(),
-            name: hello.host_name.clone(),
-            mac: hello.mac.clone(),
+            hello: hello.clone(),
         })
         .await;
 

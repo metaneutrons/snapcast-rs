@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.8.0](https://github.com/metaneutrons/snapcast-rs/compare/v0.7.0...v0.8.0) (2026-05-01)
+
+
+### Features
+
+* **server:** add ClientFilter trait for connection-level filtering ([6cd60fc](https://github.com/metaneutrons/snapcast-rs/commit/6cd60fca9db9df762621cdc998f0c25e4b626f86))
+
 ## [0.7.0](https://github.com/metaneutrons/snapcast-rs/compare/v0.6.0...v0.7.0) (2026-04-15)
 
 

@@ -2,15 +2,43 @@
 //!
 //! Implement [`AuthValidator`] for custom authentication (database, LDAP, etc.)
 //! or use [`StaticAuthValidator`] for config-file-based users/roles.
+//!
+//! Implement [`ClientFilter`] for connection-level filtering (MAC allowlist, etc.)
 
 use std::collections::HashMap;
 use std::sync::Arc;
 
 use subtle::ConstantTimeEq;
 
+use snapcast_proto::message::hello::Hello;
+
 /// Constant-time byte comparison to prevent timing attacks.
 fn constant_time_eq(a: &[u8], b: &[u8]) -> bool {
     a.ct_eq(b).into()
+}
+
+/// Connection-level client filter — called after Hello, before authentication.
+///
+/// Use this to implement MAC allowlists, IP-based filtering, or rate limiting.
+/// Return `true` to accept the client, `false` to disconnect immediately.
+///
+/// # Example: MAC allowlist
+///
+/// ```
+/// use snapcast_server::auth::ClientFilter;
+/// use snapcast_server::Hello;
+///
+/// struct MacAllowlist(Vec<String>);
+///
+/// impl ClientFilter for MacAllowlist {
+///     fn accept(&self, hello: &Hello) -> bool {
+///         self.0.is_empty() || self.0.iter().any(|m| m.eq_ignore_ascii_case(&hello.mac))
+///     }
+/// }
+/// ```
+pub trait ClientFilter: Send + Sync {
+    /// Decide whether to accept a client based on its Hello message.
+    fn accept(&self, hello: &Hello) -> bool;
 }
 
 /// Result of successful authentication.

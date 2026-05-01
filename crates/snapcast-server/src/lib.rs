@@ -441,6 +441,9 @@ pub struct ServerConfig {
     pub mdns_name: String,
     /// Auth validator for streaming clients. `None` = no auth required.
     pub auth: Option<std::sync::Arc<dyn auth::AuthValidator>>,
+    /// Client filter — called after Hello to accept/reject connections.
+    /// `None` = accept all clients.
+    pub client_filter: Option<std::sync::Arc<dyn auth::ClientFilter>>,
     /// Pre-shared key for f32lz4 encryption. `None` = no encryption.
     #[cfg(feature = "encryption")]
     pub encryption_psk: Option<String>,
@@ -464,6 +467,7 @@ impl Default for ServerConfig {
             #[cfg(feature = "mdns")]
             mdns_name: "Snapserver".into(),
             auth: None,
+            client_filter: None,
             #[cfg(feature = "encryption")]
             encryption_psk: None,
             state_file: None,
@@ -683,6 +687,7 @@ impl SnapServer {
             self.config.stream_port,
             self.config.buffer_ms as i32,
             self.config.auth.clone(),
+            self.config.client_filter.clone(),
             Arc::clone(&shared_state),
             first_name.clone(),
             self.config.send_audio_to_muted,

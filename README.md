@@ -196,6 +196,7 @@ ServerConfig {
     sample_format: String,     // default: "48000:16:2"
     mdns_service_type: String, // default: "_snapcast._tcp.local."
     auth: Option<Arc<dyn AuthValidator>>, // default: None (no auth)
+    client_filter: Option<Arc<dyn ClientFilter>>, // default: None (accept all)
     encryption_psk: Option<String>, // f32lz4 encryption (feature: encryption)
 }
 ```
@@ -247,6 +248,32 @@ impl AuthValidator for MyValidator {
 ```
 
 Clients send Basic auth in the Hello handshake. The server validates credentials and checks the `"Streaming"` permission. Unauthenticated or unauthorized clients receive Error(401/403) and are disconnected.
+
+### Client Filtering
+
+Filter clients at connection time based on MAC address, hostname, or any Hello field:
+
+```rust
+use snapcast_server::auth::ClientFilter;
+use snapcast_server::Hello;
+
+/// Only accept clients whose MAC is in the allowlist.
+struct MacAllowlist(Vec<String>);
+
+impl ClientFilter for MacAllowlist {
+    fn accept(&self, hello: &Hello) -> bool {
+        // Empty list = accept all (backwards compatible)
+        self.0.is_empty() || self.0.iter().any(|m| m.eq_ignore_ascii_case(&hello.mac))
+    }
+}
+
+let config = ServerConfig {
+    client_filter: Some(Arc::new(MacAllowlist(vec!["aa:bb:cc:dd:ee:ff".into()]))),
+    ..ServerConfig::default()
+};
+```
+
+Rejected clients are disconnected immediately after Hello with a warning log.
 
 ### Network Ports
 

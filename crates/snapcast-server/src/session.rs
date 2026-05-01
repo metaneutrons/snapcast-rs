@@ -65,6 +65,7 @@ pub struct StreamCodecInfo {
 struct SessionContext {
     buffer_ms: i32,
     auth: Option<Arc<dyn crate::auth::AuthValidator>>,
+    client_filter: Option<Arc<dyn crate::auth::ClientFilter>>,
     send_audio_to_muted: bool,
     settings_senders: Mutex<HashMap<String, mpsc::Sender<ClientSettingsUpdate>>>,
     #[cfg(feature = "custom-protocol")]
@@ -167,6 +168,7 @@ impl SessionServer {
         port: u16,
         buffer_ms: i32,
         auth: Option<Arc<dyn crate::auth::AuthValidator>>,
+        client_filter: Option<Arc<dyn crate::auth::ClientFilter>>,
         shared_state: Arc<tokio::sync::Mutex<crate::state::ServerState>>,
         default_stream: String,
         send_audio_to_muted: bool,
@@ -176,6 +178,7 @@ impl SessionServer {
             ctx: Arc::new(SessionContext {
                 buffer_ms,
                 auth,
+                client_filter,
                 send_audio_to_muted,
                 settings_senders: Mutex::new(HashMap::new()),
                 #[cfg(feature = "custom-protocol")]
@@ -279,6 +282,16 @@ async fn handle_client(
 
     let client_id = hello.id.clone();
     tracing::info!(id = %client_id, name = %hello.host_name, mac = %hello.mac, "Client hello");
+
+    // Client filter — reject before auth if not accepted
+    if ctx
+        .client_filter
+        .as_ref()
+        .is_some_and(|f| !f.accept(&hello))
+    {
+        tracing::warn!(id = %client_id, mac = %hello.mac, host = %hello.host_name, "Client rejected by filter");
+        return Ok(());
+    }
 
     if let Some(validator) = &ctx.auth {
         validate_auth(validator.as_ref(), &hello, &mut stream, &client_id).await?;

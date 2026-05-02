@@ -46,7 +46,7 @@ snapcast-rs/
 ├── snapcast-proto      Protocol: binary message serialization
 ├── snapcast-client     Client library: embeddable, f32 audio output
 ├── snapcast-server     Server library: embeddable, f32 audio input
-├── snapclient-rs       Client binary: cpal audio output
+├── snapclient-rs       Client binary: cpal audio, software + hardware (ALSA) mixer
 ├── snapserver-rs       Server binary: stream readers, JSON-RPC, HTTP
 └── snapcast-tests      Integration tests
 ```
@@ -56,7 +56,7 @@ snapcast-rs/
 | [snapcast-proto](crates/snapcast-proto) | Binary protocol, message serialization | [docs.rs](https://docs.rs/snapcast-proto) |
 | [snapcast-client](crates/snapcast-client) | Client library: embeddable, f32 audio output | [docs.rs](https://docs.rs/snapcast-client) |
 | [snapcast-server](crates/snapcast-server) | Server library: embeddable, f32 audio input | [docs.rs](https://docs.rs/snapcast-server) |
-| [snapclient-rs](crates/snapclient-rs) | Client binary: cpal audio output | — |
+| [snapclient-rs](crates/snapclient-rs) | Client binary: cpal audio, software + hardware (ALSA) mixer | — |
 | [snapserver-rs](crates/snapserver-rs) | Server binary: stream readers, JSON-RPC, HTTP | — |
 | [snapcast-tests](crates/snapcast-tests) | Integration tests | — |
 

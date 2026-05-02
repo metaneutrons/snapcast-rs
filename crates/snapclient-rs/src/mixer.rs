@@ -124,10 +124,10 @@ fn set_alsa_volume_inner(control: &str, percent: u8) -> anyhow::Result<()> {
 #[cfg(target_os = "linux")]
 fn validate_alsa_control(control: &str) -> bool {
     use alsa::mixer::{Mixer, SelemId};
-    Mixer::new("default", false)
-        .ok()
-        .and_then(|m| m.find_selem(&SelemId::new(control, 0)))
-        .is_some()
+    let Ok(mixer) = Mixer::new("default", false) else {
+        return false;
+    };
+    mixer.find_selem(&SelemId::new(control, 0)).is_some()
 }
 
 #[cfg(target_os = "linux")]

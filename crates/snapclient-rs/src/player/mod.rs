@@ -8,11 +8,14 @@ use snapcast_client::stream::Stream;
 use snapcast_client::time_provider::TimeProvider;
 use tokio::sync::mpsc;
 
+use crate::mixer::VolumeState;
+
 /// Start audio output. Waits for the Stream to have audio, then starts cpal.
 pub async fn play_audio(
     rx: mpsc::Receiver<AudioFrame>,
     stream: Arc<Mutex<Stream>>,
     time_provider: Arc<Mutex<TimeProvider>>,
+    volume: Arc<VolumeState>,
 ) {
     // Drain audio_rx in background
     tokio::spawn(async move {
@@ -41,7 +44,7 @@ pub async fn play_audio(
 
     // Start cpal on dedicated thread
     std::thread::spawn(move || {
-        if let Err(e) = run_cpal(stream, time_provider, format) {
+        if let Err(e) = run_cpal(stream, time_provider, format, volume) {
             tracing::error!(error = %e, "Audio output failed");
         }
     });
@@ -51,6 +54,7 @@ fn run_cpal(
     stream: Arc<Mutex<Stream>>,
     time_provider: Arc<Mutex<TimeProvider>>,
     format: snapcast_proto::SampleFormat,
+    volume: Arc<VolumeState>,
 ) -> anyhow::Result<()> {
     use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 
@@ -124,6 +128,14 @@ fn run_cpal(
                     }
                 }
                 _ => data.fill(0.0),
+            }
+
+            // Apply software volume
+            let gain = volume.gain();
+            if gain < 1.0 {
+                for sample in data.iter_mut() {
+                    *sample *= gain;
+                }
             }
         },
         |err| tracing::error!(error = %err, "Audio stream error"),

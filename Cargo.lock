@@ -2375,7 +2375,7 @@ checksum = "67b1b7a3b5fe4f1376887184045fcf45c69e92af734b7aaddc05fb777b6fbd03"
 
 [[package]]
 name = "snapcast-client"
-version = "0.7.0"
+version = "0.8.0"
 dependencies = [
  "anyhow",
  "chacha20poly1305",
@@ -2402,7 +2402,7 @@ dependencies = [
 
 [[package]]
 name = "snapcast-proto"
-version = "0.7.0"
+version = "0.8.0"
 dependencies = [
  "byteorder",
  "serde",
@@ -2412,7 +2412,7 @@ dependencies = [
 
 [[package]]
 name = "snapcast-server"
-version = "0.7.0"
+version = "0.8.0"
 dependencies = [
  "anyhow",
  "audiopus",
@@ -2440,7 +2440,7 @@ dependencies = [
 
 [[package]]
 name = "snapcast-tests"
-version = "0.7.0"
+version = "0.8.0"
 dependencies = [
  "anyhow",
  "base64",
@@ -2452,7 +2452,7 @@ dependencies = [
 
 [[package]]
 name = "snapclient-rs"
-version = "0.7.0"
+version = "0.8.0"
 dependencies = [
  "anyhow",
  "base64",
@@ -2469,7 +2469,7 @@ dependencies = [
 
 [[package]]
 name = "snapserver-rs"
-version = "0.7.0"
+version = "0.8.0"
 dependencies = [
  "anyhow",
  "axum",

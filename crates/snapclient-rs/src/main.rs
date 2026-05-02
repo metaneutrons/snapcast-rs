@@ -1,5 +1,6 @@
 mod cli;
 mod logging;
+mod mixer;
 mod player;
 
 use clap::Parser;
@@ -33,6 +34,17 @@ fn main() -> anyhow::Result<()> {
         "snapclient-rs starting"
     );
 
+    let mixer_str = match settings.player.mixer.mode {
+        snapcast_client::config::MixerMode::Software => "software".to_string(),
+        snapcast_client::config::MixerMode::Hardware => {
+            format!("hardware:{}", settings.player.mixer.parameter)
+        }
+        snapcast_client::config::MixerMode::None => "none".to_string(),
+        _ => "software".to_string(),
+    };
+    let (mixer, volume_state) = mixer::Mixer::from_str(&mixer_str);
+    let mixer = std::sync::Arc::new(mixer);
+
     let config = ClientConfig {
         scheme: settings.server.scheme.clone(),
         host: settings.server.host.clone(),
@@ -64,11 +76,13 @@ fn main() -> anyhow::Result<()> {
         // Audio output: cpal callback reads from Stream directly
         let player_stream = std::sync::Arc::clone(&client.stream);
         let player_tp = std::sync::Arc::clone(&client.time_provider);
+        let player_vol = volume_state.clone();
         tokio::spawn(async move {
-            player::play_audio(audio_rx, player_stream, player_tp).await;
+            player::play_audio(audio_rx, player_stream, player_tp, player_vol).await;
         });
 
-        // Log events
+        // Log events + apply volume
+        let event_mixer = mixer.clone();
         tokio::spawn(async move {
             while let Some(event) = events.recv().await {
                 match event {
@@ -78,6 +92,7 @@ fn main() -> anyhow::Result<()> {
                     ClientEvent::Disconnected { .. } => {}
                     ClientEvent::VolumeChanged { volume, muted } => {
                         tracing::info!(volume, muted, "Volume changed");
+                        event_mixer.set_volume(volume as u8, muted);
                     }
                     ClientEvent::TimeSyncComplete { diff_ms } => {
                         tracing::info!(diff_ms, "Time sync complete");

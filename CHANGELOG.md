@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.9.0](https://github.com/metaneutrons/snapcast-rs/compare/v0.8.0...v0.9.0) (2026-05-02)
+
+
+### Features
+
+* **snapclient-rs:** implement volume mixer (software + hardware ALSA) ([9d7eeaf](https://github.com/metaneutrons/snapcast-rs/commit/9d7eeaf773ff6f5fd26078695921fc9d9fc03849))
+
+
+### Bug Fixes
+
+* **snapclient-rs:** lifetime error in validate_alsa_control ([e23dfb9](https://github.com/metaneutrons/snapcast-rs/commit/e23dfb9cc5c7df3f6cbf981f6a8e34b0fcf83dba))
+
 ## [0.8.0](https://github.com/metaneutrons/snapcast-rs/compare/v0.7.0...v0.8.0) (2026-05-01)
 
 

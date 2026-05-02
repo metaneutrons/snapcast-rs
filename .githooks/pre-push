@@ -1,2 +1,4 @@
 #!/bin/sh
-exec cargo clippy -- -D warnings
+# Pre-push: format check + clippy with all targets.
+# Note: cfg(target_os = "linux") code with C deps (alsa) can only be verified in CI.
+cargo fmt -- --check && cargo clippy --all-targets -- -D warnings

@@ -113,7 +113,7 @@ fn set_alsa_volume_inner(control: &str, percent: u8) -> anyhow::Result<()> {
         .find_selem(&selem_id)
         .ok_or_else(|| anyhow::anyhow!("ALSA control '{control}' not found"))?;
     let (min, max) = selem.get_playback_volume_range();
-    // Perceptual volume curve (cubic) — matches how humans perceive loudness.
+    // Perceptual volume curve (quadratic) — matches how humans perceive loudness.
     let normalized = f64::from(percent) / 100.0;
     let curved = normalized * normalized * normalized;
     let vol = min + ((max - min) as f64 * curved) as i64;

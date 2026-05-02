@@ -96,45 +96,50 @@ impl Mixer {
 
 #[cfg(target_os = "linux")]
 fn set_alsa_volume(control: &str, percent: u8, muted: bool) {
-    use std::process::Command;
-    let vol_arg = if muted {
-        "0%".to_string()
+    let vol = if muted { 0 } else { percent };
+    if let Err(e) = set_alsa_volume_inner(control, vol) {
+        tracing::warn!(control, error = %e, "Failed to set ALSA volume");
     } else {
-        format!("{percent}%")
-    };
-    match Command::new("amixer")
-        .args(["sset", control, &vol_arg])
-        .output()
-    {
-        Ok(output) if !output.status.success() => {
-            tracing::warn!(
-                control,
-                "amixer failed: {}",
-                String::from_utf8_lossy(&output.stderr).trim()
-            );
-        }
-        Err(e) => tracing::warn!(control, error = %e, "Failed to run amixer"),
-        _ => tracing::debug!(control, percent, muted, "Hardware volume set"),
+        tracing::debug!(control, percent, muted, "Hardware volume set");
     }
 }
 
 #[cfg(target_os = "linux")]
+fn set_alsa_volume_inner(control: &str, percent: u8) -> anyhow::Result<()> {
+    use alsa::mixer::{Mixer, SelemId};
+    let mixer = Mixer::new("default", false)?;
+    let selem_id = SelemId::new(control, 0);
+    let selem = mixer
+        .find_selem(&selem_id)
+        .ok_or_else(|| anyhow::anyhow!("ALSA control '{control}' not found"))?;
+    let (min, max) = selem.get_playback_volume_range();
+    let vol = min + (max - min) * i64::from(percent) / 100;
+    selem.set_playback_volume_all(vol)?;
+    if selem.has_playback_switch() {
+        selem.set_playback_switch_all(if percent == 0 { 0 } else { 1 })?;
+    }
+    Ok(())
+}
+
+#[cfg(target_os = "linux")]
 fn validate_alsa_control(control: &str) -> bool {
-    use std::process::Command;
-    Command::new("amixer")
-        .args(["sget", control])
-        .output()
-        .is_ok_and(|o| o.status.success())
+    use alsa::mixer::{Mixer, SelemId};
+    Mixer::new("default", false)
+        .ok()
+        .and_then(|m| m.find_selem(&SelemId::new(control, 0)))
+        .is_some()
 }
 
 #[cfg(target_os = "linux")]
 fn list_alsa_controls() -> Option<String> {
-    use std::process::Command;
-    let output = Command::new("amixer").arg("scontrols").output().ok()?;
-    let names: Vec<&str> = std::str::from_utf8(&output.stdout)
-        .ok()?
-        .lines()
-        .filter_map(|l| l.split('\'').nth(1))
+    use alsa::mixer::{Mixer, Selem};
+    let mixer = Mixer::new("default", false).ok()?;
+    let names: Vec<String> = mixer
+        .iter()
+        .filter_map(|elem| {
+            let selem = Selem::new(elem)?;
+            Some(selem.get_id().get_name().ok()?.to_string())
+        })
         .collect();
     Some(names.join(", "))
 }
@@ -146,13 +151,14 @@ fn detect_alsa_control() -> Option<String> {
             return Some(candidate.to_string());
         }
     }
-    use std::process::Command;
-    let output = Command::new("amixer").arg("scontrols").output().ok()?;
-    std::str::from_utf8(&output.stdout)
-        .ok()?
-        .lines()
-        .next()?
-        .split('\'')
-        .nth(1)
-        .map(String::from)
+    use alsa::mixer::{Mixer, Selem};
+    let mixer = Mixer::new("default", false).ok()?;
+    mixer.iter().find_map(|elem| {
+        let selem = Selem::new(elem)?;
+        if selem.has_playback_volume() {
+            Some(selem.get_id().get_name().ok()?.to_string())
+        } else {
+            None
+        }
+    })
 }

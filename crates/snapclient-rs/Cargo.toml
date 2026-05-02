@@ -36,3 +36,6 @@ tls = ["snapcast-client/tls"]
 resampler = ["snapcast-client/resampler"]
 custom-protocol = ["snapcast-client/custom-protocol"]
 encryption = ["snapcast-client/encryption"]
+
+[target.'cfg(target_os = "linux")'.dependencies]
+alsa = "0.7"

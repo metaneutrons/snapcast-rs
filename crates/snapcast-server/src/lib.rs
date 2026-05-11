@@ -696,12 +696,14 @@ impl SnapServer {
         for (name, stream_cfg, rx) in streams {
             {
                 let mut s = shared_state.lock().await;
-                s.streams.push(state::StreamInfo {
-                    id: name.clone(),
-                    status: "idle".into(),
-                    uri: String::new(),
-                    properties: Default::default(),
-                });
+                if !s.streams.iter().any(|existing| existing.id == name) {
+                    s.streams.push(state::StreamInfo {
+                        id: name.clone(),
+                        status: "idle".into(),
+                        uri: String::new(),
+                        properties: Default::default(),
+                    });
+                }
             }
             let enc = if stream_cfg.codec.is_none() && stream_cfg.sample_format.is_none() {
                 if let Some(enc) = default_enc.take() {

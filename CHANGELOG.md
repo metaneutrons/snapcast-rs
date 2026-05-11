@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.9.1](https://github.com/metaneutrons/snapcast-rs/compare/v0.9.0...v0.9.1) (2026-05-11)
+
+
+### Bug Fixes
+
+* **mixer:** quadratic curve instead of cubic ([6a74c26](https://github.com/metaneutrons/snapcast-rs/commit/6a74c2645c7fb9701cced21835c8037072776e54))
+* **server:** deduplicate streams on startup from persisted state ([fd0ccf3](https://github.com/metaneutrons/snapcast-rs/commit/fd0ccf34ab553d831b25de4830e99f99f85776ac))
+* **snapclient-rs:** perceptual volume curve for hardware mixer ([4423c1c](https://github.com/metaneutrons/snapcast-rs/commit/4423c1c2218a2c60d78344fa3093b1ba54fdf4a3))
+
 ## [0.9.0](https://github.com/metaneutrons/snapcast-rs/compare/v0.8.0...v0.9.0) (2026-05-02)
 
 

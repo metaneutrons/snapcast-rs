@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.10.1](https://github.com/metaneutrons/snapcast-rs/compare/v0.10.0...v0.10.1) (2026-05-15)
+
+
+### Bug Fixes
+
+* **snapclient:** gate sd-notify and systemd support for Linux only ([f637aa5](https://github.com/metaneutrons/snapcast-rs/commit/f637aa51037cf7162ddb9e64868a17f086a4415d))
+
 ## [0.10.0](https://github.com/metaneutrons/snapcast-rs/compare/v0.9.1...v0.10.0) (2026-05-15)
 
 

@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.10.0](https://github.com/metaneutrons/snapcast-rs/compare/v0.9.1...v0.10.0) (2026-05-15)
+
+
+### Features
+
+* **snapclient:** add systemd notification support and status reporting ([77e69df](https://github.com/metaneutrons/snapcast-rs/commit/77e69df39199e546752dbe54447f19eac94504f4))
+* **snapclient:** implement dynamic format handling and resampler integration ([6d354b7](https://github.com/metaneutrons/snapcast-rs/commit/6d354b72fdc1e9051c2862b10032e5de10948133))
+
+
+### Bug Fixes
+
+* **client:** resolve breaking change in rustls-native-certs v0.8 ([bdbfa74](https://github.com/metaneutrons/snapcast-rs/commit/bdbfa74745532b046baee7157e0637084d840191))
+* **snapclient:** resolve lint and formatting errors ([b39e79d](https://github.com/metaneutrons/snapcast-rs/commit/b39e79d01409462bae052a3f00cde95b89dafd6c))
+
 ## [0.9.1](https://github.com/metaneutrons/snapcast-rs/compare/v0.9.0...v0.9.1) (2026-05-11)
 
 

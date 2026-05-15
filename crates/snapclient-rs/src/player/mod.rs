@@ -86,7 +86,7 @@ fn run_cpal(
     let supported_formats = device.supported_output_configs()?;
     let mut target_config = None;
     for f in supported_formats {
-        if f.channels() == format.channels() as u16
+        if f.channels() == format.channels()
             && f.min_sample_rate().0 <= format.rate()
             && f.max_sample_rate().0 >= format.rate()
         {
@@ -95,7 +95,7 @@ fn run_cpal(
         }
     }
 
-    let (config, use_resampler): (cpal::StreamConfig, bool) = if let Some(c) = target_config {
+    let (config, _use_resampler): (cpal::StreamConfig, bool) = if let Some(c) = target_config {
         (c.into(), false)
     } else {
         tracing::warn!("Stream format not supported by device, using default and resampling");
@@ -107,7 +107,7 @@ fn run_cpal(
     let device_channels = config.channels as usize;
 
     #[cfg(feature = "resampler")]
-    let mut resampler = if use_resampler {
+    let mut resampler = if _use_resampler {
         let device_format =
             snapcast_proto::SampleFormat::new(device_rate, 16, device_channels as u16);
         // We assume 20ms chunks for resampler init (typical for Snapcast)

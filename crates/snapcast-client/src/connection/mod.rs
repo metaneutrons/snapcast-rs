@@ -70,6 +70,76 @@ pub struct TcpConnection {
     next_id: u16,
 }
 
+/// Unified connection that supports TCP, WebSocket, and WSS.
+pub enum SnapConnection {
+    /// Plain TCP connection.
+    Tcp(TcpConnection),
+    #[cfg(feature = "websocket")]
+    /// WebSocket (non-secure) connection.
+    Ws(ws::WsConnection),
+    #[cfg(feature = "tls")]
+    /// WebSocket over TLS (secure) connection.
+    Wss(wss::WssConnection),
+}
+
+impl SnapConnection {
+    /// Create a new connection based on the scheme.
+    pub fn new(scheme: &str, host: &str, port: u16) -> Result<Self> {
+        match scheme {
+            "tcp" => Ok(Self::Tcp(TcpConnection::new(host, port))),
+            #[cfg(feature = "websocket")]
+            "ws" => Ok(Self::Ws(ws::WsConnection::new(host, port))),
+            #[cfg(feature = "tls")]
+            "wss" => Ok(Self::Wss(wss::WssConnection::new(host, port))),
+            _ => anyhow::bail!("unsupported scheme: {scheme}"),
+        }
+    }
+
+    /// Establish the connection.
+    pub async fn connect(&mut self) -> Result<()> {
+        match self {
+            Self::Tcp(c) => c.connect().await,
+            #[cfg(feature = "websocket")]
+            Self::Ws(c) => c.connect().await,
+            #[cfg(feature = "tls")]
+            Self::Wss(c) => c.connect().await,
+        }
+    }
+
+    /// Close the connection.
+    pub fn disconnect(&mut self) {
+        match self {
+            Self::Tcp(c) => c.disconnect(),
+            #[cfg(feature = "websocket")]
+            Self::Ws(c) => c.disconnect(),
+            #[cfg(feature = "tls")]
+            Self::Wss(c) => c.disconnect(),
+        }
+    }
+
+    /// Send a message.
+    pub async fn send(&mut self, msg_type: MessageType, payload: &MessagePayload) -> Result<()> {
+        match self {
+            Self::Tcp(c) => c.send(msg_type, payload).await,
+            #[cfg(feature = "websocket")]
+            Self::Ws(c) => c.send(msg_type, payload).await,
+            #[cfg(feature = "tls")]
+            Self::Wss(c) => c.send(msg_type, payload).await,
+        }
+    }
+
+    /// Receive the next message.
+    pub async fn recv(&mut self) -> Result<TypedMessage> {
+        match self {
+            Self::Tcp(c) => c.recv().await,
+            #[cfg(feature = "websocket")]
+            Self::Ws(c) => c.recv().await,
+            #[cfg(feature = "tls")]
+            Self::Wss(c) => c.recv().await,
+        }
+    }
+}
+
 impl TcpConnection {
     /// Create a new connection to the given host and port.
     pub fn new(host: &str, port: u16) -> Self {

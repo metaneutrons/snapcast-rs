@@ -43,24 +43,33 @@ pub async fn play_audio(
             "Audio format detected"
         );
 
-        // Run cpal on dedicated thread. If it returns, it's either an error or a format change.
+        // Run cpal on dedicated thread.
         let stream_clone = Arc::clone(&stream);
         let tp_clone = Arc::clone(&time_provider);
         let vol_clone = Arc::clone(&volume);
 
-        let handle =
-            std::thread::spawn(move || run_cpal(stream_clone, tp_clone, format, vol_clone));
+        // We use spawn_blocking to wait for the thread without blocking the executor
+        let result = tokio::task::spawn_blocking(move || {
+            let handle =
+                std::thread::spawn(move || run_cpal(stream_clone, tp_clone, format, vol_clone));
+            handle.join()
+        })
+        .await;
 
-        match handle.join() {
-            Ok(Ok(_)) => {
+        match result {
+            Ok(Ok(Ok(_))) => {
                 tracing::info!("Audio format change detected, restarting player");
             }
-            Ok(Err(e)) => {
+            Ok(Ok(Err(e))) => {
                 tracing::error!(error = %e, "Audio output failed, retrying in 1s");
                 tokio::time::sleep(std::time::Duration::from_secs(1)).await;
             }
-            Err(_) => {
+            Ok(Err(_)) => {
                 tracing::error!("Audio thread panicked, restarting in 1s");
+                tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+            }
+            Err(e) => {
+                tracing::error!(error = %e, "Task join failed, restarting in 1s");
                 tokio::time::sleep(std::time::Duration::from_secs(1)).await;
             }
         }

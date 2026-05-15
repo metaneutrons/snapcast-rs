@@ -12,7 +12,7 @@ use snapcast_proto::message::time::Time;
 use snapcast_proto::{MessageType, SampleFormat};
 use tokio::sync::mpsc;
 
-use crate::connection::TcpConnection;
+use crate::connection::SnapConnection;
 use crate::decoder::{self, Decoder, PcmDecoder};
 use crate::stream::{PcmChunk, Stream};
 use crate::time_provider::TimeProvider;
@@ -29,7 +29,7 @@ const QUICK_SYNC_INTERVAL: Duration = Duration::from_millis(100);
 /// Main orchestrator wiring connection, decoder, stream, and audio output.
 pub struct Controller {
     settings: crate::ClientConfig,
-    connection: TcpConnection,
+    connection: SnapConnection,
     time_provider: Arc<Mutex<TimeProvider>>,
     stream: Option<Arc<Mutex<Stream>>>,
     decoder: Option<Box<dyn Decoder>>,
@@ -48,8 +48,11 @@ impl Controller {
         time_provider: Arc<Mutex<TimeProvider>>,
         stream: Arc<Mutex<Stream>>,
     ) -> Self {
+        let connection = SnapConnection::new(&settings.scheme, &settings.host, settings.port)
+            .unwrap_or_else(|_| SnapConnection::new("tcp", &settings.host, settings.port).unwrap());
+
         Self {
-            connection: TcpConnection::new(&settings.host, settings.port),
+            connection,
             settings,
             time_provider,
             stream: Some(stream),
@@ -99,7 +102,11 @@ impl Controller {
                         .await?;
                 self.settings.host = endpoint.host;
                 self.settings.port = endpoint.port;
-                self.connection = TcpConnection::new(&self.settings.host, self.settings.port);
+                self.connection = SnapConnection::new(
+                    &self.settings.scheme,
+                    &self.settings.host,
+                    self.settings.port,
+                )?;
             }
             #[cfg(not(feature = "mdns"))]
             bail!("mDNS not available — specify server URL");
@@ -107,6 +114,7 @@ impl Controller {
 
         self.connection.connect().await?;
         tracing::info!(
+            scheme = %self.settings.scheme,
             host = %self.settings.host,
             port = self.settings.port,
             "Connected"
@@ -150,22 +158,31 @@ impl Controller {
             .send(MessageType::Hello, &MessagePayload::Hello(hello))
             .await?;
 
-        let response = self.recv_timeout(HELLO_TIMEOUT).await?;
-        match response.payload {
-            MessagePayload::ServerSettings(ss) => {
-                self.emit(ClientEvent::ServerSettings {
-                    buffer_ms: ss.buffer_ms,
-                    latency: ss.latency,
-                    volume: ss.volume,
-                    muted: ss.muted,
-                });
-                self.server_settings = Some(ss);
-                Ok(())
+        // Expect ServerSettings as first or one of first messages
+        loop {
+            let response = self.recv_timeout(HELLO_TIMEOUT).await?;
+            match response.payload {
+                MessagePayload::ServerSettings(ss) => {
+                    self.emit(ClientEvent::ServerSettings {
+                        buffer_ms: ss.buffer_ms,
+                        latency: ss.latency,
+                        volume: ss.volume,
+                        muted: ss.muted,
+                    });
+                    self.server_settings = Some(ss);
+                    return Ok(());
+                }
+                MessagePayload::CodecHeader(ch) => {
+                    self.init_audio_pipeline(&ch)?;
+                }
+                MessagePayload::Error(e) => {
+                    bail!("Server rejected Hello: {} (code {})", e.error, e.code)
+                }
+                _ => tracing::debug!(
+                    "Ignoring message during handshake: {:?}",
+                    response.base.msg_type
+                ),
             }
-            MessagePayload::Error(e) => {
-                bail!("Server rejected Hello: {} (code {})", e.error, e.code)
-            }
-            _ => bail!("Unexpected response to Hello: {:?}", response.base.msg_type),
         }
     }
 

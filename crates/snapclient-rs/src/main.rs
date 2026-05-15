@@ -90,6 +90,10 @@ fn main() -> anyhow::Result<()> {
                         tracing::info!(host, port, "Connected");
                     }
                     ClientEvent::Disconnected { .. } => {}
+                    ClientEvent::ServerSettings { volume, muted, .. } => {
+                        tracing::info!(volume, muted, "Initial server settings received");
+                        event_mixer.set_volume(volume as u8, muted);
+                    }
                     ClientEvent::VolumeChanged { volume, muted } => {
                         tracing::info!(volume, muted, "Volume changed");
                         event_mixer.set_volume(volume as u8, muted);

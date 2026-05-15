@@ -89,6 +89,7 @@ where
                     return val;
                 }
             }
+            Ok(None) => panic!("Event channel closed"),
             _ => panic!("Timed out waiting for expected event"),
         }
     }

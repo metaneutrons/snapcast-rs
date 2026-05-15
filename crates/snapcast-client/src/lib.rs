@@ -219,6 +219,7 @@ pub struct SnapClient {
     event_tx: mpsc::Sender<ClientEvent>,
     command_tx: mpsc::Sender<ClientCommand>,
     command_rx: Option<mpsc::Receiver<ClientCommand>>,
+    audio_tx: mpsc::Sender<AudioFrame>,
     /// Shared time provider — accessible by the binary for audio output.
     pub time_provider: std::sync::Arc<std::sync::Mutex<time_provider::TimeProvider>>,
     /// Shared stream — accessible by the binary for audio output.
@@ -236,7 +237,7 @@ impl SnapClient {
     ) {
         let (event_tx, event_rx) = mpsc::channel(EVENT_CHANNEL_SIZE);
         let (command_tx, command_rx) = mpsc::channel(COMMAND_CHANNEL_SIZE);
-        let (_audio_tx, audio_rx) = mpsc::channel(AUDIO_CHANNEL_SIZE);
+        let (audio_tx, audio_rx) = mpsc::channel(AUDIO_CHANNEL_SIZE);
         let time_provider =
             std::sync::Arc::new(std::sync::Mutex::new(time_provider::TimeProvider::new()));
         let stream = std::sync::Arc::new(std::sync::Mutex::new(stream::Stream::new(
@@ -247,6 +248,7 @@ impl SnapClient {
             event_tx,
             command_tx,
             command_rx: Some(command_rx),
+            audio_tx,
             time_provider,
             stream,
         };
@@ -269,6 +271,7 @@ impl SnapClient {
             self.config.clone(),
             self.event_tx.clone(),
             command_rx,
+            self.audio_tx.clone(),
             std::sync::Arc::clone(&self.time_provider),
             std::sync::Arc::clone(&self.stream),
         );

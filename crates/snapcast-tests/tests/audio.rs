@@ -38,7 +38,7 @@ async fn server_sees_client_connect_and_disconnect() {
 }
 
 #[tokio::test]
-async fn audio_round_trip_f32lz4() {
+async fn audio_round_trip() {
     let server = start_server().await;
     let mut client = connect_client(server.port).await;
 
@@ -62,21 +62,35 @@ async fn audio_round_trip_f32lz4() {
 
     // Push audio frames
     let samples: Vec<f32> = (0..960).map(|i| (i as f32 / 960.0) * 2.0 - 1.0).collect();
-    for _ in 0..10 {
+    let mut ts = 1_000_000_000; // Start at 1000s to avoid being near 0
+    for _ in 0..20 {
         server
             .audio_tx
             .send(snapcast_server::AudioFrame {
                 data: snapcast_server::AudioData::F32(samples.clone()),
-                timestamp_usec: 0,
+                timestamp_usec: ts,
             })
             .await
             .unwrap();
+        ts += 10_000; // 10ms increment
     }
 
     // Verify client's stream buffer has data
-    tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+    let mut total_samples = 0;
+    let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(5);
+
+    while total_samples < 9600 {
+        let frame = tokio::time::timeout_at(deadline, client.audio_rx.recv())
+            .await
+            .expect("Timed out waiting for audio frame")
+            .expect("Audio channel closed");
+
+        total_samples += frame.samples.len();
+        assert_eq!(frame.sample_rate, 48000);
+        assert_eq!(frame.channels, 2);
+    }
+
+    assert!(total_samples >= 9600);
 
     // The audio went through: server encoded f32lz4 → wire → client decoded
-    // We can't easily read from the Stream directly here, but if we got this far
-    // without errors, the encode/decode pipeline works.
 }

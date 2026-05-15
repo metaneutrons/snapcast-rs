@@ -36,6 +36,7 @@ pub struct Controller {
     sample_format: SampleFormat,
     server_settings: Option<ServerSettings>,
     event_tx: mpsc::Sender<ClientEvent>,
+    audio_tx: mpsc::Sender<crate::AudioFrame>,
     command_rx: mpsc::Receiver<ClientCommand>,
 }
 
@@ -45,6 +46,7 @@ impl Controller {
         settings: crate::ClientConfig,
         event_tx: mpsc::Sender<ClientEvent>,
         command_rx: mpsc::Receiver<ClientCommand>,
+        audio_tx: mpsc::Sender<crate::AudioFrame>,
         time_provider: Arc<Mutex<TimeProvider>>,
         stream: Arc<Mutex<Stream>>,
     ) -> Self {
@@ -60,6 +62,7 @@ impl Controller {
             sample_format: SampleFormat::default(),
             server_settings: None,
             event_tx,
+            audio_tx,
             command_rx,
         }
     }
@@ -252,12 +255,35 @@ impl Controller {
                 if let Some(ref mut dec) = self.decoder {
                     let mut data = wc.payload;
                     if dec.decode(&mut data)? {
-                        let chunk = PcmChunk::new(wc.timestamp, data, self.sample_format);
+                        let chunk = PcmChunk::new(wc.timestamp, data.clone(), self.sample_format);
                         if let Some(ref stream) = self.stream {
                             stream
                                 .lock()
                                 .unwrap_or_else(|e| e.into_inner())
                                 .add_chunk(chunk);
+                        }
+
+                        // Also send to external audio_tx
+                        let samples = match self.sample_format.bits() {
+                            16 => data
+                                .chunks_exact(2)
+                                .map(|c| i16::from_le_bytes([c[0], c[1]]) as f32 / i16::MAX as f32)
+                                .collect(),
+                            32 => data
+                                .chunks_exact(4)
+                                .map(|c| f32::from_le_bytes([c[0], c[1], c[2], c[3]]))
+                                .collect(),
+                            _ => Vec::new(),
+                        };
+
+                        if !samples.is_empty() {
+                            let _ = self.audio_tx.try_send(crate::AudioFrame {
+                                samples,
+                                sample_rate: self.sample_format.rate(),
+                                channels: self.sample_format.channels(),
+                                timestamp_usec: wc.timestamp.sec as i64 * 1_000_000
+                                    + wc.timestamp.usec as i64,
+                            });
                         }
                     }
                 }

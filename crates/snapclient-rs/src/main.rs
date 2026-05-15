@@ -93,26 +93,40 @@ fn main() -> anyhow::Result<()> {
                     ClientEvent::VolumeChanged { volume, muted } => {
                         tracing::info!(volume, muted, "Volume changed");
                         event_mixer.set_volume(volume as u8, muted);
-                        let status =
-                            format!("Volume: {}%{}", volume, if muted { " (muted)" } else { "" });
-                        let _ =
-                            sd_notify::notify(false, &[sd_notify::NotifyState::Status(&status)]);
+                        #[cfg(target_os = "linux")]
+                        {
+                            let status = format!(
+                                "Volume: {}%{}",
+                                volume,
+                                if muted { " (muted)" } else { "" }
+                            );
+                            let _ = sd_notify::notify(
+                                false,
+                                &[sd_notify::NotifyState::Status(&status)],
+                            );
+                        }
                     }
                     ClientEvent::TimeSyncComplete { diff_ms } => {
                         tracing::info!(diff_ms, "Time sync complete");
+                        #[cfg(target_os = "linux")]
                         let _ = sd_notify::notify(false, &[sd_notify::NotifyState::Ready]);
                     }
                     ClientEvent::StreamStarted { codec, format } => {
                         tracing::info!(%codec, %format, "Stream started");
-                        let status = format!(
-                            "Playing {} ({} Hz, {} bits, {} ch)",
-                            codec,
-                            format.rate(),
-                            format.bits(),
-                            format.channels()
-                        );
-                        let _ =
-                            sd_notify::notify(false, &[sd_notify::NotifyState::Status(&status)]);
+                        #[cfg(target_os = "linux")]
+                        {
+                            let status = format!(
+                                "Playing {} ({} Hz, {} bits, {} ch)",
+                                codec,
+                                format.rate(),
+                                format.bits(),
+                                format.channels()
+                            );
+                            let _ = sd_notify::notify(
+                                false,
+                                &[sd_notify::NotifyState::Status(&status)],
+                            );
+                        }
                     }
                     _ => {}
                 }

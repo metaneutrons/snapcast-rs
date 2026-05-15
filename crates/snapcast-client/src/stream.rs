@@ -96,27 +96,67 @@ const BUFFER_SIZE: usize = 500;
 const DEFAULT_BUFFER_MS: i64 = 1000;
 
 /// Time-synchronized PCM stream buffer.
+///
+/// The `Stream` is responsible for buffering decoded PCM chunks and delivering them to the
+/// audio player in a way that remains synchronized with the server's time. It implements
+/// the same synchronization strategy as the original C++ Snapcast client.
+///
+/// ### Synchronization Strategy
+///
+/// There are two main modes of synchronization:
+///
+/// 1. **Hard Sync**: Used when the client is far out of sync (> 50ms) or just starting.
+///    In this mode, the stream skips forward in the buffer or inserts silence to reach
+///    the desired target time exactly.
+/// 2. **Soft Sync**: Used for fine-tuning when the drift is small (typically < 10ms).
+///    Instead of jumping, the stream subtly adjusts the playback rate (e.g., by 0.05%)
+///    by adding or removing single samples at regular intervals. This is inaudible to
+///    most listeners.
+///
+/// ### Drift Detection
+///
+/// Synchronization is based on "age", which is the difference between when a sample
+/// *should* have been played (server time) and when it *is* being played (now).
+///
+/// The stream maintains three `DoubleBuffer` instances to track drift over different timescales:
+/// - **Mini Buffer** (20 samples): Fast reaction to sudden network or system jitter.
+/// - **Short Buffer** (100 samples): Used for calculating soft sync rate corrections.
+/// - **Long Buffer** (500 samples): Long-term stability tracking and hard sync re-triggering.
+///
+/// The median value of these buffers is used to filter out outliers and ensure stable
+/// synchronization even in unstable network conditions.
 pub struct Stream {
+    /// Nominal format of the incoming PCM data.
     format: SampleFormat,
+    /// Queue of pending PCM chunks.
     chunks: VecDeque<PcmChunk>,
+    /// The chunk currently being read from.
     current: Option<PcmChunk>,
+    /// Target buffer size in milliseconds.
     buffer_ms: i64,
+    /// Whether we are currently in hard sync mode.
     hard_sync: bool,
 
-    // Drift detection
+    // Drift detection buffers
     mini_buffer: DoubleBuffer,
     short_buffer: DoubleBuffer,
     buffer: DoubleBuffer,
+    /// Long-term median drift in microseconds.
     median: i64,
+    /// Short-term median drift in microseconds.
     short_median: i64,
 
-    // Soft sync
+    // Soft sync (rate correction) state
+    /// Number of frames played at the current (corrected) rate.
     played_frames: u32,
+    /// How many frames to play before adding/removing a single sample (0 if no correction).
     correct_after_x_frames: i32,
+    /// Cumulative difference in frames caused by rate correction (for logging).
     frame_delta: i32,
+    /// Internal buffer used for sample insertion/removal.
     read_buf: Vec<u8>,
 
-    // Stats
+    /// Last time (in server seconds) that stats were logged.
     last_log_sec: i64,
 }
 

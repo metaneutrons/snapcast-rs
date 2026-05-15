@@ -70,7 +70,7 @@ fn main() -> anyhow::Result<()> {
     let rt = tokio::runtime::Runtime::new()?;
 
     rt.block_on(async {
-        let (mut client, mut events, audio_rx) = SnapClient::new(config);
+        let (mut client, events, audio_rx) = SnapClient::new(config);
         let cmd = client.command_sender();
 
         // Audio output: cpal callback reads from Stream directly
@@ -83,6 +83,7 @@ fn main() -> anyhow::Result<()> {
 
         // Log events + apply volume
         let event_mixer = mixer.clone();
+        let mut events = events;
         tokio::spawn(async move {
             while let Some(event) = events.recv().await {
                 match event {
@@ -132,7 +133,10 @@ fn main() -> anyhow::Result<()> {
                             );
                         }
                     }
-                    _ => {}
+                    #[cfg(feature = "custom-protocol")]
+                    ClientEvent::CustomMessage(msg) => {
+                        tracing::info!(type_id = msg.type_id, "Custom message received");
+                    }
                 }
             }
         });

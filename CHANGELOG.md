@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.11.0](https://github.com/metaneutrons/snapcast-rs/compare/v0.10.1...v0.11.0) (2026-05-15)
+
+
+### Features
+
+* **client:** enable audio frame reporting and update integration tests ([44aa5a2](https://github.com/metaneutrons/snapcast-rs/commit/44aa5a26cee499890d62e3afdec8c020f052c446))
+
+
+### Bug Fixes
+
+* **client:** restore transport support and improve handshake robustness ([29a11b8](https://github.com/metaneutrons/snapcast-rs/commit/29a11b855250aa010dbeab4cf70cb041dc5db5fb))
+* **snapclient:** correct custom message field access ([797656f](https://github.com/metaneutrons/snapcast-rs/commit/797656ffab3942de716aaf5c76e8ac9b52a5d97c))
+
 ## [0.10.1](https://github.com/metaneutrons/snapcast-rs/compare/v0.10.0...v0.10.1) (2026-05-15)
 
 

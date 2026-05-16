@@ -39,6 +39,14 @@ let config = ServerConfig {
 
 For full interoperability with C++ clients, use `--codec flac` or `--codec pcm` and leave `custom-protocol` and `encryption` disabled.
 
+## Key Features (Version 0.11+)
+
+- **Dynamic Audio Pipeline**: The client automatically re-initializes the audio device when the server changes sample rate or channels.
+- **Integrated Resampling**: Automatic fallback to `rubato`-based resampling if the local hardware doesn't support the server's native format.
+- **Systemd Integration**: Native `sd-notify` support on Linux for service readiness and real-time status reporting (volume, codec, format).
+- **Public Audio Monitoring**: Public `audio_rx` channel in the library for real-time PCM monitoring and analysis.
+- **End-to-End Testing**: Robust integration test suite verifying the entire audio transmission path from server to client.
+
 ## Architecture
 
 ```
@@ -74,14 +82,22 @@ let config = ClientConfig {
 };
 
 // Create client — returns event receiver and audio output receiver
-let (mut client, events, audio_rx) = SnapClient::new(config);
-
-// Shared state for direct audio device access
-let stream = Arc::clone(&client.stream);           // time-synced PCM buffer
-let time_provider = Arc::clone(&client.time_provider); // server clock sync
+let (mut client, events, mut audio_rx) = SnapClient::new(config);
 
 // Run (blocks, reconnects on error)
 tokio::spawn(async move { client.run().await });
+
+// Monitor decoded audio frames in real-time
+tokio::spawn(async move {
+    while let Some(frame) = audio_rx.recv().await {
+        // frame.samples is Vec<f32> (interleaved)
+        // frame.timestamp_usec is server-time
+    }
+});
+
+// Shared state for direct audio device access (used by snapclient-rs)
+let stream = Arc::clone(&client.stream);           // time-synced PCM buffer
+let time_provider = Arc::clone(&client.time_provider); // server clock sync
 
 // Events
 match event {

@@ -485,6 +485,10 @@ Download from [GitHub Releases](https://github.com/metaneutrons/snapcast-rs/rele
 
 Library crates published to [crates.io](https://crates.io): `snapcast-proto`, `snapcast-client`, `snapcast-server`.
 
+## Known Limitations
+
+- **Server: no WebSocket audio transport** — the `snapcast-server` library only accepts client connections over TCP (port 1704). The original C++ snapserver also offers audio streaming over WebSocket (port 1780) for browser-based clients (snapweb). This is not yet implemented in `snapcast-rs`.
+
 ## License
 
 GPL-3.0-only — same as the original Snapcast.

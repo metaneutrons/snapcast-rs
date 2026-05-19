@@ -34,13 +34,25 @@ struct Cli {
     #[arg(long)]
     stream_port: Option<u16>,
 
+    /// Bind address for binary protocol (client connections)
+    #[arg(long)]
+    stream_bind_address: Option<String>,
+
     /// TCP port for JSON-RPC control
     #[arg(long)]
     control_port: Option<u16>,
 
+    /// Bind address for JSON-RPC control
+    #[arg(long)]
+    control_bind_address: Option<String>,
+
     /// HTTP port for JSON-RPC + Snapweb
     #[arg(long)]
     http_port: Option<u16>,
+
+    /// Bind address for HTTP JSON-RPC + Snapweb
+    #[arg(long)]
+    http_bind_address: Option<String>,
 
     /// Path to Snapweb static files
     #[arg(long)]
@@ -94,8 +106,11 @@ fn main() -> anyhow::Result<()> {
     let server_config = config::merge_cli(
         file_config,
         config::CliOverrides {
+            stream_bind_address: cli.stream_bind_address,
             stream_port: cli.stream_port,
+            control_bind_address: cli.control_bind_address,
             control_port: cli.control_port,
+            http_bind_address: cli.http_bind_address,
             http_port: cli.http_port,
             doc_root: cli.doc_root,
             buffer: cli.buffer,
@@ -202,6 +217,7 @@ fn main() -> anyhow::Result<()> {
 
         // TCP JSON-RPC control
         let control_cfg = control::ControlConfig {
+            bind_address: server_config.control_bind_address.clone(),
             port: server_config.control_port,
             event_tx: ctrl_event_tx.clone(),
             notify_tx: notify_tx.clone(),
@@ -218,6 +234,7 @@ fn main() -> anyhow::Result<()> {
 
         // HTTP/WebSocket + Snapweb
         let http_cfg = http::HttpConfig {
+            bind_address: server_config.http_bind_address.clone(),
             port: server_config.http_port,
             doc_root: server_config.doc_root.clone(),
             event_tx: ctrl_event_tx.clone(),

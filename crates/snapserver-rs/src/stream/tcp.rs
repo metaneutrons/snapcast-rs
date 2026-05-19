@@ -19,22 +19,21 @@ pub fn start(
     tx: mpsc::Sender<AudioFrame>,
 ) -> Result<JoinHandle<()>> {
     let host = if uri.host.is_empty() {
-        "0.0.0.0".to_string()
+        snapcast_proto::DEFAULT_BIND_ADDRESS.to_string()
     } else {
         uri.host.clone()
     };
     let port = if uri.port == 0 { 4953 } else { uri.port };
-    let addr = format!("{host}:{port}");
     let chunk_bytes = chunk_frames * format.frame_size() as usize;
 
     Ok(tokio::spawn(async move {
-        let listener = match TcpListener::bind(&addr).await {
+        let listener = match TcpListener::bind((host.as_str(), port)).await {
             Ok(l) => {
-                tracing::info!(addr, "TCP stream listening");
+                tracing::info!(bind_address = %host, port, "TCP stream listening");
                 l
             }
             Err(e) => {
-                tracing::error!(addr, error = %e, "Failed to bind TCP stream");
+                tracing::error!(bind_address = %host, port, error = %e, "Failed to bind TCP stream");
                 return;
             }
         };

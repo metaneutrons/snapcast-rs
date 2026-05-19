@@ -8,8 +8,12 @@ use snapcast_server::ServerConfig;
 pub(crate) struct BinaryConfig {
     /// Library server config.
     pub server: ServerConfig,
+    /// TCP bind address for JSON-RPC control. Default: 0.0.0.0.
+    pub control_bind_address: String,
     /// TCP port for JSON-RPC control. Default: 1705.
     pub control_port: u16,
+    /// TCP bind address for HTTP JSON-RPC + Snapweb. Default: 0.0.0.0.
+    pub http_bind_address: String,
     /// HTTP port for JSON-RPC + Snapweb. Default: 1780.
     pub http_port: u16,
     /// Path to Snapweb static files (None = disabled).
@@ -22,11 +26,27 @@ impl Default for BinaryConfig {
     fn default() -> Self {
         Self {
             server: ServerConfig::default(),
+            control_bind_address: snapcast_proto::DEFAULT_BIND_ADDRESS.into(),
             control_port: snapcast_proto::DEFAULT_CONTROL_PORT,
+            http_bind_address: snapcast_proto::DEFAULT_BIND_ADDRESS.into(),
             http_port: snapcast_proto::DEFAULT_HTTP_PORT,
             doc_root: None,
-            sources: vec!["pipe:///tmp/snapfifo?name=default".into()],
+            sources: default_sources(),
         }
+    }
+}
+
+fn default_sources() -> Vec<String> {
+    #[cfg(unix)]
+    {
+        vec!["pipe:///tmp/snapfifo?name=default".into()]
+    }
+    #[cfg(not(unix))]
+    {
+        vec![format!(
+            "tcp://{}:4953?name=default",
+            snapcast_proto::DEFAULT_BIND_ADDRESS
+        )]
     }
 }
 
@@ -46,15 +66,18 @@ pub(crate) fn parse_config_file(path: &str) -> BinaryConfig {
 
     if let Some(s) = ini.section(Some("http")) {
         get_u16(s, "port", |v| config.http_port = v);
+        get_bind_address(s, |v| config.http_bind_address = v.to_string());
         get_str(s, "doc_root", |v| config.doc_root = Some(v.to_string()));
     }
 
     if let Some(s) = ini.section(Some("tcp-control")) {
         get_u16(s, "port", |v| config.control_port = v);
+        get_bind_address(s, |v| config.control_bind_address = v.to_string());
     }
 
     if let Some(s) = ini.section(Some("tcp-streaming")) {
         get_u16(s, "port", |v| config.server.stream_port = v);
+        get_bind_address(s, |v| config.server.stream_bind_address = v.to_string());
     }
 
     if let Some(s) = ini.section(Some("stream")) {
@@ -96,10 +119,22 @@ fn get_u32<F: FnOnce(u32)>(section: &ini::Properties, key: &str, f: F) {
     }
 }
 
+fn get_bind_address<F: FnMut(&str)>(section: &ini::Properties, mut f: F) {
+    if let Some(v) = section
+        .get("bind_to_address")
+        .or_else(|| section.get("bind_address"))
+    {
+        f(v);
+    }
+}
+
 /// CLI overrides.
 pub(crate) struct CliOverrides {
+    pub stream_bind_address: Option<String>,
     pub stream_port: Option<u16>,
+    pub control_bind_address: Option<String>,
     pub control_port: Option<u16>,
+    pub http_bind_address: Option<String>,
     pub http_port: Option<u16>,
     pub doc_root: Option<String>,
     pub buffer: Option<u32>,
@@ -119,11 +154,20 @@ pub(crate) fn merge_cli(mut config: BinaryConfig, cli: CliOverrides) -> BinaryCo
     if let Some(v) = cli.stream_port {
         config.server.stream_port = v;
     }
+    if let Some(v) = cli.stream_bind_address {
+        config.server.stream_bind_address = v;
+    }
     if let Some(v) = cli.control_port {
         config.control_port = v;
     }
+    if let Some(v) = cli.control_bind_address {
+        config.control_bind_address = v;
+    }
     if let Some(v) = cli.http_port {
         config.http_port = v;
+    }
+    if let Some(v) = cli.http_bind_address {
+        config.http_bind_address = v;
     }
     if let Some(v) = cli.doc_root {
         config.doc_root = Some(v);
@@ -164,8 +208,8 @@ pub(crate) fn merge_cli(mut config: BinaryConfig, cli: CliOverrides) -> BinaryCo
 /// unless an explicit PSK was already set.
 #[cfg(feature = "encryption")]
 fn resolve_encryption(config: &mut BinaryConfig) {
-    if config.server.codec == "f32lz4e" {
-        config.server.codec = "f32lz4".into();
+    if config.server.codec == snapcast_proto::CODEC_F32LZ4_ENCRYPTED_ALIAS {
+        config.server.codec = snapcast_proto::CODEC_F32LZ4.into();
         if config.server.encryption_psk.is_none() {
             config.server.encryption_psk = Some(snapcast_proto::DEFAULT_ENCRYPTION_PSK.into());
         }
@@ -174,9 +218,9 @@ fn resolve_encryption(config: &mut BinaryConfig) {
 
 #[cfg(not(feature = "encryption"))]
 fn resolve_encryption(config: &mut BinaryConfig) {
-    if config.server.codec == "f32lz4e" {
+    if config.server.codec == snapcast_proto::CODEC_F32LZ4_ENCRYPTED_ALIAS {
         tracing::error!("Codec f32lz4e requires the 'encryption' feature — falling back to f32lz4");
-        config.server.codec = "f32lz4".into();
+        config.server.codec = snapcast_proto::CODEC_F32LZ4.into();
     }
 }
 
@@ -190,14 +234,17 @@ mod tests {
         let mut tmp = tempfile::NamedTempFile::new().unwrap();
         writeln!(
             tmp,
-            "[stream]\nsource = pipe:///tmp/snapfifo?name=test\n\n[http]\nport = 8080\ndoc_root = /var/www\n\n[tcp-streaming]\nport = 2704"
+            "[stream]\nsource = pipe:///tmp/snapfifo?name=test\n\n[http]\nbind_to_address = ::1\nport = 8080\ndoc_root = /var/www\n\n[tcp-control]\nbind_address = 127.0.0.1\n\n[tcp-streaming]\nbind_to_address = 127.0.0.1\nport = 2704"
         )
         .unwrap();
 
         let config = parse_config_file(tmp.path().to_str().unwrap());
         assert_eq!(config.sources, vec!["pipe:///tmp/snapfifo?name=test"]);
+        assert_eq!(config.http_bind_address, "::1");
         assert_eq!(config.http_port, 8080);
         assert_eq!(config.doc_root, Some("/var/www".into()));
+        assert_eq!(config.control_bind_address, "127.0.0.1");
+        assert_eq!(config.server.stream_bind_address, "127.0.0.1");
         assert_eq!(config.server.stream_port, 2704);
     }
 
@@ -213,8 +260,11 @@ mod tests {
         let merged = merge_cli(
             config,
             CliOverrides {
+                stream_bind_address: Some("::1".into()),
                 stream_port: Some(9704),
+                control_bind_address: None,
                 control_port: None,
+                http_bind_address: None,
                 http_port: None,
                 doc_root: None,
                 buffer: None,
@@ -229,6 +279,7 @@ mod tests {
                 encryption_psk: None,
             },
         );
+        assert_eq!(merged.server.stream_bind_address, "::1");
         assert_eq!(merged.server.stream_port, 9704);
         assert_eq!(merged.control_port, 1705);
     }

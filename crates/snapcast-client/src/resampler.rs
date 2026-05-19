@@ -102,30 +102,27 @@ impl Resampler {
 
         let channels_out = self.resampler.process(&channels_in, None)?;
         let out_frames = channels_out[0].len();
-        let out_sample_size = self.out_format.sample_size() as usize;
-        let mut out = Vec::with_capacity(out_frames * self.channels * out_sample_size);
+        let mut out = Vec::with_capacity(out_frames * self.channels * 4);
 
         for frame_idx in 0..out_frames {
             for ch_samples in &channels_out {
-                let sample = ch_samples[frame_idx];
-                match out_sample_size {
-                    2 => {
-                        let s = (sample * i16::MAX as f64).clamp(i16::MIN as f64, i16::MAX as f64)
-                            as i16;
-                        out.extend_from_slice(&s.to_le_bytes());
-                    }
-                    4 => {
-                        let s = (sample * i32::MAX as f64).clamp(i32::MIN as f64, i32::MAX as f64)
-                            as i32;
-                        out.extend_from_slice(&s.to_le_bytes());
-                    }
-                    _ => out.extend_from_slice(&[0; 2]),
-                }
+                let s = ch_samples[frame_idx] as f32;
+                out.extend_from_slice(&s.to_le_bytes());
             }
         }
 
         *data = out;
         Ok(())
+    }
+
+    /// Output encoding is always f32 (rubato works in f64 internally).
+    pub fn output_encoding(&self) -> SampleEncoding {
+        SampleEncoding::Float32
+    }
+
+    /// Output format: same channels as input, 32-bit, at the target rate.
+    pub fn output_format(&self) -> SampleFormat {
+        SampleFormat::new(self.out_format.rate(), 32, self.in_format.channels())
     }
 }
 

@@ -201,8 +201,8 @@ fn run_cpal(
                 write_samples_to_output(
                     data,
                     &pcm_buf,
-                    snapcast_proto::SampleFormat::new(device_rate, 16, device_channels as u16),
-                    SampleEncoding::PcmInt,
+                    snapcast_proto::SampleFormat::new(device_rate, 32, device_channels as u16),
+                    SampleEncoding::Float32,
                 );
             } else {
                 let mut pcm_buf = vec![0u8; num_frames * frame_size];

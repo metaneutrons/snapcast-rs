@@ -4,7 +4,7 @@ use std::sync::{Arc, Mutex};
 
 use snapcast_client::AudioFrame;
 use snapcast_client::connection::now_usec;
-use snapcast_client::stream::Stream;
+use snapcast_client::stream::{SampleEncoding, Stream};
 use snapcast_client::time_provider::TimeProvider;
 use tokio::sync::mpsc;
 
@@ -25,12 +25,12 @@ pub async fn play_audio(
 
     loop {
         // Wait for the Stream to have a valid format
-        let format = loop {
+        let (format, encoding) = loop {
             {
                 let s = stream.lock().unwrap_or_else(|e| e.into_inner());
                 let f = s.format();
                 if f.rate() > 0 && f.channels() > 0 {
-                    break f;
+                    break (f, s.encoding());
                 }
             }
             tokio::time::sleep(std::time::Duration::from_millis(100)).await;
@@ -50,8 +50,9 @@ pub async fn play_audio(
 
         // We use spawn_blocking to wait for the thread without blocking the executor
         let result = tokio::task::spawn_blocking(move || {
-            let handle =
-                std::thread::spawn(move || run_cpal(stream_clone, tp_clone, format, vol_clone));
+            let handle = std::thread::spawn(move || {
+                run_cpal(stream_clone, tp_clone, format, encoding, vol_clone)
+            });
             handle.join()
         })
         .await;
@@ -80,6 +81,7 @@ fn run_cpal(
     stream: Arc<Mutex<Stream>>,
     time_provider: Arc<Mutex<TimeProvider>>,
     format: snapcast_proto::SampleFormat,
+    encoding: SampleEncoding,
     volume: Arc<VolumeState>,
 ) -> anyhow::Result<()> {
     use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
@@ -123,6 +125,7 @@ fn run_cpal(
         snapcast_client::resampler::Resampler::new_if_needed(
             format,
             device_format,
+            encoding,
             (format.rate() / 50) as usize,
         )?
     } else {
@@ -151,10 +154,12 @@ fn run_cpal(
 
             let mut s = stream_cb.lock().unwrap_or_else(|e| e.into_inner());
             let current_format = s.format();
+            let current_encoding = s.encoding();
 
             // Format change detection
             if current_format.rate() != format.rate()
                 || current_format.channels() != format.channels()
+                || current_encoding != encoding
             {
                 // Return silence and hope the main loop picks up the change
                 data.fill(0.0);
@@ -162,8 +167,6 @@ fn run_cpal(
             }
 
             let frame_size = current_format.frame_size() as usize;
-            let sample_size = current_format.sample_size() as usize;
-
             if frame_size == 0 {
                 data.fill(0.0);
                 return;
@@ -195,13 +198,12 @@ fn run_cpal(
                     return;
                 }
 
-                // Convert resampled pcm_buf (which is in device_format i16) to f32 data
-                // Note: Resampler currently outputs same sample size as input
-                for (i, chunk) in pcm_buf.chunks_exact(2).enumerate() {
-                    if i < data.len() {
-                        data[i] = i16::from_le_bytes([chunk[0], chunk[1]]) as f32 / i16::MAX as f32;
-                    }
-                }
+                write_samples_to_output(
+                    data,
+                    &pcm_buf,
+                    snapcast_proto::SampleFormat::new(device_rate, 16, device_channels as u16),
+                    SampleEncoding::PcmInt,
+                );
             } else {
                 let mut pcm_buf = vec![0u8; num_frames * frame_size];
                 s.get_player_chunk_or_silence(
@@ -212,25 +214,7 @@ fn run_cpal(
                 );
                 drop(s);
 
-                match sample_size {
-                    2 => {
-                        for (i, chunk) in pcm_buf.chunks_exact(2).enumerate() {
-                            if i < data.len() {
-                                data[i] = i16::from_le_bytes([chunk[0], chunk[1]]) as f32
-                                    / i16::MAX as f32;
-                            }
-                        }
-                    }
-                    4 => {
-                        for (i, chunk) in pcm_buf.chunks_exact(4).enumerate() {
-                            if i < data.len() {
-                                data[i] =
-                                    f32::from_le_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]);
-                            }
-                        }
-                    }
-                    _ => data.fill(0.0),
-                }
+                write_samples_to_output(data, &pcm_buf, current_format, current_encoding);
             }
             #[cfg(not(feature = "resampler"))]
             {
@@ -243,25 +227,7 @@ fn run_cpal(
                 );
                 drop(s);
 
-                match sample_size {
-                    2 => {
-                        for (i, chunk) in pcm_buf.chunks_exact(2).enumerate() {
-                            if i < data.len() {
-                                data[i] = i16::from_le_bytes([chunk[0], chunk[1]]) as f32
-                                    / i16::MAX as f32;
-                            }
-                        }
-                    }
-                    4 => {
-                        for (i, chunk) in pcm_buf.chunks_exact(4).enumerate() {
-                            if i < data.len() {
-                                data[i] =
-                                    f32::from_le_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]);
-                            }
-                        }
-                    }
-                    _ => data.fill(0.0),
-                }
+                write_samples_to_output(data, &pcm_buf, current_format, current_encoding);
             }
 
             // Apply software volume
@@ -283,9 +249,47 @@ fn run_cpal(
         std::thread::sleep(std::time::Duration::from_millis(100));
         let s = stream.lock().unwrap_or_else(|e| e.into_inner());
         let current_format = s.format();
-        if current_format.rate() != format.rate() || current_format.channels() != format.channels()
+        if current_format.rate() != format.rate()
+            || current_format.channels() != format.channels()
+            || s.encoding() != encoding
         {
             return Ok(());
         }
+    }
+}
+
+fn write_samples_to_output(
+    output: &mut [f32],
+    samples: &[u8],
+    format: snapcast_proto::SampleFormat,
+    encoding: SampleEncoding,
+) {
+    output.fill(0.0);
+    match encoding {
+        SampleEncoding::Float32 => {
+            for (i, chunk) in samples.chunks_exact(4).take(output.len()).enumerate() {
+                output[i] = f32::from_le_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]);
+            }
+        }
+        SampleEncoding::PcmInt => match format.bits() {
+            16 => {
+                for (i, chunk) in samples.chunks_exact(2).take(output.len()).enumerate() {
+                    output[i] = i16::from_le_bytes([chunk[0], chunk[1]]) as f32 / i16::MAX as f32;
+                }
+            }
+            24 => {
+                for (i, chunk) in samples.chunks_exact(4).take(output.len()).enumerate() {
+                    output[i] = i32::from_le_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]) as f32
+                        / snapcast_proto::PCM_24BIT_MAX;
+                }
+            }
+            32 => {
+                for (i, chunk) in samples.chunks_exact(4).take(output.len()).enumerate() {
+                    output[i] = i32::from_le_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]) as f32
+                        / i32::MAX as f32;
+                }
+            }
+            _ => output.fill(0.0),
+        },
     }
 }

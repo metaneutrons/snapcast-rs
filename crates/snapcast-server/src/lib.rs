@@ -372,7 +372,11 @@ pub enum ServerCommand {
         /// Metadata key-value pairs.
         metadata: std::collections::HashMap<String, serde_json::Value>,
     },
-    /// Dynamically add a stream source.
+    /// Request dynamic stream addition from an application shell.
+    ///
+    /// The embeddable library does not own stream readers. Binaries or embedders
+    /// must create streams before [`SnapServer::run`] or implement their own
+    /// orchestration around this command.
     AddStream {
         /// Stream source URI (e.g. `pipe:///tmp/snapfifo?name=default`).
         uri: String,
@@ -413,15 +417,17 @@ pub enum ServerCommand {
 /// Default codec based on compiled features.
 fn default_codec() -> &'static str {
     #[cfg(feature = "flac")]
-    return "flac";
+    return snapcast_proto::CODEC_FLAC;
     #[cfg(all(feature = "f32lz4", not(feature = "flac")))]
-    return "f32lz4";
+    return snapcast_proto::CODEC_F32LZ4;
     #[cfg(not(any(feature = "flac", feature = "f32lz4")))]
-    return "pcm";
+    return snapcast_proto::CODEC_PCM;
 }
 
 /// Server configuration for the embeddable library.
 pub struct ServerConfig {
+    /// Bind address for binary protocol client connections. Default: 0.0.0.0.
+    pub stream_bind_address: String,
     /// TCP port for binary protocol (client connections). Default: 1704.
     pub stream_port: u16,
     /// Audio buffer size in milliseconds. Default: 1000.
@@ -456,16 +462,17 @@ pub struct ServerConfig {
 impl Default for ServerConfig {
     fn default() -> Self {
         Self {
+            stream_bind_address: snapcast_proto::DEFAULT_BIND_ADDRESS.into(),
             stream_port: snapcast_proto::DEFAULT_STREAM_PORT,
-            buffer_ms: 1000,
+            buffer_ms: snapcast_proto::DEFAULT_BUFFER_MS,
             codec: default_codec().into(),
-            sample_format: "48000:16:2".into(),
+            sample_format: snapcast_proto::DEFAULT_SAMPLE_FORMAT_STRING.into(),
             #[cfg(feature = "mdns")]
-            mdns_service_type: "_snapcast._tcp.local.".into(),
+            mdns_service_type: snapcast_proto::DEFAULT_MDNS_SERVICE_TYPE.into(),
             #[cfg(feature = "mdns")]
             mdns_enabled: true,
             #[cfg(feature = "mdns")]
-            mdns_name: "Snapserver".into(),
+            mdns_name: snapcast_proto::DEFAULT_SERVER_NAME.into(),
             auth: None,
             client_filter: None,
             #[cfg(feature = "encryption")]
@@ -637,7 +644,11 @@ impl SnapServer {
             "No streams configured — call add_stream() before run()"
         );
 
-        tracing::info!(stream_port = self.config.stream_port, "Snapserver starting");
+        tracing::info!(
+            bind_address = %self.config.stream_bind_address,
+            stream_port = self.config.stream_port,
+            "Snapserver starting"
+        );
 
         // Advertise via mDNS (protocol-level discovery)
         #[cfg(feature = "mdns")]
@@ -683,15 +694,16 @@ impl SnapServer {
             .first()
             .map(|(n, _, _)| n.clone())
             .unwrap_or_default();
-        let session_srv = Arc::new(session::SessionServer::new(
-            self.config.stream_port,
-            self.config.buffer_ms as i32,
-            self.config.auth.clone(),
-            self.config.client_filter.clone(),
-            Arc::clone(&shared_state),
-            first_name.clone(),
-            self.config.send_audio_to_muted,
-        ));
+        let session_srv = Arc::new(session::SessionServer::new(session::SessionServerConfig {
+            bind_address: self.config.stream_bind_address.clone(),
+            port: self.config.stream_port,
+            buffer_ms: self.config.buffer_ms as i32,
+            auth: self.config.auth.clone(),
+            client_filter: self.config.client_filter.clone(),
+            shared_state: Arc::clone(&shared_state),
+            default_stream: first_name.clone(),
+            send_audio_to_muted: self.config.send_audio_to_muted,
+        }));
 
         for (name, stream_cfg, rx) in streams {
             {
@@ -705,6 +717,7 @@ impl SnapServer {
                     });
                 }
             }
+            let mut active_format = sample_format;
             let enc = if stream_cfg.codec.is_none() && stream_cfg.sample_format.is_none() {
                 if let Some(enc) = default_enc.take() {
                     enc
@@ -718,6 +731,7 @@ impl SnapServer {
                     .as_deref()
                     .and_then(|s| s.parse().ok())
                     .unwrap_or(sample_format);
+                active_format = stream_format;
                 encoder::create(&encoder::EncoderConfig {
                     codec: stream_codec.to_string(),
                     format: stream_format,
@@ -726,7 +740,7 @@ impl SnapServer {
                     encryption_psk: self.config.encryption_psk.clone(),
                 })?
             };
-            tracing::info!(stream = %name, codec = enc.name(), %sample_format, "Stream registered");
+            tracing::info!(stream = %name, codec = enc.name(), format = %active_format, "Stream registered");
             session_srv
                 .register_stream_codec(&name, enc.name(), enc.header())
                 .await;
@@ -735,8 +749,8 @@ impl SnapServer {
                 rx,
                 enc,
                 chunk_tx.clone(),
-                sample_format.rate(),
-                sample_format.channels(),
+                active_format.rate(),
+                active_format.channels(),
             );
         }
 
@@ -789,19 +803,23 @@ impl SnapServer {
                             session_srv.update_routing_for_client(&client_id).await;
                         }
                         Some(ServerCommand::SetClientLatency { client_id, latency }) => {
+                            let mut settings_update = None;
                             let mut s = shared_state.lock().await;
                             if let Some(c) = s.clients.get_mut(&client_id) {
                                 c.config.latency = latency;
-                                session_srv.push_settings(ClientSettingsUpdate {
+                                settings_update = Some(ClientSettingsUpdate {
                                     client_id: client_id.clone(),
                                     buffer_ms: self.config.buffer_ms as i32,
                                     latency,
                                     volume: c.config.volume.percent,
                                     muted: c.config.volume.muted,
-                                }).await;
+                                });
                             }
                             save_state(&s);
                             drop(s);
+                            if let Some(update) = settings_update {
+                                session_srv.push_settings(update).await;
+                            }
                             let _ = event_tx.try_send(ServerEvent::ClientLatencyChanged { client_id, latency });
                         }
                         Some(ServerCommand::SetClientName { client_id, name }) => {
@@ -867,26 +885,10 @@ impl SnapServer {
                             let _ = event_tx.try_send(ServerEvent::StreamMetaChanged { stream_id, metadata });
                         }
                         Some(ServerCommand::AddStream { uri, response_tx }) => {
-                            // Parse stream name from URI query param, or use the URI as ID
-                            let name = uri.split("name=").nth(1)
-                                .and_then(|s| s.split('&').next())
-                                .unwrap_or("dynamic")
-                                .to_string();
-                            let mut s = shared_state.lock().await;
-                            if s.streams.iter().any(|st| st.id == name) {
-                                let _ = response_tx.send(Err(format!("Stream '{name}' already exists")));
-                            } else {
-                                s.streams.push(state::StreamInfo {
-                                    id: name.clone(),
-                                    status: "idle".into(),
-                                    uri: uri.clone(),
-                                    properties: Default::default(),
-                                });
-                                save_state(&s);
-                                drop(s);
-                                let _ = event_tx.try_send(ServerEvent::ServerUpdated);
-                                let _ = response_tx.send(Ok(name));
-                            }
+                            tracing::warn!(uri, "Dynamic stream addition requires application-owned stream orchestration");
+                            let _ = response_tx.send(Err(
+                                "dynamic Stream.AddStream is not supported by the embeddable server after run(); create streams before run()".into(),
+                            ));
                         }
                         Some(ServerCommand::RemoveStream { stream_id }) => {
                             let mut s = shared_state.lock().await;

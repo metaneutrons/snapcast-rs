@@ -61,15 +61,15 @@ pub(crate) fn create(config: &EncoderConfig) -> Result<Box<dyn Encoder>> {
     } = config;
     let format = *format;
     match codec.as_str() {
-        "pcm" => Ok(Box::new(pcm::PcmEncoder::new(format))),
+        snapcast_proto::CODEC_PCM => Ok(Box::new(pcm::PcmEncoder::new(format))),
         #[cfg(feature = "flac")]
-        "flac" => Ok(Box::new(flac::FlacEncoder::new(format, options)?)),
+        snapcast_proto::CODEC_FLAC => Ok(Box::new(flac::FlacEncoder::new(format, options)?)),
         #[cfg(feature = "opus")]
-        "opus" => Ok(Box::new(opus::OpusEncoder::new(format, options)?)),
+        snapcast_proto::CODEC_OPUS => Ok(Box::new(opus::OpusEncoder::new(format, options)?)),
         #[cfg(feature = "vorbis")]
-        "ogg" => Ok(Box::new(vorbis::VorbisEncoder::new(format, options)?)),
+        snapcast_proto::CODEC_OGG => Ok(Box::new(vorbis::VorbisEncoder::new(format, options)?)),
         #[cfg(feature = "f32lz4")]
-        "f32lz4" => {
+        snapcast_proto::CODEC_F32LZ4 => {
             let enc = f32lz4::F32Lz4Encoder::new(format);
             #[cfg(feature = "encryption")]
             let enc = if let Some(ref key) = config.encryption_psk {
@@ -96,11 +96,10 @@ pub(crate) fn f32_to_pcm(samples: &[f32], bits: u16) -> Vec<u8> {
             buf
         }
         24 => {
-            let mut buf = Vec::with_capacity(samples.len() * 3);
+            let mut buf = Vec::with_capacity(samples.len() * 4);
             for &s in samples {
-                let i = (s.clamp(-1.0, 1.0) * 8_388_607.0) as i32;
-                let bytes = i.to_le_bytes();
-                buf.extend_from_slice(&bytes[..3]);
+                let i = (s.clamp(-1.0, 1.0) * snapcast_proto::PCM_24BIT_MAX) as i32;
+                buf.extend_from_slice(&i.to_le_bytes());
             }
             buf
         }
@@ -118,7 +117,7 @@ pub(crate) fn f32_to_pcm(samples: &[f32], bits: u16) -> Vec<u8> {
 
 /// Convert PCM bytes to f32 samples at the given bit depth.
 /// Shared helper for encoders that need f32 input.
-#[cfg(feature = "f32lz4")]
+#[cfg(any(feature = "f32lz4", feature = "opus", test))]
 pub(crate) fn pcm_to_f32(pcm: &[u8], bits: u16) -> Vec<f32> {
     match bits {
         16 => pcm
@@ -126,11 +125,9 @@ pub(crate) fn pcm_to_f32(pcm: &[u8], bits: u16) -> Vec<f32> {
             .map(|c| i16::from_le_bytes([c[0], c[1]]) as f32 / i16::MAX as f32)
             .collect(),
         24 => pcm
-            .chunks_exact(3)
+            .chunks_exact(4)
             .map(|c| {
-                let i =
-                    i32::from_le_bytes([c[0], c[1], c[2], if c[2] & 0x80 != 0 { 0xFF } else { 0 }]);
-                i as f32 / 8_388_607.0
+                i32::from_le_bytes([c[0], c[1], c[2], c[3]]) as f32 / snapcast_proto::PCM_24BIT_MAX
             })
             .collect(),
         32 => pcm
@@ -138,5 +135,23 @@ pub(crate) fn pcm_to_f32(pcm: &[u8], bits: u16) -> Vec<f32> {
             .map(|c| i32::from_le_bytes([c[0], c[1], c[2], c[3]]) as f32 / i32::MAX as f32)
             .collect(),
         _ => pcm_to_f32(pcm, 16),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn f32_to_24_bit_pcm_uses_padded_samples() {
+        let pcm = f32_to_pcm(&[0.0, 1.0, -1.0], 24);
+        assert_eq!(pcm.len(), 12);
+        assert_eq!(pcm_to_f32(&pcm, 24).len(), 3);
+    }
+
+    #[test]
+    fn f32_to_16_bit_pcm_uses_two_byte_samples() {
+        let pcm = f32_to_pcm(&[0.0, 1.0], 16);
+        assert_eq!(pcm.len(), 4);
     }
 }

@@ -118,7 +118,7 @@ impl FlacEncoder {
 #[allow(unsafe_code)]
 impl Encoder for FlacEncoder {
     fn name(&self) -> &str {
-        "flac"
+        snapcast_proto::CODEC_FLAC
     }
 
     fn header(&self) -> &[u8] {

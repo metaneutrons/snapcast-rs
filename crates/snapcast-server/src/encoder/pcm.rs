@@ -27,7 +27,7 @@ impl PcmEncoder {
 
 impl Encoder for PcmEncoder {
     fn name(&self) -> &str {
-        "pcm"
+        snapcast_proto::CODEC_PCM
     }
 
     fn header(&self) -> &[u8] {
@@ -59,7 +59,7 @@ fn build_wav_header(fmt: SampleFormat) -> Vec<u8> {
     let channels = fmt.channels();
     let rate = fmt.rate();
     let bits = fmt.bits();
-    let block_align = channels * bits.div_ceil(8);
+    let block_align = channels * fmt.sample_size();
     let byte_rate = rate * block_align as u32;
 
     h[0..4].copy_from_slice(b"RIFF");
@@ -102,5 +102,20 @@ mod tests {
         let samples = vec![0.0f32; 960];
         let result = enc.encode(&AudioData::F32(samples)).unwrap();
         assert_eq!(result.data.len(), 960 * 2); // 16-bit = 2 bytes/sample
+    }
+
+    #[test]
+    fn wav_header_uses_padded_24_bit_alignment() {
+        let fmt = SampleFormat::new(48000, 24, 2);
+        let enc = PcmEncoder::new(fmt);
+        let block_align = u16::from_le_bytes([enc.header()[32], enc.header()[33]]);
+        let byte_rate = u32::from_le_bytes([
+            enc.header()[28],
+            enc.header()[29],
+            enc.header()[30],
+            enc.header()[31],
+        ]);
+        assert_eq!(block_align, 8);
+        assert_eq!(byte_rate, 48000 * 8);
     }
 }

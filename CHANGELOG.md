@@ -1,5 +1,20 @@
 # Changelog
 
+## [0.12.0](https://github.com/metaneutrons/snapcast-rs/compare/v0.11.0...v0.12.0) (2026-05-19)
+
+
+### Features
+
+* **client-bin:** IPv6 bracket notation and reject WS audio scheme ([e20f0ea](https://github.com/metaneutrons/snapcast-rs/commit/e20f0ea994ea63e74edaa98ed4eab61b6b595b55))
+* **client:** f32 decode path for FLAC and Vorbis, SampleEncoding enum ([6bdf229](https://github.com/metaneutrons/snapcast-rs/commit/6bdf229afe880454820a1ab7bcd98ab2d3fcabe6))
+* **client:** resampler outputs f32 directly, no i16 quantization ([3f91ea4](https://github.com/metaneutrons/snapcast-rs/commit/3f91ea4bef2fa5f3114a6a68d71ef8522b327f7a))
+* **server-bin:** configurable bind addresses, IPv6 stream URIs ([3d3666b](https://github.com/metaneutrons/snapcast-rs/commit/3d3666bf80b2d9f0e823a03ac091a32e2dc4bc23))
+
+
+### Bug Fixes
+
+* **client-bin,server-bin:** reject ambiguous unbracketed IPv6 with port ([1b1c844](https://github.com/metaneutrons/snapcast-rs/commit/1b1c844a615c03c2420b15e46dc417ba68718de3))
+
 ## [0.11.0](https://github.com/metaneutrons/snapcast-rs/compare/v0.10.1...v0.11.0) (2026-05-15)
 
 

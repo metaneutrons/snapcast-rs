@@ -148,8 +148,29 @@ impl SessionContext {
 
 /// Manages all streaming client sessions.
 pub struct SessionServer {
+    bind_address: String,
     port: u16,
     ctx: Arc<SessionContext>,
+}
+
+/// Construction options for [`SessionServer`].
+pub(crate) struct SessionServerConfig {
+    /// TCP bind address.
+    pub bind_address: String,
+    /// TCP port.
+    pub port: u16,
+    /// Client playout buffer in milliseconds.
+    pub buffer_ms: i32,
+    /// Optional streaming client authentication.
+    pub auth: Option<Arc<dyn crate::auth::AuthValidator>>,
+    /// Optional streaming client filter.
+    pub client_filter: Option<Arc<dyn crate::auth::ClientFilter>>,
+    /// Shared server state.
+    pub shared_state: Arc<tokio::sync::Mutex<crate::state::ServerState>>,
+    /// Initial default stream id.
+    pub default_stream: String,
+    /// Whether muted clients still receive audio.
+    pub send_audio_to_muted: bool,
 }
 
 /// Outbound custom message to a specific client.
@@ -164,29 +185,22 @@ pub struct CustomOutbound {
 
 impl SessionServer {
     /// Create a new session server.
-    pub fn new(
-        port: u16,
-        buffer_ms: i32,
-        auth: Option<Arc<dyn crate::auth::AuthValidator>>,
-        client_filter: Option<Arc<dyn crate::auth::ClientFilter>>,
-        shared_state: Arc<tokio::sync::Mutex<crate::state::ServerState>>,
-        default_stream: String,
-        send_audio_to_muted: bool,
-    ) -> Self {
+    pub(crate) fn new(config: SessionServerConfig) -> Self {
         Self {
-            port,
+            bind_address: config.bind_address,
+            port: config.port,
             ctx: Arc::new(SessionContext {
-                buffer_ms,
-                auth,
-                client_filter,
-                send_audio_to_muted,
+                buffer_ms: config.buffer_ms,
+                auth: config.auth,
+                client_filter: config.client_filter,
+                send_audio_to_muted: config.send_audio_to_muted,
                 settings_senders: Mutex::new(HashMap::new()),
                 #[cfg(feature = "custom-protocol")]
                 custom_senders: Mutex::new(HashMap::new()),
                 routing_senders: Mutex::new(HashMap::new()),
                 codec_headers: Mutex::new(HashMap::new()),
-                shared_state,
-                default_stream,
+                shared_state: config.shared_state,
+                default_stream: config.default_stream,
             }),
         }
     }
@@ -204,8 +218,11 @@ impl SessionServer {
 
     /// Push a settings update to a specific streaming client.
     pub async fn push_settings(&self, update: ClientSettingsUpdate) {
-        let senders = self.ctx.settings_senders.lock().await;
-        if let Some(tx) = senders.get(&update.client_id) {
+        let tx = {
+            let senders = self.ctx.settings_senders.lock().await;
+            senders.get(&update.client_id).cloned()
+        };
+        if let Some(tx) = tx {
             let _ = tx.send(update).await;
         }
     }
@@ -231,8 +248,12 @@ impl SessionServer {
         chunk_rx: broadcast::Sender<WireChunkData>,
         event_tx: mpsc::Sender<ServerEvent>,
     ) -> Result<()> {
-        let listener = TcpListener::bind(format!("0.0.0.0:{}", self.port)).await?;
-        tracing::info!(port = self.port, "Stream server listening");
+        let listener = TcpListener::bind((self.bind_address.as_str(), self.port)).await?;
+        tracing::info!(
+            bind_address = %self.bind_address,
+            port = self.port,
+            "Stream server listening"
+        );
 
         loop {
             let (stream, peer) = listener.accept().await?;
@@ -258,8 +279,11 @@ impl SessionServer {
     /// Send a custom binary protocol message to a specific client.
     #[cfg(feature = "custom-protocol")]
     pub async fn send_custom(&self, client_id: &str, type_id: u16, payload: Vec<u8>) {
-        let senders = self.ctx.custom_senders.lock().await;
-        if let Some(tx) = senders.get(client_id) {
+        let tx = {
+            let senders = self.ctx.custom_senders.lock().await;
+            senders.get(client_id).cloned()
+        };
+        if let Some(tx) = tx {
             let _ = tx.send(CustomOutbound { type_id, payload }).await;
         }
     }
@@ -380,17 +404,17 @@ async fn handle_client(
     }
 
     // Main loop
-    let result = session_loop(
-        &mut stream,
+    let result = session_loop(SessionLoop {
+        stream: &mut stream,
         chunk_rx,
         settings_rx,
         routing_rx,
         #[cfg(feature = "custom-protocol")]
         custom_rx,
-        event_tx.clone(),
-        client_id.clone(),
+        event_tx: event_tx.clone(),
+        client_id: client_id.clone(),
         ctx,
-    )
+    })
     .await;
 
     // Cleanup
@@ -418,17 +442,30 @@ async fn handle_client(
 // This adds up to one select cycle of latency (~20ms at 48kHz) for custom
 // messages, which is acceptable for low-frequency control traffic.
 
-#[allow(clippy::too_many_arguments)]
-async fn session_loop(
-    stream: &mut TcpStream,
-    mut chunk_rx: broadcast::Receiver<WireChunkData>,
-    mut settings_rx: mpsc::Receiver<ClientSettingsUpdate>,
-    mut routing_rx: watch::Receiver<SessionRouting>,
-    #[cfg(feature = "custom-protocol")] mut custom_rx: mpsc::Receiver<CustomOutbound>,
+struct SessionLoop<'a> {
+    stream: &'a mut TcpStream,
+    chunk_rx: broadcast::Receiver<WireChunkData>,
+    settings_rx: mpsc::Receiver<ClientSettingsUpdate>,
+    routing_rx: watch::Receiver<SessionRouting>,
+    #[cfg(feature = "custom-protocol")]
+    custom_rx: mpsc::Receiver<CustomOutbound>,
     event_tx: mpsc::Sender<ServerEvent>,
     client_id: String,
-    ctx: &SessionContext,
-) -> Result<()> {
+    ctx: &'a SessionContext,
+}
+
+async fn session_loop(args: SessionLoop<'_>) -> Result<()> {
+    let SessionLoop {
+        stream,
+        mut chunk_rx,
+        mut settings_rx,
+        mut routing_rx,
+        #[cfg(feature = "custom-protocol")]
+        mut custom_rx,
+        event_tx,
+        client_id,
+        ctx,
+    } = args;
     let (mut reader, mut writer) = stream.split();
     let mut routing = routing_rx.borrow().clone();
 
@@ -649,8 +686,6 @@ async fn send_msg(
 }
 
 async fn read_frame_from<R: AsyncReadExt + Unpin>(reader: &mut R) -> Result<TypedMessage> {
-    const MAX_PAYLOAD_SIZE: u32 = 2 * 1024 * 1024; // 2 MiB
-
     let mut header_buf = [0u8; BaseMessage::HEADER_SIZE];
     reader
         .read_exact(&mut header_buf)
@@ -660,7 +695,7 @@ async fn read_frame_from<R: AsyncReadExt + Unpin>(reader: &mut R) -> Result<Type
         BaseMessage::read_from(&mut &header_buf[..]).map_err(|e| anyhow::anyhow!("parse: {e}"))?;
     base.received = now_timeval();
     anyhow::ensure!(
-        base.size <= MAX_PAYLOAD_SIZE,
+        base.size <= snapcast_proto::DEFAULT_MAX_PAYLOAD_SIZE,
         "payload too large: {} bytes",
         base.size
     );
@@ -718,6 +753,24 @@ mod tests {
             &routing("z1", false, false),
             false
         ));
+    }
+
+    #[tokio::test]
+    async fn read_frame_rejects_oversized_payload_before_allocation() {
+        let header = BaseMessage {
+            msg_type: MessageType::Time,
+            id: 1,
+            refers_to: 0,
+            sent: Timeval::default(),
+            received: Timeval::default(),
+            size: snapcast_proto::DEFAULT_MAX_PAYLOAD_SIZE + 1,
+        }
+        .to_bytes()
+        .unwrap();
+        let mut cursor = std::io::Cursor::new(header);
+
+        let err = read_frame_from(&mut cursor).await.unwrap_err();
+        assert!(err.to_string().contains("payload too large"));
     }
 
     #[test]

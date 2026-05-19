@@ -15,12 +15,11 @@ This project exists primarily to serve as a native Rust dependency for [SnapDog]
 
 To make this possible, snapcast-rs separates the protocol engine from the application shell. The **library crates** (`snapcast-client`, `snapcast-server`) implement the Snapcast binary protocol, audio encoding/decoding, time synchronization, and mDNS discovery — but own no audio devices, open no HTTP ports, and read no config files. They communicate exclusively through typed Rust channels, making them straightforward to embed in any application.
 
-The **binary crates** (`snapclient-rs`, `snapserver-rs`) are thin wrappers around these libraries. They add the things a standalone application needs: reading audio from pipes and processes, serving the JSON-RPC control API over HTTP and TCP, hosting the Snapweb UI, and outputting audio through platform-native backends via cpal. They are fully functional replacements for the original C++ `snapserver` and `snapclient`.
+The **binary crates** (`snapclient-rs`, `snapserver-rs`) are thin wrappers around these libraries. They add the things a standalone application needs: reading audio from pipes and processes, serving the JSON-RPC control API over HTTP and TCP, hosting the Snapweb UI, and outputting audio through platform-native backends via cpal. They are intended as standalone replacements for TCP-based Snapcast audio workflows; WebSocket audio streaming is not implemented yet.
 
-The result is a Snapcast implementation that works both as a drop-in replacement for the original and as an embeddable building block for Rust applications that need synchronized multiroom audio.
+The result is a Snapcast implementation that works as a TCP-audio replacement for common Snapcast deployments and as an embeddable building block for Rust applications that need synchronized multiroom audio.
 
-
-snapcast-rs is fully compatible with the original C++ Snapcast when using standard codecs (PCM, FLAC, Opus, Vorbis). However, three optional features break compatibility:
+snapcast-rs is compatible with the original C++ Snapcast over the TCP audio transport when using standard codecs (PCM, FLAC, Opus, Vorbis). However, three optional features break audio compatibility:
 
 | Feature | What it does | C++ behavior |
 |---------|-------------|--------------|
@@ -43,13 +42,18 @@ For full interoperability with C++ clients, use `--codec flac` or `--codec pcm` 
 
 - **Dynamic Audio Pipeline**: The client automatically re-initializes the audio device when the server changes sample rate or channels.
 - **Integrated Resampling**: Automatic fallback to `rubato`-based resampling if the local hardware doesn't support the server's native format.
+- **Single Source of Truth Defaults**: Ports, schemes, codec names, sample format defaults, mDNS names, bind addresses, and payload limits live in `snapcast-proto`.
+- **Bounded Protocol Reads**: Client and server reject oversized binary-protocol payloads before allocation.
+- **Per-Stream Format Ownership**: Each server stream owns its codec/sample-format encoder state instead of leaking global defaults into per-stream paths.
+- **Lossless f32 Decode Path**: FLAC and f32lz4 decoders output native f32 samples — no intermediate 16-bit quantization. 24-bit FLAC preserves full resolution end-to-end.
+- **Configurable Bind Addresses**: Library and binary listeners can bind loopback, IPv4, IPv6, or deployment-specific interfaces.
 - **Systemd Integration**: Native `sd-notify` support on Linux for service readiness and real-time status reporting (volume, codec, format).
 - **Public Audio Monitoring**: Public `audio_rx` channel in the library for real-time PCM monitoring and analysis.
 - **End-to-End Testing**: Robust integration test suite verifying the entire audio transmission path from server to client.
 
 ## Architecture
 
-```
+```text
 snapcast-rs/
 ├── snapcast-proto      Protocol: binary message serialization
 ├── snapcast-client     Client library: embeddable, f32 audio output
@@ -118,14 +122,10 @@ cmd.send(ClientCommand::Stop).await;
 
 ```rust
 ClientConfig {
-    scheme: String,            // "tcp", "ws", or "wss" (default: "tcp")
+    scheme: String,            // "tcp" only for audio streaming
     host: String,              // server host (empty = mDNS discovery)
     port: u16,                 // default: 1704
     auth: Option<Auth>,        // Basic auth for Hello handshake
-    server_certificate: Option<PathBuf>, // CA cert for TLS verification
-    certificate: Option<PathBuf>,        // client cert (PEM)
-    certificate_key: Option<PathBuf>,    // client key (PEM)
-    key_password: Option<String>,        // key password
     instance: u32,             // for multiple clients on one host
     host_id: String,           // unique identifier (default: MAC)
     latency: i32,              // additional latency offset (ms)
@@ -141,8 +141,8 @@ ClientConfig {
 |-------------|---------|-------|-------------|
 | `f32lz4`    | —       | none  | f32 LZ4 codec (lz4_flex) |
 | `mdns`      | ✅      | none  | mDNS server discovery |
-| `websocket` | —       | none  | WebSocket connection |
-| `tls`       | —       | none  | WSS (WebSocket + TLS) |
+| `websocket` | —       | none  | Experimental transport module only; `SnapConnection::new` rejects `ws://` until binary audio WS is implemented |
+| `tls`       | —       | none  | Experimental WSS module only; `SnapConnection::new` rejects `wss://` until binary audio WS is implemented |
 | `resampler` | —       | none  | Sample rate conversion (rubato) |
 | `custom-protocol` | — | none | Custom binary messages (type 9+) |
 | `encryption` | — | none | ChaCha20-Poly1305 encrypted f32lz4 |
@@ -206,14 +206,19 @@ match event {
 
 ```rust
 ServerConfig {
+    stream_bind_address: String, // default: "0.0.0.0"
     stream_port: u16,          // default: 1704
     buffer_ms: u32,            // default: 1000
     codec: String,             // default: "flac" (feature-dependent: flac > f32lz4 > pcm)
     sample_format: String,     // default: "48000:16:2"
     mdns_service_type: String, // default: "_snapcast._tcp.local."
+    mdns_enabled: bool,        // default: true (feature: mdns)
+    mdns_name: String,         // default: "Snapserver" (feature: mdns)
     auth: Option<Arc<dyn AuthValidator>>, // default: None (no auth)
     client_filter: Option<Arc<dyn ClientFilter>>, // default: None (accept all)
     encryption_psk: Option<String>, // f32lz4 encryption (feature: encryption)
+    state_file: Option<PathBuf>, // persisted clients/groups
+    send_audio_to_muted: bool, // default: false
 }
 ```
 
@@ -299,7 +304,15 @@ Rejected clients are disconnected immediately after Hello with a warning log.
 | 1705 | TCP | Binary | JSON-RPC control |
 | 1780 | HTTP/WS | Binary | JSON-RPC + Snapweb UI |
 
-Libraries open only port 1704. JSON-RPC/HTTP are binary-only.
+Libraries open only the configured binary protocol listener. JSON-RPC/HTTP are binary-only.
+
+Bind addresses are configurable:
+
+```bash
+snapserver-rs --stream-bind-address 127.0.0.1 --control-bind-address 127.0.0.1 --http-bind-address ::1
+```
+
+Equivalent config file keys are `bind_to_address` or `bind_address` under `[tcp-streaming]`, `[tcp-control]`, and `[http]`.
 
 ## Codecs
 
@@ -307,12 +320,13 @@ Libraries open only port 1704. JSON-RPC/HTTP are binary-only.
 |--------|---------|-------|-----------|---------|
 | PCM    | ✅ always | none | 16/24/32-bit | zero |
 | f32lz4 | optional | none | 32-bit float | zero |
-| FLAC   | ✅ default | libFLAC | 16/24-bit | 24ms (block size) |
-| Opus   | optional | libopus | lossy | 20ms |
+| FLAC   | ✅ default | libFLAC | 16/24-bit (decoded to f32) | 24ms (block size) |
+| Opus   | optional | libopus | 16-bit | 20ms |
 | Vorbis | optional | libvorbis | lossy | variable |
 
 f32lz4 path (zero conversion, full precision):
-```
+
+```text
 f32 → LZ4 compress → network → LZ4 decompress → f32
 ```
 
@@ -441,6 +455,16 @@ cargo build --release --features f32lz4                  # + f32lz4 (pure Rust)
 cargo build --release --no-default-features --features f32lz4  # pure Rust, no C deps
 ```
 
+Native codec features need their system libraries available to the linker:
+
+| Feature | Linux package examples | macOS package examples |
+|---------|------------------------|------------------------|
+| `flac` | `libflac-dev` | `flac` |
+| `opus` | `libopus-dev pkg-config` | `opus pkg-config` |
+| `vorbis` | `libvorbis-dev` | `libvorbis` |
+
+The CI workflow validates the default build plus custom protocol, encryption, client transport/resampler features, and the Linux native codec feature set with those packages installed.
+
 ## Usage
 
 ```bash
@@ -449,10 +473,12 @@ snapserver-rs --source "pipe:///tmp/snapfifo?name=Music"
 snapserver-rs --codec flac
 snapserver-rs --codec f32lz4e                            # encrypted f32lz4 (default key)
 snapserver-rs --codec f32lz4e --encryption-psk "secret"  # custom key
+snapserver-rs --stream-bind-address 127.0.0.1             # bind audio listener to loopback
 snapserver-rs --help
 
 # Client
 snapclient-rs tcp://192.168.1.50:1704
+snapclient-rs tcp://[::1]:1704
 snapclient-rs                                            # mDNS auto-discovery
 snapclient-rs --encryption-psk "secret"                  # custom key
 snapclient-rs --help
@@ -464,9 +490,12 @@ ffmpeg -re -i music.mp3 -f s16le -ar 48000 -ac 2 pipe:1 > /tmp/snapfifo
 ## Code Quality
 
 - `#![forbid(unsafe_code)]` on protocol crate
-- `#![deny(unsafe_code)]` on client/server libraries
-- Zero `#[allow(dead_code)]`, zero TODOs, zero `#![allow]` blankets
+- `#![deny(unsafe_code)]` on client/server libraries, with narrow module-level FFI exceptions for platform clocks and native FLAC callbacks
+- Warning-clean `cargo check`, `cargo test`, and `cargo clippy -- -D warnings` gates
+- No crate-level `#![allow]` blankets and no TODO markers in production code
+- Shared defaults/constants in `snapcast-proto` instead of duplicated magic strings
 - Constant-time password comparison (subtle crate)
+- Bounded binary-frame payload allocation on both client and server
 - Structured tracing logging
 
 ## Releases
@@ -487,7 +516,9 @@ Library crates published to [crates.io](https://crates.io): `snapcast-proto`, `s
 
 ## Known Limitations
 
-- **Server: no WebSocket audio transport** — the `snapcast-server` library only accepts client connections over TCP (port 1704). The original C++ snapserver also offers audio streaming over WebSocket (port 1780) for browser-based clients (snapweb). This is not yet implemented in `snapcast-rs`.
+- **No WebSocket audio transport** — the server exposes JSON-RPC WebSockets at `/jsonrpc`, but binary audio streaming is TCP-only. The CLI rejects `ws://` and `wss://` for audio clients until a verified binary audio WebSocket contract is implemented.
+- **Dynamic `Stream.AddStream` is application-owned** — the embeddable server can expose and route streams created before `run()`. Runtime `Stream.AddStream` returns an explicit error because the library does not own source readers after startup.
+- **Opus is a native optional feature** — `--features opus` requires system Opus discoverable by `pkg-config` or the native build tools needed by `audiopus_sys`.
 
 ## License
 

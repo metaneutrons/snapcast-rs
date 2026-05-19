@@ -100,6 +100,17 @@ fn parse_tcp_endpoint(path_part: &str) -> Result<(String, u16)> {
         return Ok((host.to_string(), parse_port(port_str)?));
     }
 
+    // No colons — plain hostname or IPv4
+    if !endpoint.contains(':') {
+        return Ok((endpoint.to_string(), 4953));
+    }
+
+    // Multiple colons without brackets — bare IPv6. Accept only if valid IPv6.
+    // If the user intended a port, they must use bracket notation: [::1]:4953
+    anyhow::ensure!(
+        endpoint.parse::<std::net::Ipv6Addr>().is_ok(),
+        "ambiguous IPv6 address with port — use bracket notation: tcp://[{endpoint}]:port"
+    );
     Ok((endpoint.to_string(), 4953))
 }
 
@@ -171,6 +182,13 @@ mod tests {
         let u = StreamUri::parse("tcp://::1?name=TCP").unwrap();
         assert_eq!(u.host, "::1");
         assert_eq!(u.port, 4953);
+    }
+
+    #[test]
+    fn parse_tcp_ipv6_ambiguous_with_port_rejected() {
+        // "::1:99999" is not a valid IPv6 address, so it's rejected as ambiguous
+        let err = StreamUri::parse("tcp://::1:99999?name=TCP").unwrap_err();
+        assert!(err.to_string().contains("bracket notation"));
     }
 
     #[test]

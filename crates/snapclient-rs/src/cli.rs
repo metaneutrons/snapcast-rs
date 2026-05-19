@@ -242,6 +242,17 @@ fn parse_host_port(input: &str, default_port: u16) -> Result<(String, u16)> {
         return Ok((host.to_string(), parse_port(port_str)?));
     }
 
+    // No colons — plain hostname or IPv4
+    if !input.contains(':') {
+        return Ok((input.to_string(), default_port));
+    }
+
+    // Multiple colons without brackets — bare IPv6. Accept only if valid IPv6.
+    // If the user intended a port, they must use bracket notation: [::1]:1704
+    anyhow::ensure!(
+        input.parse::<std::net::Ipv6Addr>().is_ok(),
+        "ambiguous IPv6 address with port — use bracket notation: tcp://[{input}]:port"
+    );
     Ok((input.to_string(), default_port))
 }
 
@@ -290,6 +301,13 @@ mod tests {
         let s = parse_url("tcp://::1").unwrap();
         assert_eq!(s.host, "::1");
         assert_eq!(s.port, 1704);
+    }
+
+    #[test]
+    fn parse_ipv6_ambiguous_with_port_rejected() {
+        // "::1:99999" is not a valid IPv6 address, so it's rejected as ambiguous
+        let err = parse_url("tcp://::1:99999").unwrap_err();
+        assert!(err.to_string().contains("bracket notation"));
     }
 
     #[test]

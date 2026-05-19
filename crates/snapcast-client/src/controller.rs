@@ -14,7 +14,7 @@ use tokio::sync::mpsc;
 
 use crate::connection::SnapConnection;
 use crate::decoder::{self, Decoder, PcmDecoder};
-use crate::stream::{PcmChunk, Stream};
+use crate::stream::{PcmChunk, SampleEncoding, Stream};
 use crate::time_provider::TimeProvider;
 use crate::{ClientCommand, ClientEvent};
 
@@ -34,6 +34,7 @@ pub struct Controller {
     stream: Option<Arc<Mutex<Stream>>>,
     decoder: Option<Box<dyn Decoder>>,
     sample_format: SampleFormat,
+    sample_encoding: SampleEncoding,
     server_settings: Option<ServerSettings>,
     event_tx: mpsc::Sender<ClientEvent>,
     audio_tx: mpsc::Sender<crate::AudioFrame>,
@@ -49,22 +50,22 @@ impl Controller {
         audio_tx: mpsc::Sender<crate::AudioFrame>,
         time_provider: Arc<Mutex<TimeProvider>>,
         stream: Arc<Mutex<Stream>>,
-    ) -> Self {
-        let connection = SnapConnection::new(&settings.scheme, &settings.host, settings.port)
-            .unwrap_or_else(|_| SnapConnection::new("tcp", &settings.host, settings.port).unwrap());
+    ) -> Result<Self> {
+        let connection = SnapConnection::new(&settings.scheme, &settings.host, settings.port)?;
 
-        Self {
+        Ok(Self {
             connection,
             settings,
             time_provider,
             stream: Some(stream),
             decoder: None,
             sample_format: SampleFormat::default(),
+            sample_encoding: SampleEncoding::PcmInt,
             server_settings: None,
             event_tx,
             audio_tx,
             command_rx,
-        }
+        })
     }
 
     /// Run the client, reconnecting on errors until stopped.
@@ -255,7 +256,12 @@ impl Controller {
                 if let Some(ref mut dec) = self.decoder {
                     let mut data = wc.payload;
                     if dec.decode(&mut data)? {
-                        let chunk = PcmChunk::new(wc.timestamp, data.clone(), self.sample_format);
+                        let chunk = PcmChunk::new_with_encoding(
+                            wc.timestamp,
+                            data.clone(),
+                            self.sample_format,
+                            self.sample_encoding,
+                        );
                         if let Some(ref stream) = self.stream {
                             stream
                                 .lock()
@@ -264,17 +270,8 @@ impl Controller {
                         }
 
                         // Also send to external audio_tx
-                        let samples = match self.sample_format.bits() {
-                            16 => data
-                                .chunks_exact(2)
-                                .map(|c| i16::from_le_bytes([c[0], c[1]]) as f32 / i16::MAX as f32)
-                                .collect(),
-                            32 => data
-                                .chunks_exact(4)
-                                .map(|c| f32::from_le_bytes([c[0], c[1], c[2], c[3]]))
-                                .collect(),
-                            _ => Vec::new(),
-                        };
+                        let samples =
+                            samples_to_f32(&data, self.sample_format, self.sample_encoding);
 
                         if !samples.is_empty() {
                             let _ = self.audio_tx.try_send(crate::AudioFrame {
@@ -354,6 +351,7 @@ impl Controller {
         };
 
         self.sample_format = dec.set_header(header)?;
+        self.sample_encoding = dec.output_encoding();
         tracing::info!(codec = %header.codec, format = %self.sample_format, "Codec initialized");
 
         self.emit(ClientEvent::StreamStarted {
@@ -364,7 +362,7 @@ impl Controller {
         // Reinitialize the shared stream (binary's player holds the same Arc)
         if let Some(ref stream) = self.stream {
             let mut s = stream.lock().unwrap_or_else(|e| e.into_inner());
-            *s = Stream::new(self.sample_format);
+            *s = Stream::with_encoding(self.sample_format, self.sample_encoding);
             if let Some(ref ss) = self.server_settings {
                 let buf_ms = (ss.buffer_ms - ss.latency - self.settings.latency).max(0);
                 s.set_buffer_ms(buf_ms as i64);
@@ -404,4 +402,31 @@ fn get_mac_address() -> String {
         .flatten()
         .map(|mac| mac.to_string().to_lowercase())
         .unwrap_or_else(|| "00:00:00:00:00:00".to_string())
+}
+
+fn samples_to_f32(data: &[u8], format: SampleFormat, encoding: SampleEncoding) -> Vec<f32> {
+    match encoding {
+        SampleEncoding::Float32 => data
+            .chunks_exact(4)
+            .map(|c| f32::from_le_bytes([c[0], c[1], c[2], c[3]]))
+            .collect(),
+        SampleEncoding::PcmInt => match format.bits() {
+            16 => data
+                .chunks_exact(2)
+                .map(|c| i16::from_le_bytes([c[0], c[1]]) as f32 / i16::MAX as f32)
+                .collect(),
+            24 => data
+                .chunks_exact(4)
+                .map(|c| {
+                    i32::from_le_bytes([c[0], c[1], c[2], c[3]]) as f32
+                        / snapcast_proto::PCM_24BIT_MAX
+                })
+                .collect(),
+            32 => data
+                .chunks_exact(4)
+                .map(|c| i32::from_le_bytes([c[0], c[1], c[2], c[3]]) as f32 / i32::MAX as f32)
+                .collect(),
+            _ => Vec::new(),
+        },
+    }
 }

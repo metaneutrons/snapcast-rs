@@ -10,6 +10,8 @@ use anyhow::{Result, bail};
 use snapcast_proto::SampleFormat;
 use snapcast_proto::message::codec_header::CodecHeader;
 
+use crate::stream::SampleEncoding;
+
 /// Audio decoder trait — matches the C++ `Decoder` interface.
 pub trait Decoder: Send {
     /// Initialize the decoder from a codec header. Returns the sample format.
@@ -18,6 +20,11 @@ pub trait Decoder: Send {
     /// Decode audio data in-place. Returns true if successful.
     /// For PCM this is a no-op (passthrough).
     fn decode(&mut self, data: &mut Vec<u8>) -> Result<bool>;
+
+    /// Encoding produced by [`decode`](Self::decode).
+    fn output_encoding(&self) -> SampleEncoding {
+        SampleEncoding::PcmInt
+    }
 }
 
 /// PCM decoder — passthrough. Parses the RIFF/WAV header to extract sample format.

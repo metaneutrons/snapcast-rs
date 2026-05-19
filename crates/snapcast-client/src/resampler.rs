@@ -6,10 +6,13 @@ use anyhow::{Result, bail};
 use rubato::{FftFixedIn, Resampler as RubatoResampler};
 use snapcast_proto::SampleFormat;
 
+use crate::stream::SampleEncoding;
+
 /// Resampler that converts between sample rates.
 pub struct Resampler {
     resampler: FftFixedIn<f64>,
     in_format: SampleFormat,
+    in_encoding: SampleEncoding,
     out_format: SampleFormat,
     channels: usize,
 }
@@ -19,6 +22,7 @@ impl Resampler {
     pub fn new_if_needed(
         in_format: SampleFormat,
         out_format: SampleFormat,
+        in_encoding: SampleEncoding,
         chunk_frames: usize,
     ) -> Result<Option<Self>> {
         if out_format.rate() == 0 || out_format.rate() == in_format.rate() {
@@ -41,15 +45,19 @@ impl Resampler {
         Ok(Some(Self {
             resampler,
             in_format,
+            in_encoding,
             out_format,
             channels,
         }))
     }
 
-    /// Resample interleaved i16 LE PCM data in-place.
+    /// Resample interleaved sample data in-place.
     pub fn process(&mut self, data: &mut Vec<u8>) -> Result<()> {
         let sample_size = self.in_format.sample_size() as usize;
         let frame_size = self.in_format.frame_size() as usize;
+        if frame_size == 0 || sample_size == 0 {
+            bail!("cannot resample zero-sized frames");
+        }
         let in_frames = data.len() / frame_size;
 
         // Deinterleave to f64 channels
@@ -60,6 +68,22 @@ impl Resampler {
                     2 => {
                         i16::from_le_bytes([sample_bytes[0], sample_bytes[1]]) as f64
                             / i16::MAX as f64
+                    }
+                    4 if self.in_encoding == SampleEncoding::Float32 => f32::from_le_bytes([
+                        sample_bytes[0],
+                        sample_bytes[1],
+                        sample_bytes[2],
+                        sample_bytes[3],
+                    ])
+                        as f64,
+                    4 if self.in_format.bits() == 24 => {
+                        i32::from_le_bytes([
+                            sample_bytes[0],
+                            sample_bytes[1],
+                            sample_bytes[2],
+                            sample_bytes[3],
+                        ]) as f64
+                            / snapcast_proto::PCM_24BIT_MAX as f64
                     }
                     4 => {
                         i32::from_le_bytes([
@@ -112,7 +136,7 @@ mod tests {
     #[test]
     fn no_resampler_when_same_rate() {
         let fmt = SampleFormat::new(48000, 16, 2);
-        let r = Resampler::new_if_needed(fmt, fmt, 480).unwrap();
+        let r = Resampler::new_if_needed(fmt, fmt, SampleEncoding::PcmInt, 480).unwrap();
         assert!(r.is_none());
     }
 
@@ -120,7 +144,7 @@ mod tests {
     fn no_resampler_when_out_rate_zero() {
         let in_fmt = SampleFormat::new(48000, 16, 2);
         let out_fmt = SampleFormat::new(0, 16, 2);
-        let r = Resampler::new_if_needed(in_fmt, out_fmt, 480).unwrap();
+        let r = Resampler::new_if_needed(in_fmt, out_fmt, SampleEncoding::PcmInt, 480).unwrap();
         assert!(r.is_none());
     }
 
@@ -128,7 +152,7 @@ mod tests {
     fn creates_resampler_for_different_rates() {
         let in_fmt = SampleFormat::new(44100, 16, 2);
         let out_fmt = SampleFormat::new(48000, 16, 2);
-        let r = Resampler::new_if_needed(in_fmt, out_fmt, 441).unwrap();
+        let r = Resampler::new_if_needed(in_fmt, out_fmt, SampleEncoding::PcmInt, 441).unwrap();
         assert!(r.is_some());
     }
 
@@ -137,7 +161,7 @@ mod tests {
         let in_fmt = SampleFormat::new(44100, 16, 2);
         let out_fmt = SampleFormat::new(48000, 16, 2);
         let frames = 441; // 10ms at 44100
-        let mut r = Resampler::new_if_needed(in_fmt, out_fmt, frames)
+        let mut r = Resampler::new_if_needed(in_fmt, out_fmt, SampleEncoding::PcmInt, frames)
             .unwrap()
             .unwrap();
 

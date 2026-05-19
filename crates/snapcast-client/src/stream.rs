@@ -7,6 +7,15 @@ use snapcast_proto::types::Timeval;
 
 use crate::double_buffer::DoubleBuffer;
 
+/// In-memory representation of samples stored in a [`PcmChunk`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SampleEncoding {
+    /// Signed little-endian integer PCM.
+    PcmInt,
+    /// Little-endian IEEE-754 `f32` samples.
+    Float32,
+}
+
 /// A decoded PCM chunk with a server-time timestamp and a read cursor.
 #[derive(Debug, Clone)]
 pub struct PcmChunk {
@@ -16,16 +25,29 @@ pub struct PcmChunk {
     pub data: Vec<u8>,
     /// Sample format (rate, bits, channels).
     pub format: SampleFormat,
+    /// Encoding of the sample bytes.
+    pub encoding: SampleEncoding,
     read_pos: usize,
 }
 
 impl PcmChunk {
     /// Create a new PCM chunk.
     pub fn new(timestamp: Timeval, data: Vec<u8>, format: SampleFormat) -> Self {
+        Self::new_with_encoding(timestamp, data, format, SampleEncoding::PcmInt)
+    }
+
+    /// Create a new chunk with an explicit sample encoding.
+    pub fn new_with_encoding(
+        timestamp: Timeval,
+        data: Vec<u8>,
+        format: SampleFormat,
+        encoding: SampleEncoding,
+    ) -> Self {
         Self {
             timestamp,
             data,
             format,
+            encoding,
             read_pos: 0,
         }
     }
@@ -47,6 +69,9 @@ impl PcmChunk {
     /// Read up to `frames` frames into `output`, returning the number read.
     pub fn read_frames(&mut self, output: &mut [u8], frames: u32) -> u32 {
         let frame_size = self.format.frame_size() as usize;
+        if frame_size == 0 {
+            return 0;
+        }
         let available_bytes = self.data.len() - self.read_pos;
         let available_frames = available_bytes / frame_size;
         let to_read = (frames as usize).min(available_frames);
@@ -128,6 +153,8 @@ const DEFAULT_BUFFER_MS: i64 = 1000;
 pub struct Stream {
     /// Nominal format of the incoming PCM data.
     format: SampleFormat,
+    /// Encoding of samples stored in chunks.
+    encoding: SampleEncoding,
     /// Queue of pending PCM chunks.
     chunks: VecDeque<PcmChunk>,
     /// The chunk currently being read from.
@@ -163,8 +190,14 @@ pub struct Stream {
 impl Stream {
     /// Create a new stream for the given sample format.
     pub fn new(format: SampleFormat) -> Self {
+        Self::with_encoding(format, SampleEncoding::PcmInt)
+    }
+
+    /// Create a new stream for the given sample format and sample encoding.
+    pub fn with_encoding(format: SampleFormat, encoding: SampleEncoding) -> Self {
         Self {
             format,
+            encoding,
             chunks: VecDeque::new(),
             current: None,
             buffer_ms: DEFAULT_BUFFER_MS,
@@ -185,6 +218,11 @@ impl Stream {
     /// Returns the sample format.
     pub fn format(&self) -> SampleFormat {
         self.format
+    }
+
+    /// Returns the sample byte encoding.
+    pub fn encoding(&self) -> SampleEncoding {
+        self.encoding
     }
 
     /// Set the target buffer size in milliseconds.

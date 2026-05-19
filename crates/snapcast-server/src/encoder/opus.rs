@@ -67,7 +67,7 @@ impl OpusEncoder {
 
 impl Encoder for OpusEncoder {
     fn name(&self) -> &str {
-        "opus"
+        snapcast_proto::CODEC_OPUS
     }
 
     fn header(&self) -> &[u8] {
@@ -76,7 +76,21 @@ impl Encoder for OpusEncoder {
 
     fn encode(&mut self, input: &AudioData) -> Result<EncodedChunk> {
         let pcm = match input {
-            AudioData::Pcm(data) => std::borrow::Cow::Borrowed(data.as_slice()),
+            AudioData::Pcm(data) if self.format.bits() == 16 => {
+                std::borrow::Cow::Borrowed(data.as_slice())
+            }
+            AudioData::Pcm(data) => {
+                if !self.warned {
+                    self.warned = true;
+                    tracing::warn!(
+                        codec = "opus",
+                        bits = self.format.bits(),
+                        "PCM input requires quantization to 16-bit for Opus"
+                    );
+                }
+                let samples = super::pcm_to_f32(data, self.format.bits());
+                std::borrow::Cow::Owned(super::f32_to_pcm(&samples, 16))
+            }
             AudioData::F32(samples) => {
                 if !self.warned {
                     self.warned = true;

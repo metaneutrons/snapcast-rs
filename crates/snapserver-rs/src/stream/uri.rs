@@ -50,15 +50,8 @@ impl StreamUri {
 
         // Parse host:port for tcp scheme
         let (host, port, path) = if scheme == "tcp" {
-            let (hp, p) = if let Some(idx) = path_part.rfind(':') {
-                let port: u16 = path_part[idx + 1..].parse().unwrap_or(4953);
-                (path_part[..idx].to_string(), port)
-            } else {
-                (path_part.to_string(), 4953)
-            };
-            // Strip leading slashes from host
-            let host = hp.trim_start_matches('/').to_string();
-            (host, p, String::new())
+            let (host, port) = parse_tcp_endpoint(path_part)?;
+            (host, port, String::new())
         } else {
             // For pipe/file/process: path starts after ://
             // Typically pipe:///tmp/snapfifo → path = /tmp/snapfifo
@@ -79,6 +72,53 @@ impl StreamUri {
     pub fn param(&self, key: &str) -> Option<&str> {
         self.query.get(key).map(|s| s.as_str())
     }
+}
+
+fn parse_tcp_endpoint(path_part: &str) -> Result<(String, u16)> {
+    let endpoint = path_part.trim_start_matches('/');
+    if let Some(stripped) = endpoint.strip_prefix('[') {
+        let (host, tail) = stripped
+            .split_once(']')
+            .context("invalid TCP stream IPv6 endpoint, missing closing ']'")?;
+        anyhow::ensure!(!host.is_empty(), "missing TCP stream host");
+        let port = if tail.is_empty() {
+            4953
+        } else {
+            let port_str = tail
+                .strip_prefix(':')
+                .with_context(|| format!("invalid TCP stream endpoint suffix: {tail}"))?;
+            parse_port(port_str)?
+        };
+        return Ok((host.to_string(), port));
+    }
+
+    if endpoint.matches(':').count() == 1 {
+        let (host, port_str) = endpoint
+            .rsplit_once(':')
+            .expect("counted exactly one ':' before splitting");
+        anyhow::ensure!(!host.is_empty(), "missing TCP stream host");
+        return Ok((host.to_string(), parse_port(port_str)?));
+    }
+
+    // No colons — plain hostname or IPv4
+    if !endpoint.contains(':') {
+        return Ok((endpoint.to_string(), 4953));
+    }
+
+    // Multiple colons without brackets — bare IPv6. Accept only if valid IPv6.
+    // If the user intended a port, they must use bracket notation: [::1]:4953
+    anyhow::ensure!(
+        endpoint.parse::<std::net::Ipv6Addr>().is_ok(),
+        "ambiguous IPv6 address with port — use bracket notation: tcp://[{endpoint}]:port"
+    );
+    Ok((endpoint.to_string(), 4953))
+}
+
+fn parse_port(port_str: &str) -> Result<u16> {
+    anyhow::ensure!(!port_str.is_empty(), "missing TCP stream port");
+    port_str
+        .parse()
+        .with_context(|| format!("invalid TCP stream port: {port_str}"))
 }
 
 fn url_decode(s: &str) -> String {
@@ -127,6 +167,28 @@ mod tests {
         assert_eq!(u.host, "0.0.0.0");
         assert_eq!(u.port, 4953);
         assert_eq!(u.param("name"), Some("TCP"));
+    }
+
+    #[test]
+    fn parse_tcp_ipv6_uri() {
+        let u = StreamUri::parse("tcp://[::1]:4953?name=TCP").unwrap();
+        assert_eq!(u.scheme, "tcp");
+        assert_eq!(u.host, "::1");
+        assert_eq!(u.port, 4953);
+    }
+
+    #[test]
+    fn parse_tcp_ipv6_uri_default_port() {
+        let u = StreamUri::parse("tcp://::1?name=TCP").unwrap();
+        assert_eq!(u.host, "::1");
+        assert_eq!(u.port, 4953);
+    }
+
+    #[test]
+    fn parse_tcp_ipv6_ambiguous_with_port_rejected() {
+        // "::1:99999" is not a valid IPv6 address, so it's rejected as ambiguous
+        let err = StreamUri::parse("tcp://::1:99999?name=TCP").unwrap_err();
+        assert!(err.to_string().contains("bracket notation"));
     }
 
     #[test]

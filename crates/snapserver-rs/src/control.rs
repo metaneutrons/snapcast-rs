@@ -13,6 +13,8 @@ use crate::jsonrpc::{self, RpcResult};
 
 /// Configuration for the control server.
 pub(crate) struct ControlConfig {
+    /// TCP bind address.
+    pub bind_address: String,
     /// TCP port.
     pub port: u16,
     /// Event sender for extension point.
@@ -31,8 +33,12 @@ pub(crate) struct ControlConfig {
 
 /// Runs the JSON-RPC control server on a TCP port.
 pub(crate) async fn run_tcp(cfg: ControlConfig) -> Result<()> {
-    let listener = TcpListener::bind(format!("0.0.0.0:{}", cfg.port)).await?;
-    tracing::info!(port = cfg.port, "Control server (TCP) listening");
+    let listener = TcpListener::bind((cfg.bind_address.as_str(), cfg.port)).await?;
+    tracing::info!(
+        bind_address = %cfg.bind_address,
+        port = cfg.port,
+        "Control server (TCP) listening"
+    );
 
     loop {
         let (stream, peer) = listener.accept().await?;

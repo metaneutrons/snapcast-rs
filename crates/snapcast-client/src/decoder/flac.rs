@@ -11,6 +11,7 @@ use symphonia::core::codecs::{CODEC_TYPE_FLAC, CodecParameters, DecoderOptions};
 use symphonia::core::formats::Packet;
 
 use crate::decoder::Decoder;
+use crate::stream::SampleEncoding;
 
 /// Parse FLAC STREAMINFO from a codec header payload.
 ///
@@ -68,9 +69,11 @@ impl FlacDecoder {
         let decoder = symphonia::default::get_codecs()
             .make(params, &DecoderOptions::default())
             .map_err(|e| anyhow::anyhow!("failed to create FLAC decoder: {e}"))?;
+        // Report 32-bit because we output f32 samples regardless of source bit depth.
+        let output_format = SampleFormat::new(sf.rate(), 32, sf.channels());
         Ok(Self {
             decoder,
-            sample_format: sf,
+            sample_format: output_format,
             packet_id: 0,
         })
     }
@@ -114,17 +117,21 @@ impl Decoder for FlacDecoder {
         let spec = *decoded.spec();
         let frames = decoded.frames() as u64;
 
-        let mut sample_buf = SampleBuffer::<i16>::new(frames, spec);
+        let mut sample_buf = SampleBuffer::<f32>::new(frames, spec);
         sample_buf.copy_interleaved_ref(decoded);
         let samples = sample_buf.samples();
 
-        let mut out = Vec::with_capacity(samples.len() * 2);
+        let mut out = Vec::with_capacity(samples.len() * 4);
         for &s in samples {
             out.extend_from_slice(&s.to_le_bytes());
         }
 
         *data = out;
         Ok(true)
+    }
+
+    fn output_encoding(&self) -> SampleEncoding {
+        SampleEncoding::Float32
     }
 }
 

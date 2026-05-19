@@ -152,7 +152,7 @@ pub enum ClientCommand {
 /// Configuration for the embeddable client.
 #[derive(Debug, Clone)]
 pub struct ClientConfig {
-    /// Connection scheme: "tcp", "ws", or "wss". Default: "tcp".
+    /// Connection scheme. Only "tcp" is supported for audio streaming.
     pub scheme: String,
     /// Server hostname or IP (empty = mDNS discovery).
     pub host: String,
@@ -190,7 +190,7 @@ pub struct ClientConfig {
 impl Default for ClientConfig {
     fn default() -> Self {
         Self {
-            scheme: "tcp".into(),
+            scheme: snapcast_proto::SCHEME_TCP.into(),
             host: String::new(),
             port: snapcast_proto::DEFAULT_STREAM_PORT,
             auth: None,
@@ -205,8 +205,8 @@ impl Default for ClientConfig {
             instance: 1,
             host_id: String::new(),
             latency: 0,
-            mdns_service_type: "_snapcast._tcp.local.".into(),
-            client_name: "Snapclient".into(),
+            mdns_service_type: snapcast_proto::DEFAULT_MDNS_SERVICE_TYPE.into(),
+            client_name: snapcast_proto::DEFAULT_CLIENT_NAME.into(),
             #[cfg(feature = "encryption")]
             encryption_psk: None,
         }
@@ -274,7 +274,26 @@ impl SnapClient {
             self.audio_tx.clone(),
             std::sync::Arc::clone(&self.time_provider),
             std::sync::Arc::clone(&self.stream),
-        );
+        )?;
         ctrl.run().await
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn run_rejects_websocket_audio_scheme() {
+        let config = ClientConfig {
+            scheme: snapcast_proto::SCHEME_WS.into(),
+            host: "localhost".into(),
+            port: snapcast_proto::DEFAULT_HTTP_PORT,
+            ..ClientConfig::default()
+        };
+        let (mut client, _events, _audio_rx) = SnapClient::new(config);
+
+        let err = client.run().await.unwrap_err();
+        assert!(err.to_string().contains("websocket audio transport"));
     }
 }

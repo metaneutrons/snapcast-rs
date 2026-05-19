@@ -18,6 +18,15 @@ const MAX_FRAME_SIZE: usize = 2880;
 
 /// Parse the Opus pseudo header.
 fn parse_opus_header(payload: &[u8]) -> Result<SampleFormat> {
+    if payload.len() >= 19 && &payload[..8] == b"OpusHead" {
+        let channels = payload[9] as u16;
+        let rate = u32::from_le_bytes(payload[12..16].try_into().unwrap());
+        if channels == 0 || rate == 0 {
+            bail!("invalid OpusHead: rate={rate}, channels={channels}");
+        }
+        return Ok(SampleFormat::new(rate, 16, channels));
+    }
+
     if payload.len() < 12 {
         bail!(
             "Opus header too small ({} bytes, need >= 12)",
@@ -97,9 +106,29 @@ mod tests {
         h
     }
 
+    fn opus_head(rate: u32, channels: u8) -> Vec<u8> {
+        let mut h = Vec::new();
+        h.extend_from_slice(b"OpusHead");
+        h.push(1);
+        h.push(channels);
+        h.extend_from_slice(&0u16.to_le_bytes());
+        h.extend_from_slice(&rate.to_le_bytes());
+        h.extend_from_slice(&0u16.to_le_bytes());
+        h.push(0);
+        h
+    }
+
     #[test]
     fn parse_header_48000_16_2() {
         let sf = parse_opus_header(&opus_header(48000, 16, 2)).unwrap();
+        assert_eq!(sf.rate(), 48000);
+        assert_eq!(sf.bits(), 16);
+        assert_eq!(sf.channels(), 2);
+    }
+
+    #[test]
+    fn parse_opus_head_48000_2() {
+        let sf = parse_opus_header(&opus_head(48000, 2)).unwrap();
         assert_eq!(sf.rate(), 48000);
         assert_eq!(sf.bits(), 16);
         assert_eq!(sf.channels(), 2);

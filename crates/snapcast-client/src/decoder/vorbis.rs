@@ -11,6 +11,7 @@ use symphonia::core::codecs::{CODEC_TYPE_VORBIS, CodecParameters, DecoderOptions
 use symphonia::core::formats::Packet;
 
 use crate::decoder::Decoder;
+use crate::stream::SampleEncoding;
 
 /// Parse the Vorbis identification header from an Ogg bitstream.
 ///
@@ -51,8 +52,8 @@ fn parse_vorbis_header(payload: &[u8]) -> Result<(SampleFormat, Vec<u8>)> {
         bail!("invalid Vorbis header: rate={sample_rate}, channels={channels}");
     }
 
-    // Default to 16-bit (Vorbis is float internally, C++ defaults to 16)
-    let sf = SampleFormat::new(sample_rate, 16, channels);
+    // Vorbis is float internally; output as f32 to preserve full precision.
+    let sf = SampleFormat::new(sample_rate, 32, channels);
 
     Ok((sf, payload.to_vec()))
 }
@@ -119,16 +120,20 @@ impl Decoder for VorbisDecoder {
         let spec = *decoded.spec();
         let frames = decoded.frames() as u64;
 
-        let mut sample_buf = SampleBuffer::<i16>::new(frames, spec);
+        let mut sample_buf = SampleBuffer::<f32>::new(frames, spec);
         sample_buf.copy_interleaved_ref(decoded);
 
-        let mut out = Vec::with_capacity(sample_buf.samples().len() * 2);
+        let mut out = Vec::with_capacity(sample_buf.samples().len() * 4);
         for &s in sample_buf.samples() {
             out.extend_from_slice(&s.to_le_bytes());
         }
 
         *data = out;
         Ok(true)
+    }
+
+    fn output_encoding(&self) -> SampleEncoding {
+        SampleEncoding::Float32
     }
 }
 
@@ -184,7 +189,7 @@ mod tests {
         let (sf, _) = parse_vorbis_header(&payload).unwrap();
         assert_eq!(sf.rate(), 44100);
         assert_eq!(sf.channels(), 2);
-        assert_eq!(sf.bits(), 16); // default
+        assert_eq!(sf.bits(), 32);
     }
 
     #[test]

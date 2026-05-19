@@ -65,7 +65,7 @@ impl F32Lz4Encoder {
 
 impl Encoder for F32Lz4Encoder {
     fn name(&self) -> &str {
-        "f32lz4"
+        snapcast_proto::CODEC_F32LZ4
     }
 
     fn header(&self) -> &[u8] {

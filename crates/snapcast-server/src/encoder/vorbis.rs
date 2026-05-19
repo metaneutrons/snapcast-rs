@@ -43,7 +43,7 @@ impl VorbisEncoder {
 
 impl Encoder for VorbisEncoder {
     fn name(&self) -> &str {
-        "ogg"
+        snapcast_proto::CODEC_OGG
     }
 
     fn header(&self) -> &[u8] {
@@ -79,9 +79,10 @@ impl Encoder for VorbisEncoder {
                 let total_samples = pcm.len() / sample_size;
                 let frames = total_samples / channels;
                 let mut bufs = vec![Vec::with_capacity(frames); channels];
-                let scale = match sample_size {
-                    2 => 1.0 / 32768.0,
-                    4 => 1.0 / 2_147_483_648.0,
+                let scale = match self.format.bits() {
+                    16 => 1.0 / 32768.0,
+                    24 => 1.0 / snapcast_proto::PCM_24BIT_MAX,
+                    32 => 1.0 / 2_147_483_648.0,
                     _ => bail!("unsupported sample size: {sample_size}"),
                 };
                 match sample_size {

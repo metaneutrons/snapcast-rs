@@ -12,6 +12,7 @@ use snapcast_proto::SampleFormat;
 use snapcast_proto::message::codec_header::CodecHeader;
 
 use crate::decoder::Decoder;
+use crate::stream::SampleEncoding;
 
 const MAGIC: &[u8; 4] = b"F32L";
 
@@ -85,6 +86,10 @@ impl Decoder for F32Lz4Decoder {
                 Ok(false)
             }
         }
+    }
+
+    fn output_encoding(&self) -> SampleEncoding {
+        SampleEncoding::Float32
     }
 }
 

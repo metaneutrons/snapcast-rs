@@ -25,6 +25,8 @@ struct AppState {
 
 /// Configuration for the HTTP server.
 pub(crate) struct HttpConfig {
+    /// TCP bind address.
+    pub bind_address: String,
     /// HTTP port.
     pub port: u16,
     /// Snapweb document root (None = disabled).
@@ -58,10 +60,12 @@ pub(crate) async fn run_http(cfg: HttpConfig) -> Result<()> {
         tracing::info!(doc_root = root, "Serving Snapweb");
     }
 
-    let addr = format!("0.0.0.0:{}", cfg.port);
-    tracing::debug!(addr, "HTTP: binding");
-    let listener = tokio::net::TcpListener::bind(&addr).await?;
-    tracing::info!(port = cfg.port, "HTTP/WebSocket server listening");
+    let listener = tokio::net::TcpListener::bind((cfg.bind_address.as_str(), cfg.port)).await?;
+    tracing::info!(
+        bind_address = %cfg.bind_address,
+        port = cfg.port,
+        "HTTP/WebSocket server listening"
+    );
     axum::serve(listener, app).await?;
     Ok(())
 }

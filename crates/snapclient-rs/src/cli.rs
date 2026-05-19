@@ -13,12 +13,12 @@ use snapcast_client::config::{self, Auth, ClientSettings, MixerMode, ServerSetti
     version,
     about,
     after_help = "\
-  With 'url' = <tcp|ws|wss>://<snapserver host or IP or mDNS service name>[:port]\n\
-  For example: 'tcp://192.168.1.1:1704', or 'ws://homeserver.local'\n\
+  With 'url' = tcp://<snapserver host, IP, or mDNS service name>[:port]\n\
+  For example: 'tcp://192.168.1.1:1704', or 'tcp://[::1]:1704'\n\
   If 'url' is not configured, snapclient defaults to 'tcp://_snapcast._tcp'"
 )]
 pub struct Cli {
-    /// Snapserver URL: `<tcp|ws|wss>://<host>[:<port>]`
+    /// Snapserver URL: `tcp://<host>[:<port>]`
     pub url: Option<String>,
 
     /// Instance id when running multiple instances on the same host
@@ -187,42 +187,85 @@ fn parse_url(url: &str) -> Result<ServerSettings> {
         .with_context(|| format!("invalid URL, expected <scheme>://<host>[:port]: {url}"))?;
 
     match scheme {
-        "tcp" | "ws" | "wss" => settings.scheme = scheme.to_string(),
-        _ => bail!("unsupported scheme: {scheme} (expected tcp, ws, or wss)"),
+        snapcast_proto::SCHEME_TCP => settings.scheme = scheme.to_string(),
+        snapcast_proto::SCHEME_WS | snapcast_proto::SCHEME_WSS => {
+            bail!("websocket audio transport is not supported yet; use tcp://")
+        }
+        _ => bail!("unsupported scheme: {scheme} (expected tcp)"),
     }
 
     // Extract optional user:password@
-    let rest = if let Some((userinfo, host_part)) = rest.split_once('@') {
-        if let Some((user, password)) = userinfo.split_once(':') {
-            settings.auth = Some(Auth {
-                scheme: "Basic".into(),
-                param: base64_encode_credentials(user, password),
-            });
-        }
+    let rest = if let Some((userinfo, host_part)) = rest.rsplit_once('@') {
+        let (user, password) = userinfo
+            .split_once(':')
+            .context("invalid credentials, expected user:password@host")?;
+        settings.auth = Some(Auth {
+            scheme: "Basic".into(),
+            param: base64_encode_credentials(user, password),
+        });
         host_part
     } else {
         rest
     };
 
-    // Extract host and optional port
-    if let Some((host, port_str)) = rest.rsplit_once(':') {
-        settings.host = host.to_string();
-        settings.port = port_str
-            .parse()
-            .with_context(|| format!("invalid port: {port_str}"))?;
-    } else {
-        settings.host = rest.to_string();
-        settings.port = default_port(&settings.scheme);
-    }
+    let (host, port) = parse_host_port(rest, default_port(&settings.scheme))?;
+    settings.host = host;
+    settings.port = port;
 
     Ok(settings)
 }
 
+fn parse_host_port(input: &str, default_port: u16) -> Result<(String, u16)> {
+    anyhow::ensure!(!input.is_empty(), "missing host");
+
+    if let Some(stripped) = input.strip_prefix('[') {
+        let (host, tail) = stripped
+            .split_once(']')
+            .context("invalid IPv6 host, missing closing ']'")?;
+        anyhow::ensure!(!host.is_empty(), "missing IPv6 host");
+        let port = if tail.is_empty() {
+            default_port
+        } else {
+            let port_str = tail
+                .strip_prefix(':')
+                .with_context(|| format!("invalid IPv6 host suffix: {tail}"))?;
+            parse_port(port_str)?
+        };
+        return Ok((host.to_string(), port));
+    }
+
+    if input.matches(':').count() == 1 {
+        let (host, port_str) = input
+            .rsplit_once(':')
+            .expect("counted exactly one ':' before splitting");
+        anyhow::ensure!(!host.is_empty(), "missing host");
+        return Ok((host.to_string(), parse_port(port_str)?));
+    }
+
+    // No colons — plain hostname or IPv4
+    if !input.contains(':') {
+        return Ok((input.to_string(), default_port));
+    }
+
+    // Multiple colons without brackets — bare IPv6. Accept only if valid IPv6.
+    // If the user intended a port, they must use bracket notation: [::1]:1704
+    anyhow::ensure!(
+        input.parse::<std::net::Ipv6Addr>().is_ok(),
+        "ambiguous IPv6 address with port — use bracket notation: tcp://[{input}]:port"
+    );
+    Ok((input.to_string(), default_port))
+}
+
+fn parse_port(port_str: &str) -> Result<u16> {
+    anyhow::ensure!(!port_str.is_empty(), "missing port");
+    port_str
+        .parse()
+        .with_context(|| format!("invalid port: {port_str}"))
+}
+
 fn default_port(scheme: &str) -> u16 {
     match scheme {
-        "tcp" => snapcast_proto::DEFAULT_STREAM_PORT,
-        "ws" => snapcast_proto::DEFAULT_HTTP_PORT,
-        "wss" => snapcast_proto::DEFAULT_WSS_PORT,
+        snapcast_proto::SCHEME_TCP => snapcast_proto::DEFAULT_STREAM_PORT,
         _ => snapcast_proto::DEFAULT_STREAM_PORT,
     }
 }
@@ -246,18 +289,25 @@ mod tests {
     }
 
     #[test]
-    fn parse_ws_url_default_port() {
-        let s = parse_url("ws://homeserver.local").unwrap();
-        assert_eq!(s.scheme, "ws");
-        assert_eq!(s.host, "homeserver.local");
-        assert_eq!(s.port, 1780);
+    fn parse_ipv6_url() {
+        let s = parse_url("tcp://[::1]:1704").unwrap();
+        assert_eq!(s.scheme, "tcp");
+        assert_eq!(s.host, "::1");
+        assert_eq!(s.port, 1704);
     }
 
     #[test]
-    fn parse_wss_url() {
-        let s = parse_url("wss://secure.host:1788").unwrap();
-        assert_eq!(s.scheme, "wss");
-        assert_eq!(s.port, 1788);
+    fn parse_ipv6_url_default_port() {
+        let s = parse_url("tcp://::1").unwrap();
+        assert_eq!(s.host, "::1");
+        assert_eq!(s.port, 1704);
+    }
+
+    #[test]
+    fn parse_ipv6_ambiguous_with_port_rejected() {
+        // "::1:99999" is not a valid IPv6 address, so it's rejected as ambiguous
+        let err = parse_url("tcp://::1:99999").unwrap_err();
+        assert!(err.to_string().contains("bracket notation"));
     }
 
     #[test]
@@ -272,6 +322,12 @@ mod tests {
     #[test]
     fn parse_invalid_scheme() {
         assert!(parse_url("http://localhost").is_err());
+    }
+
+    #[test]
+    fn parse_websocket_scheme_is_unsupported() {
+        assert!(parse_url("ws://homeserver.local").is_err());
+        assert!(parse_url("wss://secure.host:1788").is_err());
     }
 
     #[test]
@@ -347,7 +403,7 @@ mod tests {
             "/path/to/key.pem",
             "--key-password",
             "secret",
-            "wss://server:1788",
+            "tcp://server:1704",
         ]);
         let s = cli.into_settings().unwrap();
         assert_eq!(

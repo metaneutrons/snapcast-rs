@@ -42,6 +42,40 @@ pub const DEFAULT_WSS_PORT: u16 = 1788;
 pub const PROTOCOL_VERSION: u32 = 2;
 /// Default sample format: 48000 Hz, 16-bit, stereo.
 pub const DEFAULT_SAMPLE_FORMAT: SampleFormat = SampleFormat::new(48000, 16, 2);
+/// Maximum absolute value of a 24-bit signed integer sample (2^23 - 1).
+pub const PCM_24BIT_MAX: f32 = 8_388_607.0;
+/// Default sample format string used by config files and command-line defaults.
+pub const DEFAULT_SAMPLE_FORMAT_STRING: &str = "48000:16:2";
+/// Default playout buffer size in milliseconds.
+pub const DEFAULT_BUFFER_MS: u32 = 1000;
+/// Default mDNS service type for Snapcast discovery.
+pub const DEFAULT_MDNS_SERVICE_TYPE: &str = "_snapcast._tcp.local.";
+/// Default client display name.
+pub const DEFAULT_CLIENT_NAME: &str = "Snapclient";
+/// Default server display name.
+pub const DEFAULT_SERVER_NAME: &str = "Snapserver";
+/// Default TCP bind address for server listeners.
+pub const DEFAULT_BIND_ADDRESS: &str = "0.0.0.0";
+/// Maximum accepted binary protocol payload size.
+pub const DEFAULT_MAX_PAYLOAD_SIZE: u32 = 2 * 1024 * 1024;
+/// Plain TCP streaming transport scheme.
+pub const SCHEME_TCP: &str = "tcp";
+/// WebSocket streaming transport scheme.
+pub const SCHEME_WS: &str = "ws";
+/// WebSocket-over-TLS streaming transport scheme.
+pub const SCHEME_WSS: &str = "wss";
+/// Raw PCM codec name.
+pub const CODEC_PCM: &str = "pcm";
+/// FLAC codec name.
+pub const CODEC_FLAC: &str = "flac";
+/// Opus codec name.
+pub const CODEC_OPUS: &str = "opus";
+/// Ogg/Vorbis codec name as used on the Snapcast wire.
+pub const CODEC_OGG: &str = "ogg";
+/// Lossless f32 LZ4 codec name.
+pub const CODEC_F32LZ4: &str = "f32lz4";
+/// Encrypted f32 LZ4 command-line/config alias.
+pub const CODEC_F32LZ4_ENCRYPTED_ALIAS: &str = "f32lz4e";
 
 /// Default pre-shared key for f32lz4e (encrypted f32lz4) codec.
 ///

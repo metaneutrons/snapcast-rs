@@ -1,4 +1,9 @@
-//! Connection layer — TCP, WebSocket, and WSS implementations.
+//! Connection layer.
+//!
+//! TCP is the supported Snapcast audio transport. The WebSocket modules are
+//! kept feature-gated for future interoperability work, but they are not
+//! selected by [`SnapConnection::new`] until the server and client can speak a
+//! verified binary audio-streaming WebSocket contract.
 
 #[cfg(feature = "websocket")]
 pub mod ws;
@@ -31,6 +36,7 @@ async fn read_frame<R: AsyncReadExt + Unpin>(reader: &mut R) -> Result<TypedMess
 
     // Stamp received time using steady clock (matching C++ steadytimeofday)
     base.received = steady_time_of_day();
+    ensure_payload_size(base.size)?;
 
     // Read payload
     let mut payload_buf = vec![0u8; base.size as usize];
@@ -42,6 +48,14 @@ async fn read_frame<R: AsyncReadExt + Unpin>(reader: &mut R) -> Result<TypedMess
     }
 
     factory::deserialize(base, &payload_buf).map_err(|e| anyhow::anyhow!("deserializing: {e}"))
+}
+
+pub(crate) fn ensure_payload_size(size: u32) -> Result<()> {
+    anyhow::ensure!(
+        size <= snapcast_proto::DEFAULT_MAX_PAYLOAD_SIZE,
+        "payload too large: {size} bytes"
+    );
+    Ok(())
 }
 
 /// Write a complete frame (header + payload) to an async writer.
@@ -70,7 +84,7 @@ pub struct TcpConnection {
     next_id: u16,
 }
 
-/// Unified connection that supports TCP, WebSocket, and WSS.
+/// Unified connection over supported transports.
 pub enum SnapConnection {
     /// Plain TCP connection.
     Tcp(TcpConnection),
@@ -86,11 +100,10 @@ impl SnapConnection {
     /// Create a new connection based on the scheme.
     pub fn new(scheme: &str, host: &str, port: u16) -> Result<Self> {
         match scheme {
-            "tcp" => Ok(Self::Tcp(TcpConnection::new(host, port))),
-            #[cfg(feature = "websocket")]
-            "ws" => Ok(Self::Ws(ws::WsConnection::new(host, port))),
-            #[cfg(feature = "tls")]
-            "wss" => Ok(Self::Wss(wss::WssConnection::new(host, port))),
+            snapcast_proto::SCHEME_TCP => Ok(Self::Tcp(TcpConnection::new(host, port))),
+            snapcast_proto::SCHEME_WS | snapcast_proto::SCHEME_WSS => anyhow::bail!(
+                "websocket audio transport is not supported yet; use tcp:// for Snapcast audio"
+            ),
             _ => anyhow::bail!("unsupported scheme: {scheme}"),
         }
     }
@@ -238,7 +251,7 @@ impl TcpConnection {
     }
 }
 
-fn stamp_sent(base: &mut BaseMessage) {
+pub(super) fn stamp_sent(base: &mut BaseMessage) {
     let tv = steady_time_of_day();
     base.sent = tv;
 }
@@ -246,7 +259,7 @@ fn stamp_sent(base: &mut BaseMessage) {
 /// Matches the C++ `chronos::steadytimeofday` — monotonic clock time.
 /// On macOS/Linux, `Instant` is based on `CLOCK_MONOTONIC` which counts
 /// seconds since boot, matching the C++ snapserver's clock domain.
-fn steady_time_of_day() -> Timeval {
+pub(super) fn steady_time_of_day() -> Timeval {
     // Instant::now().duration_since(EPOCH) gives time since first call.
     // We need time since boot. On Unix, Instant uses CLOCK_MONOTONIC
     // which starts at boot. We can get this via the elapsed time from
@@ -424,5 +437,17 @@ mod tests {
         assert!(conn.stream.is_none());
         assert_eq!(conn.host, "localhost");
         assert_eq!(conn.port, 1704);
+    }
+
+    #[test]
+    fn rejects_oversized_payload() {
+        let too_large = snapcast_proto::DEFAULT_MAX_PAYLOAD_SIZE + 1;
+        assert!(ensure_payload_size(too_large).is_err());
+    }
+
+    #[test]
+    fn rejects_websocket_audio_scheme() {
+        assert!(SnapConnection::new("ws", "localhost", 1780).is_err());
+        assert!(SnapConnection::new("wss", "localhost", 1788).is_err());
     }
 }

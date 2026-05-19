@@ -7,7 +7,7 @@ use snapcast_proto::SampleFormat;
 /// Server connection settings.
 #[derive(Debug, Clone)]
 pub struct ServerSettings {
-    /// Connection scheme: "tcp", "ws", or "wss".
+    /// Connection scheme. Only "tcp" is supported for audio streaming.
     pub scheme: String,
     /// Server hostname or IP.
     pub host: String,
@@ -144,7 +144,7 @@ pub struct ClientSettings {
 impl Default for ServerSettings {
     fn default() -> Self {
         Self {
-            scheme: "tcp".into(),
+            scheme: snapcast_proto::SCHEME_TCP.into(),
             host: String::new(),
             port: snapcast_proto::DEFAULT_STREAM_PORT,
             auth: None,

@@ -11,6 +11,7 @@ use tokio_tungstenite::{MaybeTlsStream, WebSocketStream};
 
 type WsStream = WebSocketStream<MaybeTlsStream<tokio::net::TcpStream>>;
 
+/// WebSocket transport for Snapcast binary frames.
 pub struct WsConnection {
     ws: Option<WsStream>,
     host: String,
@@ -18,6 +19,7 @@ pub struct WsConnection {
 }
 
 impl WsConnection {
+    /// Create a new WebSocket connection descriptor.
     pub fn new(host: &str, port: u16) -> Self {
         Self {
             ws: None,
@@ -26,6 +28,7 @@ impl WsConnection {
         }
     }
 
+    /// Establish the WebSocket connection.
     pub async fn connect(&mut self) -> Result<()> {
         let url = format!("ws://{}:{}/jsonrpc", self.host, self.port);
         let (ws, _) = tokio_tungstenite::connect_async(&url)
@@ -35,10 +38,12 @@ impl WsConnection {
         Ok(())
     }
 
+    /// Close the WebSocket connection.
     pub fn disconnect(&mut self) {
         self.ws = None;
     }
 
+    /// Send one binary Snapcast frame.
     pub async fn send(&mut self, msg_type: MessageType, payload: &MessagePayload) -> Result<()> {
         let ws = self.ws.as_mut().context("not connected")?;
         let mut base = BaseMessage {
@@ -49,12 +54,14 @@ impl WsConnection {
             received: Timeval::default(),
             size: 0,
         };
+        super::stamp_sent(&mut base);
         let frame = factory::serialize(&mut base, payload)
             .map_err(|e| anyhow::anyhow!("serialize: {e}"))?;
         ws.send(Message::Binary(frame.into())).await?;
         Ok(())
     }
 
+    /// Receive one binary Snapcast frame.
     pub async fn recv(&mut self) -> Result<TypedMessage> {
         let ws = self.ws.as_mut().context("not connected")?;
         loop {
@@ -68,9 +75,17 @@ impl WsConnection {
                     if data.len() < BaseMessage::HEADER_SIZE {
                         continue;
                     }
-                    let base = BaseMessage::read_from(&mut &data[..BaseMessage::HEADER_SIZE])
+                    let mut base = BaseMessage::read_from(&mut &data[..BaseMessage::HEADER_SIZE])
                         .map_err(|e| anyhow::anyhow!("parse header: {e}"))?;
+                    base.received = super::steady_time_of_day();
+                    super::ensure_payload_size(base.size)?;
                     let payload = &data[BaseMessage::HEADER_SIZE..];
+                    anyhow::ensure!(
+                        payload.len() == base.size as usize,
+                        "payload size mismatch: header={}, actual={}",
+                        base.size,
+                        payload.len()
+                    );
                     return factory::deserialize(base, payload)
                         .map_err(|e| anyhow::anyhow!("deserialize: {e}"));
                 }

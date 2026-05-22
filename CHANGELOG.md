@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.12.1](https://github.com/metaneutrons/snapcast-rs/compare/v0.12.0...v0.12.1) (2026-05-22)
+
+
+### Bug Fixes
+
+* **server:** enable automatic IP address discovery in mDNS ServiceInfo ([7507911](https://github.com/metaneutrons/snapcast-rs/commit/7507911dde6c046cc2b2e7682f6083949aad1916))
+
 ## [0.12.0](https://github.com/metaneutrons/snapcast-rs/compare/v0.11.0...v0.12.0) (2026-05-19)
 
 

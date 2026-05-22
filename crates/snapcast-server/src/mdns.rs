@@ -15,7 +15,8 @@ impl MdnsAdvertiser {
         let host = hostname::get()?.to_string_lossy().to_string();
         let short = host.split('.').next().unwrap_or(&host);
         let mdns_host = format!("{short}.local.");
-        let service = ServiceInfo::new(service_type, service_name, &mdns_host, "", port, None)?;
+        let service = ServiceInfo::new(service_type, service_name, &mdns_host, "", port, None)?
+            .enable_addr_auto();
         daemon.register(service)?;
         tracing::info!(port, host = %mdns_host, service_type, "mDNS: advertising");
         Ok(Self { daemon })

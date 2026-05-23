@@ -27,14 +27,18 @@ snapcast-rs is compatible with the original C++ Snapcast over the TCP audio tran
 | `custom-protocol` | Application-defined message types (9+) | C++ clients silently ignore |
 | `encryption` | ChaCha20-Poly1305 encrypted f32lz4 | C++ clients reject unknown codec |
 
-If you enable `f32lz4` or `encryption` on the server, C++ clients cannot decode the audio. To prevent them from auto-connecting via mDNS, change the service type:
+If you enable `f32lz4` or `encryption` on the server, C++ clients cannot decode the audio. To prevent them from auto-connecting via mDNS, change the service type in your binary:
 
 ```rust
-let config = ServerConfig {
-    mdns_service_type: "_myapp._tcp.local.".into(),
-    ..ServerConfig::default()
-};
+use snapcast_server::mdns::MdnsAdvertiser;
+
+// The mdns module is public — advertise from your application binary
+let _mdns = MdnsAdvertiser::new(port, "_myapp._tcp", "MyServer")?;
 ```
+
+> **Breaking change (v0.14 → v0.15):** mDNS advertisement was removed from the library's
+> automatic server startup. The `mdns` module is now `pub` for consumers to use directly.
+> This gives applications full control over service type, port, and TXT records.
 
 For full interoperability with C++ clients, use `--codec flac` or `--codec pcm` and leave `custom-protocol` and `encryption` disabled.
 
@@ -211,9 +215,6 @@ ServerConfig {
     buffer_ms: u32,            // default: 1000
     codec: String,             // default: "flac" (feature-dependent: flac > f32lz4 > pcm)
     sample_format: String,     // default: "48000:16:2"
-    mdns_service_type: String, // default: "_snapcast._tcp.local."
-    mdns_enabled: bool,        // default: true (feature: mdns)
-    mdns_name: String,         // default: "Snapserver" (feature: mdns)
     auth: Option<Arc<dyn AuthValidator>>, // default: None (no auth)
     client_filter: Option<Arc<dyn ClientFilter>>, // default: None (accept all)
     encryption_psk: Option<String>, // f32lz4 encryption (feature: encryption)

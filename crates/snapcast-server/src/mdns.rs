@@ -6,6 +6,8 @@
 //! - `mdns-embedded`: Standalone Rust implementation via `mdns-sd`.
 //!   For embedded targets without an OS mDNS daemon.
 
+use std::collections::HashMap;
+
 use anyhow::Result;
 
 /// Advertise the Snapcast server via mDNS.
@@ -26,44 +28,82 @@ impl MdnsAdvertiser {
     /// Returns an error if the mDNS daemon cannot be started or the service
     /// cannot be registered.
     pub fn new(port: u16, service_type: &str, service_name: &str) -> Result<Self> {
+        Self::new_with_txt(port, service_type, service_name, HashMap::new())
+    }
+
+    /// Start advertising with TXT records for service metadata.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the mDNS daemon cannot be started or the service
+    /// cannot be registered.
+    pub fn new_with_txt(
+        port: u16,
+        service_type: &str,
+        service_name: &str,
+        txt: HashMap<String, String>,
+    ) -> Result<Self> {
         #[cfg(feature = "mdns-os")]
         {
-            Self::new_os(port, service_type, service_name)
+            Self::new_os(port, service_type, service_name, txt)
         }
         #[cfg(all(feature = "mdns-embedded", not(feature = "mdns-os")))]
         {
-            Self::new_embedded(port, service_type, service_name)
+            Self::new_embedded(port, service_type, service_name, txt)
         }
     }
 
     #[cfg(feature = "mdns-os")]
-    fn new_os(port: u16, service_type: &str, service_name: &str) -> Result<Self> {
+    fn new_os(
+        port: u16,
+        service_type: &str,
+        service_name: &str,
+        txt: HashMap<String, String>,
+    ) -> Result<Self> {
         // astro-dnssd expects the service type without the trailing ".local."
         let regtype = service_type
             .trim_end_matches("local.")
             .trim_end_matches('.');
-        let service = astro_dnssd::DNSServiceBuilder::new(regtype, port)
-            .with_name(service_name)
+        let mut builder =
+            astro_dnssd::DNSServiceBuilder::new(regtype, port).with_name(service_name);
+        if !txt.is_empty() {
+            builder = builder.with_txt_record(txt.clone());
+        }
+        let service = builder
             .register()
             .map_err(|e| anyhow::anyhow!("DNS-SD registration failed: {e}"))?;
         tracing::info!(
             port,
             service_type = regtype,
             name = service_name,
+            ?txt,
             "mDNS: advertising via OS daemon"
         );
         Ok(Self { _service: service })
     }
 
     #[cfg(all(feature = "mdns-embedded", not(feature = "mdns-os")))]
-    fn new_embedded(port: u16, service_type: &str, service_name: &str) -> Result<Self> {
+    fn new_embedded(
+        port: u16,
+        service_type: &str,
+        service_name: &str,
+        txt: HashMap<String, String>,
+    ) -> Result<Self> {
         let daemon = mdns_sd::ServiceDaemon::new()?;
         let host = hostname::get()?.to_string_lossy().to_string();
         let short = host.split('.').next().unwrap_or(&host);
         let mdns_host = format!("{short}.local.");
-        let service =
-            mdns_sd::ServiceInfo::new(service_type, service_name, &mdns_host, "", port, None)?
-                .enable_addr_auto();
+        let properties: Option<HashMap<String, String>> =
+            if txt.is_empty() { None } else { Some(txt) };
+        let service = mdns_sd::ServiceInfo::new(
+            service_type,
+            service_name,
+            &mdns_host,
+            "",
+            port,
+            properties.as_ref(),
+        )?
+        .enable_addr_auto();
         daemon.register(service)?;
         tracing::info!(port, host = %mdns_host, service_type, "mDNS: advertising via embedded daemon");
         Ok(Self { daemon })

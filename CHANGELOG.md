@@ -1,5 +1,16 @@
 # Changelog
 
+## [0.16.0](https://github.com/metaneutrons/snapcast-rs/compare/v0.15.0...v0.16.0) (2026-05-23)
+
+
+### ⚠ BREAKING CHANGES
+
+* **client:** remove mdns from snapcast-client library
+
+### Code Refactoring
+
+* **client:** remove mdns from snapcast-client library ([4c58619](https://github.com/metaneutrons/snapcast-rs/commit/4c586191763f98aafb8049a4c3ae804abd9bb4f9))
+
 ## [0.15.0](https://github.com/metaneutrons/snapcast-rs/compare/v0.14.0...v0.15.0) (2026-05-23)
 
 

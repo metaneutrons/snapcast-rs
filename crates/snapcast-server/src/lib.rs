@@ -181,8 +181,8 @@ pub mod auth;
 #[cfg(feature = "encryption")]
 pub(crate) mod crypto;
 pub(crate) mod encoder;
-#[cfg(feature = "mdns")]
-pub(crate) mod mdns;
+#[cfg(any(feature = "mdns-os", feature = "mdns-embedded"))]
+pub mod mdns;
 pub(crate) mod session;
 pub(crate) mod state;
 pub mod status;
@@ -436,15 +436,7 @@ pub struct ServerConfig {
     pub codec: String,
     /// Default sample format. Default: 48000:16:2.
     pub sample_format: String,
-    /// mDNS service type. Default: "_snapcast._tcp.local.".
-    #[cfg(feature = "mdns")]
-    pub mdns_service_type: String,
-    /// Enable mDNS advertisement. Default: true (when mdns feature is compiled in).
-    #[cfg(feature = "mdns")]
-    pub mdns_enabled: bool,
-    /// mDNS service name. Default: "Snapserver".
-    #[cfg(feature = "mdns")]
-    pub mdns_name: String,
+
     /// Auth validator for streaming clients. `None` = no auth required.
     pub auth: Option<std::sync::Arc<dyn auth::AuthValidator>>,
     /// Client filter — called after Hello to accept/reject connections.
@@ -467,12 +459,7 @@ impl Default for ServerConfig {
             buffer_ms: snapcast_proto::DEFAULT_BUFFER_MS,
             codec: default_codec().into(),
             sample_format: snapcast_proto::DEFAULT_SAMPLE_FORMAT_STRING.into(),
-            #[cfg(feature = "mdns")]
-            mdns_service_type: snapcast_proto::DEFAULT_MDNS_SERVICE_TYPE.into(),
-            #[cfg(feature = "mdns")]
-            mdns_enabled: true,
-            #[cfg(feature = "mdns")]
-            mdns_name: snapcast_proto::DEFAULT_SERVER_NAME.into(),
+
             auth: None,
             client_filter: None,
             #[cfg(feature = "encryption")]
@@ -649,20 +636,6 @@ impl SnapServer {
             stream_port = self.config.stream_port,
             "Snapserver starting"
         );
-
-        // Advertise via mDNS (protocol-level discovery)
-        #[cfg(feature = "mdns")]
-        let _mdns = if self.config.mdns_enabled {
-            mdns::MdnsAdvertiser::new(
-                self.config.stream_port,
-                &self.config.mdns_service_type,
-                &self.config.mdns_name,
-            )
-            .map_err(|e| tracing::warn!(error = %e, "mDNS advertisement failed"))
-            .ok()
-        } else {
-            None
-        };
 
         // Create default encoder — used for codec header and first default stream
         let default_enc_config = encoder::EncoderConfig {

@@ -102,6 +102,10 @@ fn main() -> anyhow::Result<()> {
         .init();
 
     // Load config file, then merge CLI overrides
+    #[cfg(feature = "mdns")]
+    let mdns_disable = cli.mdns_disable;
+    #[cfg(feature = "mdns")]
+    let mdns_name = cli.mdns_name.clone();
     let file_config = config::parse_config_file(&cli.config);
     let server_config = config::merge_cli(
         file_config,
@@ -205,6 +209,23 @@ fn main() -> anyhow::Result<()> {
                 tracing::error!(source, error = %e, "Failed to start stream reader");
             }
         }
+
+        // mDNS advertisement (held alive for the lifetime of the server)
+        #[cfg(feature = "mdns")]
+        let _mdns = if !mdns_disable {
+            let name = mdns_name
+                .as_deref()
+                .unwrap_or(snapcast_proto::DEFAULT_SERVER_NAME);
+            snapcast_server::mdns::MdnsAdvertiser::new(
+                server.config().stream_port,
+                snapcast_proto::DEFAULT_MDNS_SERVICE_TYPE,
+                name,
+            )
+            .map_err(|e| tracing::warn!(error = %e, "mDNS advertisement failed"))
+            .ok()
+        } else {
+            None
+        };
 
         // JSON-RPC control servers
         let (notify_tx, _) = tokio::sync::broadcast::channel::<serde_json::Value>(256);

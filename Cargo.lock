@@ -2421,7 +2421,7 @@ checksum = "67b1b7a3b5fe4f1376887184045fcf45c69e92af734b7aaddc05fb777b6fbd03"
 
 [[package]]
 name = "snapcast-client"
-version = "0.12.2"
+version = "0.14.0"
 dependencies = [
  "anyhow",
  "chacha20poly1305",
@@ -2448,7 +2448,7 @@ dependencies = [
 
 [[package]]
 name = "snapcast-proto"
-version = "0.12.2"
+version = "0.14.0"
 dependencies = [
  "byteorder",
  "serde",
@@ -2458,7 +2458,7 @@ dependencies = [
 
 [[package]]
 name = "snapcast-server"
-version = "0.12.2"
+version = "0.14.0"
 dependencies = [
  "anyhow",
  "astro-dnssd",
@@ -2488,7 +2488,7 @@ dependencies = [
 
 [[package]]
 name = "snapcast-tests"
-version = "0.12.2"
+version = "0.14.0"
 dependencies = [
  "anyhow",
  "base64",
@@ -2500,7 +2500,7 @@ dependencies = [
 
 [[package]]
 name = "snapclient-rs"
-version = "0.12.2"
+version = "0.14.0"
 dependencies = [
  "alsa 0.7.1",
  "anyhow",
@@ -2519,7 +2519,7 @@ dependencies = [
 
 [[package]]
 name = "snapserver-rs"
-version = "0.12.2"
+version = "0.14.0"
 dependencies = [
  "anyhow",
  "axum",

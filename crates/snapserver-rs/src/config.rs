@@ -189,14 +189,7 @@ pub(crate) fn merge_cli(mut config: BinaryConfig, cli: CliOverrides) -> BinaryCo
         config.server.encryption_psk = Some(v);
     }
     #[cfg(feature = "mdns")]
-    {
-        if cli.no_mdns {
-            config.server.mdns_enabled = false;
-        }
-        if let Some(v) = cli.mdns_name {
-            config.server.mdns_name = v;
-        }
-    }
+    let _ = (cli.no_mdns, cli.mdns_name); // handled in main.rs
 
     // Resolve f32lz4e → f32lz4 + default PSK (if no explicit PSK set)
     resolve_encryption(&mut config);

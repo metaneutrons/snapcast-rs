@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.12.2](https://github.com/metaneutrons/snapcast-rs/compare/v0.12.1...v0.12.2) (2026-05-23)
+
+
+### Bug Fixes
+
+* **mdns:** enable all network interfaces explicitly ([2d7824d](https://github.com/metaneutrons/snapcast-rs/commit/2d7824d9ba0c8739cf5572cfe70c473c23ee6055))
+
 ## [0.12.1](https://github.com/metaneutrons/snapcast-rs/compare/v0.12.0...v0.12.1) (2026-05-22)
 
 

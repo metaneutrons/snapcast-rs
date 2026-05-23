@@ -49,7 +49,7 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - name: Install system deps (Linux)
         if: runner.os == 'Linux'
-        run: sudo apt-get update && sudo apt-get install -y libasound2-dev libflac-dev
+        run: sudo apt-get update && sudo apt-get install -y libasound2-dev libflac-dev libavahi-compat-libdnssd-dev
       - name: Install FLAC (macOS)
         if: runner.os == 'macOS'
         run: brew install flac

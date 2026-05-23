@@ -1,5 +1,22 @@
 # Changelog
 
+## [0.15.0](https://github.com/metaneutrons/snapcast-rs/compare/v0.14.0...v0.15.0) (2026-05-23)
+
+
+### ⚠ BREAKING CHANGES
+
+* **mdns:** remove mdns module from library entirely
+* **mdns:** add TXT record support, document breaking change
+
+### Features
+
+* **mdns:** add TXT record support, document breaking change ([0f0fa65](https://github.com/metaneutrons/snapcast-rs/commit/0f0fa65368b19e8f0772398986f4707750a35661))
+
+
+### Code Refactoring
+
+* **mdns:** remove mdns module from library entirely ([1ca09fe](https://github.com/metaneutrons/snapcast-rs/commit/1ca09fe330cac7619d59087fcf97a9f85d4b5015))
+
 ## [0.14.0](https://github.com/metaneutrons/snapcast-rs/compare/v0.13.0...v0.14.0) (2026-05-23)
 
 

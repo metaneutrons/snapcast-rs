@@ -13,7 +13,7 @@ A Rust reimplementation of [Snapcast](https://github.com/snapcast/snapcast), the
 
 This project exists primarily to serve as a native Rust dependency for [SnapDog](https://github.com/metaneutrons/SnapDogRust), a multiroom audio appliance. Rather than shelling out to C++ binaries or bridging through FFI, SnapDog embeds the Snapcast protocol directly as a library — receiving audio, encoding it, distributing it to clients, and controlling playback, all within a single Rust process.
 
-To make this possible, snapcast-rs separates the protocol engine from the application shell. The **library crates** (`snapcast-client`, `snapcast-server`) implement the Snapcast binary protocol, audio encoding/decoding, time synchronization, and mDNS discovery — but own no audio devices, open no HTTP ports, and read no config files. They communicate exclusively through typed Rust channels, making them straightforward to embed in any application.
+To make this possible, snapcast-rs separates the protocol engine from the application shell. The **library crates** (`snapcast-client`, `snapcast-server`) implement the Snapcast binary protocol, audio encoding/decoding, and time synchronization — but own no audio devices, open no HTTP ports, and read no config files. They communicate exclusively through typed Rust channels, making them straightforward to embed in any application.
 
 The **binary crates** (`snapclient-rs`, `snapserver-rs`) are thin wrappers around these libraries. They add the things a standalone application needs: reading audio from pipes and processes, serving the JSON-RPC control API over HTTP and TCP, hosting the Snapweb UI, and outputting audio through platform-native backends via cpal. They are intended as standalone replacements for TCP-based Snapcast audio workflows; WebSocket audio streaming is not implemented yet.
 
@@ -27,18 +27,14 @@ snapcast-rs is compatible with the original C++ Snapcast over the TCP audio tran
 | `custom-protocol` | Application-defined message types (9+) | C++ clients silently ignore |
 | `encryption` | ChaCha20-Poly1305 encrypted f32lz4 | C++ clients reject unknown codec |
 
-If you enable `f32lz4` or `encryption` on the server, C++ clients cannot decode the audio. To prevent them from auto-connecting via mDNS, change the service type in your binary:
+If you enable `f32lz4` or `encryption` on the server, C++ clients cannot decode the audio. To prevent them from auto-connecting via mDNS, change the service type in your application binary (mDNS is the application's responsibility, not the library's):
 
 ```rust
-use snapcast_server::mdns::MdnsAdvertiser;
-
-// The mdns module is public — advertise from your application binary
-let _mdns = MdnsAdvertiser::new(port, "_myapp._tcp", "MyServer")?;
+// Use astro-dnssd or any DNS-SD crate in your binary
+let _mdns = astro_dnssd::DNSServiceBuilder::new("_myapp._tcp", port)
+    .with_name("MyServer")
+    .register()?;
 ```
-
-> **Breaking change (v0.14 → v0.15):** mDNS advertisement was removed from the library's
-> automatic server startup. The `mdns` module is now `pub` for consumers to use directly.
-> This gives applications full control over service type, port, and TXT records.
 
 For full interoperability with C++ clients, use `--codec flac` or `--codec pcm` and leave `custom-protocol` and `encryption` disabled.
 
@@ -46,7 +42,7 @@ For full interoperability with C++ clients, use `--codec flac` or `--codec pcm` 
 
 - **Dynamic Audio Pipeline**: The client automatically re-initializes the audio device when the server changes sample rate or channels.
 - **Integrated Resampling**: Automatic fallback to `rubato`-based resampling if the local hardware doesn't support the server's native format.
-- **Single Source of Truth Defaults**: Ports, schemes, codec names, sample format defaults, mDNS names, bind addresses, and payload limits live in `snapcast-proto`.
+- **Single Source of Truth Defaults**: Ports, schemes, codec names, sample format defaults, bind addresses, and payload limits live in `snapcast-proto`.
 - **Bounded Protocol Reads**: Client and server reject oversized binary-protocol payloads before allocation.
 - **Per-Stream Format Ownership**: Each server stream owns its codec/sample-format encoder state instead of leaking global defaults into per-stream paths.
 - **Lossless f32 Decode Path**: FLAC and f32lz4 decoders output native f32 samples — no intermediate 16-bit quantization. 24-bit FLAC preserves full resolution end-to-end.
@@ -237,7 +233,6 @@ StreamConfig {
 | Feature  | Default | C dep     | Description |
 |----------|---------|-----------|-------------|
 | `f32lz4` | —       | none      | f32 LZ4 codec (lz4_flex) |
-| `mdns`   | ✅      | none      | mDNS service advertisement |
 | `flac`   | ✅      | libFLAC   | FLAC encoding |
 | `opus`   | —       | libopus   | Opus encoding |
 | `vorbis` | —       | libvorbis | Vorbis encoding |
@@ -451,7 +446,7 @@ Generate locally: `cargo doc --open --no-deps`
 ## Building
 
 ```bash
-cargo build --release                                    # default: flac + mdns
+cargo build --release                                    # default: flac
 cargo build --release --features f32lz4                  # + f32lz4 (pure Rust)
 cargo build --release --no-default-features --features f32lz4  # pure Rust, no C deps
 ```

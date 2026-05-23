@@ -181,8 +181,6 @@ pub mod auth;
 #[cfg(feature = "encryption")]
 pub(crate) mod crypto;
 pub(crate) mod encoder;
-#[cfg(any(feature = "mdns-os", feature = "mdns-embedded"))]
-pub mod mdns;
 pub(crate) mod session;
 pub(crate) mod state;
 pub mod status;

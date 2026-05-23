@@ -216,13 +216,27 @@ fn main() -> anyhow::Result<()> {
             let name = mdns_name
                 .as_deref()
                 .unwrap_or(snapcast_proto::DEFAULT_SERVER_NAME);
-            snapcast_server::mdns::MdnsAdvertiser::new(
-                server.config().stream_port,
-                snapcast_proto::DEFAULT_MDNS_SERVICE_TYPE,
-                name,
-            )
-            .map_err(|e| tracing::warn!(error = %e, "mDNS advertisement failed"))
-            .ok()
+            let regtype = snapcast_proto::DEFAULT_MDNS_SERVICE_TYPE
+                .trim_end_matches("local.")
+                .trim_end_matches('.');
+            match astro_dnssd::DNSServiceBuilder::new(regtype, server.config().stream_port)
+                .with_name(name)
+                .register()
+            {
+                Ok(svc) => {
+                    tracing::info!(
+                        port = server.config().stream_port,
+                        service_type = regtype,
+                        name,
+                        "mDNS: advertising"
+                    );
+                    Some(svc)
+                }
+                Err(e) => {
+                    tracing::warn!(error = %e, "mDNS advertisement failed");
+                    None
+                }
+            }
         } else {
             None
         };

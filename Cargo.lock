@@ -2461,18 +2461,15 @@ name = "snapcast-server"
 version = "0.14.0"
 dependencies = [
  "anyhow",
- "astro-dnssd",
  "audiopus",
  "audiopus_sys",
  "base64",
  "chacha20poly1305",
  "getrandom 0.4.2",
  "hkdf",
- "hostname",
  "libc",
  "libflac-sys",
  "lz4_flex",
- "mdns-sd",
  "ogg",
  "serde",
  "serde_json",
@@ -2522,6 +2519,7 @@ name = "snapserver-rs"
 version = "0.14.0"
 dependencies = [
  "anyhow",
+ "astro-dnssd",
  "axum",
  "clap",
  "jsonwebtoken",

@@ -23,9 +23,6 @@ serde_json = { workspace = true }
 tracing = { workspace = true }
 anyhow = { workspace = true }
 libc = { workspace = true }
-hostname = { workspace = true, optional = true }
-mdns-sd = { workspace = true, optional = true }
-astro-dnssd = { version = "0.3", optional = true }
 
 # Encoders — all optional
 libflac-sys = { version = "0.3", optional = true }
@@ -38,15 +35,12 @@ uuid = { version = "1.23.0", features = ["v4"] }
 getrandom = "0.4.2"
 
 [features]
-default = ["flac", "mdns"]
+default = ["flac"]
 flac = ["dep:libflac-sys"]
 opus = ["dep:audiopus", "dep:audiopus_sys"]
 vorbis = ["dep:vorbis_rs", "dep:ogg"]
 f32lz4 = ["dep:lz4_flex"]
 encryption = ["f32lz4", "dep:chacha20poly1305", "dep:hkdf", "dep:sha2"]
-mdns = ["mdns-os"]
-mdns-os = ["dep:astro-dnssd"]
-mdns-embedded = ["dep:mdns-sd", "dep:hostname"]
 custom-protocol = ["snapcast-proto/custom-protocol"]
 
 [dev-dependencies]

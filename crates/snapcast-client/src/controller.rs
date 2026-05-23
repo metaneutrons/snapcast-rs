@@ -20,8 +20,6 @@ use crate::{ClientCommand, ClientEvent};
 
 const VERSION: &str = env!("CARGO_PKG_VERSION");
 const MAX_RECONNECT_DELAY_SECS: u32 = 30;
-#[cfg(feature = "mdns")]
-const MDNS_TIMEOUT: Duration = Duration::from_secs(5);
 const HELLO_TIMEOUT: Duration = Duration::from_secs(5);
 const SYNC_INTERVAL: Duration = Duration::from_secs(1);
 const QUICK_SYNC_INTERVAL: Duration = Duration::from_millis(100);
@@ -96,24 +94,8 @@ impl Controller {
     }
 
     async fn session(&mut self) -> Result<()> {
-        // mDNS discovery if host is empty or starts with "_"
-        if self.settings.host.is_empty() || self.settings.host.starts_with('_') {
-            #[cfg(feature = "mdns")]
-            {
-                tracing::info!(service = %self.settings.host, "Browsing mDNS...");
-                let endpoint =
-                    crate::discovery::discover(MDNS_TIMEOUT, &self.settings.mdns_service_type)
-                        .await?;
-                self.settings.host = endpoint.host;
-                self.settings.port = endpoint.port;
-                self.connection = SnapConnection::new(
-                    &self.settings.scheme,
-                    &self.settings.host,
-                    self.settings.port,
-                )?;
-            }
-            #[cfg(not(feature = "mdns"))]
-            bail!("mDNS not available — specify server URL");
+        if self.settings.host.is_empty() {
+            bail!("No server host configured — specify a server address");
         }
 
         self.connection.connect().await?;

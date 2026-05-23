@@ -25,7 +25,6 @@ symphonia = { workspace = true }
 opus-decoder = "0.1"
 
 # Optional
-mdns-sd = { workspace = true, optional = true }
 tokio-tungstenite = { workspace = true, optional = true }
 tokio-rustls = { workspace = true, optional = true }
 rustls = { workspace = true, optional = true }
@@ -35,8 +34,7 @@ rubato = { workspace = true, optional = true }
 lz4_flex = { version = "0.13.0", optional = true }
 
 [features]
-default = ["mdns"]
-mdns = ["dep:mdns-sd"]
+default = []
 websocket = ["dep:tokio-tungstenite", "dep:futures-util"]
 tls = ["websocket", "dep:tokio-rustls", "dep:rustls", "dep:rustls-native-certs"]
 resampler = ["dep:rubato"]

@@ -24,12 +24,13 @@ anyhow = { workspace = true }
 base64 = { workspace = true }
 libc = { workspace = true }
 cpal = "0.15"
+mdns-sd = { workspace = true, optional = true }
 
 
 
 [features]
 default = ["mdns", "f32lz4"]
-mdns = ["snapcast-client/mdns"]
+mdns = ["dep:mdns-sd"]
 f32lz4 = ["snapcast-client/f32lz4"]
 websocket = ["snapcast-client/websocket"]
 tls = ["snapcast-client/tls"]

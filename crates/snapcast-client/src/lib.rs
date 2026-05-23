@@ -51,9 +51,6 @@ pub(crate) mod double_buffer;
 pub mod stream;
 pub mod time_provider;
 
-#[cfg(feature = "mdns")]
-pub mod discovery;
-
 #[cfg(feature = "resampler")]
 pub mod resampler;
 
@@ -178,8 +175,6 @@ pub struct ClientConfig {
     pub host_id: String,
     /// Additional latency in milliseconds (subtracted from buffer).
     pub latency: i32,
-    /// mDNS service type. Default: "_snapcast._tcp.local.".
-    pub mdns_service_type: String,
     /// Client name sent in Hello. Default: "Snapclient".
     pub client_name: String,
     /// Pre-shared key for f32lz4 decryption. `None` = auto-detect from env SNAPCAST_PSK.
@@ -205,7 +200,6 @@ impl Default for ClientConfig {
             instance: 1,
             host_id: String::new(),
             latency: 0,
-            mdns_service_type: snapcast_proto::DEFAULT_MDNS_SERVICE_TYPE.into(),
             client_name: snapcast_proto::DEFAULT_CLIENT_NAME.into(),
             #[cfg(feature = "encryption")]
             encryption_psk: None,

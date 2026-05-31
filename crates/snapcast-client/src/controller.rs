@@ -196,7 +196,18 @@ impl Controller {
                             return Ok(());
                         }
                         Some(ClientCommand::SetVolume { volume, muted }) => {
-                            tracing::debug!(volume, muted, "Volume change (applied by binary)");
+                            tracing::debug!(volume, muted, "Sending volume change to server");
+                            self.connection
+                                .send(
+                                    MessageType::ClientInfo,
+                                    &MessagePayload::ClientInfo(
+                                        snapcast_proto::message::client_info::ClientInfo {
+                                            volume,
+                                            muted,
+                                        },
+                                    ),
+                                )
+                                .await?;
                         }
                         #[cfg(feature = "custom-protocol")]
                         Some(ClientCommand::SendCustom(msg)) => {

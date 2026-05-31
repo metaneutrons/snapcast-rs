@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.16.1](https://github.com/metaneutrons/snapcast-rs/compare/v0.16.0...v0.16.1) (2026-05-31)
+
+
+### Bug Fixes
+
+* **client:** send ClientInfo to server on volume/mute changes ([2bd0d12](https://github.com/metaneutrons/snapcast-rs/commit/2bd0d12b910dc74e89d0763845f2a0aa98aba4dc))
+
 ## [0.16.0](https://github.com/metaneutrons/snapcast-rs/compare/v0.15.0...v0.16.0) (2026-05-23)
 
 

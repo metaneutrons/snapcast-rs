@@ -52,22 +52,17 @@ pub struct Hello {
 impl Hello {
     /// Wire size: u32 length prefix + JSON bytes.
     pub fn wire_size(&self) -> u32 {
-        let json = serde_json::to_string(self).unwrap_or_default();
-        wire::string_wire_size(&json)
+        wire::json_wire_size(self)
     }
 
     /// Deserialize a Hello message from a reader.
     pub fn read_from<R: Read>(r: &mut R) -> Result<Self, ProtoError> {
-        let json_str = wire::read_string(r)?;
-        serde_json::from_str(&json_str)
-            .map_err(|e| ProtoError::Io(std::io::Error::new(std::io::ErrorKind::InvalidData, e)))
+        wire::read_json(r)
     }
 
     /// Serialize a Hello message to a writer.
     pub fn write_to<W: Write>(&self, w: &mut W) -> Result<(), ProtoError> {
-        let json_str = serde_json::to_string(self)
-            .map_err(|e| ProtoError::Io(std::io::Error::new(std::io::ErrorKind::InvalidData, e)))?;
-        wire::write_string(w, &json_str)
+        wire::write_json(w, self)
     }
 }
 
@@ -137,5 +132,18 @@ mod tests {
         assert_eq!(hello.mac, "aa:bb:cc:dd:ee:ff");
         assert_eq!(hello.snap_stream_protocol_version, 2);
         assert!(hello.auth.is_none());
+    }
+
+    #[test]
+    fn malformed_json_is_a_json_error_not_io() {
+        // A length-prefixed but non-JSON payload must surface as ProtoError::Json,
+        // not be mislabeled as an I/O error.
+        let mut buf = Vec::new();
+        wire::write_string(&mut buf, "{ this is not valid json").unwrap();
+        let mut cursor = std::io::Cursor::new(&buf);
+        match Hello::read_from(&mut cursor) {
+            Err(ProtoError::Json(_)) => {}
+            other => panic!("expected ProtoError::Json, got {other:?}"),
+        }
     }
 }

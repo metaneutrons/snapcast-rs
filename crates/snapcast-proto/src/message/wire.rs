@@ -3,6 +3,8 @@
 use std::io::{Read, Write};
 
 use byteorder::{LittleEndian, ReadBytesExt, WriteBytesExt};
+use serde::Serialize;
+use serde::de::DeserializeOwned;
 
 use crate::DEFAULT_MAX_PAYLOAD_SIZE;
 use crate::message::base::ProtoError;
@@ -56,6 +58,32 @@ pub fn write_bytes<W: Write>(w: &mut W, data: &[u8]) -> Result<(), ProtoError> {
 /// Size of a length-prefixed string on the wire.
 pub fn string_wire_size(s: &str) -> u32 {
     4 + s.len() as u32
+}
+
+/// Read a length-prefixed JSON payload (u32 LE length + UTF-8 JSON).
+///
+/// Shared by the JSON-bodied messages (Hello, ServerSettings, ClientInfo) so
+/// the read/parse path lives in one place. A serde failure surfaces as
+/// [`ProtoError::Json`], not mislabeled as an I/O error.
+pub fn read_json<R: Read, T: DeserializeOwned>(r: &mut R) -> Result<T, ProtoError> {
+    let json = read_string(r)?;
+    Ok(serde_json::from_str(&json)?)
+}
+
+/// Write a value as a length-prefixed JSON payload (u32 LE length + UTF-8 JSON).
+pub fn write_json<W: Write, T: Serialize>(w: &mut W, value: &T) -> Result<(), ProtoError> {
+    let json = serde_json::to_string(value)?;
+    write_string(w, &json)
+}
+
+/// Wire size of a value serialized as a length-prefixed JSON payload.
+///
+/// The JSON-bodied payloads are plain structs whose serialization cannot fail,
+/// so a serialization error here would be a logic bug — panic loudly rather
+/// than silently returning a wrong on-wire size.
+pub fn json_wire_size<T: Serialize>(value: &T) -> u32 {
+    let json = serde_json::to_string(value).expect("JSON payload serialization is infallible");
+    string_wire_size(&json)
 }
 
 /// Size of a length-prefixed byte array on the wire.

@@ -26,22 +26,17 @@ pub struct ServerSettings {
 impl ServerSettings {
     /// Wire size of the JSON payload including length prefix.
     pub fn wire_size(&self) -> u32 {
-        let json = serde_json::to_string(self).unwrap_or_default();
-        wire::string_wire_size(&json)
+        wire::json_wire_size(self)
     }
 
     /// Deserialize server settings from a reader.
     pub fn read_from<R: Read>(r: &mut R) -> Result<Self, ProtoError> {
-        let json_str = wire::read_string(r)?;
-        serde_json::from_str(&json_str)
-            .map_err(|e| ProtoError::Io(std::io::Error::new(std::io::ErrorKind::InvalidData, e)))
+        wire::read_json(r)
     }
 
     /// Serialize server settings to a writer.
     pub fn write_to<W: Write>(&self, w: &mut W) -> Result<(), ProtoError> {
-        let json_str = serde_json::to_string(self)
-            .map_err(|e| ProtoError::Io(std::io::Error::new(std::io::ErrorKind::InvalidData, e)))?;
-        wire::write_string(w, &json_str)
+        wire::write_json(w, self)
     }
 }
 

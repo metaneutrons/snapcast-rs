@@ -17,6 +17,17 @@ pub enum ProtoError {
     /// Received an unrecognized message type value.
     #[error("unknown message type: {0}")]
     UnknownMessageType(u16),
+    /// A length-prefixed field declared a size larger than the protocol allows.
+    ///
+    /// Guards against an untrusted length prefix triggering an unbounded
+    /// allocation (DoS / OOM) before the payload bytes are ever read.
+    #[error("payload too large: {len} bytes exceeds maximum of {max}")]
+    PayloadTooLarge {
+        /// The declared length from the wire.
+        len: usize,
+        /// The maximum accepted length ([`crate::DEFAULT_MAX_PAYLOAD_SIZE`]).
+        max: usize,
+    },
 }
 
 /// Base message header (26 bytes).

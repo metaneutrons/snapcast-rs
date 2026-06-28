@@ -1,4 +1,6 @@
-#![forbid(unsafe_code)]
+// `deny` (not `forbid`) so the single, audited monotonic-clock FFI in `time`
+// can opt in via `#[allow(unsafe_code)]`. All other code remains unsafe-free.
+#![deny(unsafe_code)]
 #![warn(clippy::redundant_closure)]
 #![warn(clippy::implicit_clone)]
 #![warn(clippy::uninlined_format_args)]
@@ -21,6 +23,7 @@
 pub mod message;
 pub mod sample_format;
 pub mod status;
+pub mod time;
 pub mod types;
 
 #[cfg(feature = "custom-protocol")]

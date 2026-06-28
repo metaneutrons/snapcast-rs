@@ -127,6 +127,10 @@ async fn ws_handler(ws: WebSocketUpgrade, State(app): State<AppState>) -> impl I
 
 async fn handle_ws(mut socket: WebSocket, app: AppState) {
     let mut notify_rx = app.notify_tx.subscribe();
+    // Per-connection auth state, mirroring the TCP control path. Without this
+    // the WebSocket endpoint dispatched every request unauthenticated even when
+    // auth was enabled (HTTP POST and TCP both gated — WS was a full bypass).
+    let mut authenticated = !app.auth_config.enabled;
 
     loop {
         tokio::select! {
@@ -143,8 +147,26 @@ async fn handle_ws(mut socket: WebSocket, app: AppState) {
                     continue;
                 };
 
+                // Auth gate: until authenticated, only Server.GetToken and
+                // Server.Authenticate are permitted (same policy as TCP control).
+                let method = request["method"].as_str().unwrap_or("");
+                if !authenticated
+                    && method != "Server.GetToken"
+                    && method != "Server.Authenticate"
+                {
+                    let err = serde_json::json!({
+                        "jsonrpc": "2.0", "id": request["id"],
+                        "error": {"code": -32000, "message": "Unauthorized — call Server.Authenticate first"}
+                    });
+                    if socket.send(Message::Text(err.to_string().into())).await.is_err() { break }
+                    continue;
+                }
+
                 match jsonrpc::handle_request(&request, &app.auth_config, &app.cmd_tx).await {
                     RpcResult::Response { response, notification } => {
+                        if method == "Server.Authenticate" && response["result"]["ok"] == true {
+                            authenticated = true;
+                        }
                         if socket.send(Message::Text(response.to_string().into())).await.is_err() { break }
                         if let Some(n) = notification {
                             let _ = app.notify_tx.send(n);

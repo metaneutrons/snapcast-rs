@@ -4,10 +4,14 @@ use ini::Ini;
 
 use snapcast_server::ServerConfig;
 
+use crate::auth::AuthConfig;
+
 /// Binary-specific configuration (not part of the library).
 pub(crate) struct BinaryConfig {
     /// Library server config.
     pub server: ServerConfig,
+    /// Control-API authentication (disabled with no secret by default).
+    pub auth: AuthConfig,
     /// TCP bind address for JSON-RPC control. Default: 0.0.0.0.
     pub control_bind_address: String,
     /// TCP port for JSON-RPC control. Default: 1705.
@@ -26,6 +30,7 @@ impl Default for BinaryConfig {
     fn default() -> Self {
         Self {
             server: ServerConfig::default(),
+            auth: AuthConfig::default(),
             control_bind_address: snapcast_proto::DEFAULT_BIND_ADDRESS.into(),
             control_port: snapcast_proto::DEFAULT_CONTROL_PORT,
             http_bind_address: snapcast_proto::DEFAULT_BIND_ADDRESS.into(),
@@ -75,6 +80,11 @@ pub(crate) fn parse_config_file(path: &str) -> BinaryConfig {
         get_bind_address(s, |v| config.control_bind_address = v.to_string());
     }
 
+    if let Some(s) = ini.section(Some("auth")) {
+        get_bool(s, "enabled", |v| config.auth.enabled = v);
+        get_str(s, "secret", |v| config.auth.secret = v.to_string());
+    }
+
     if let Some(s) = ini.section(Some("tcp-streaming")) {
         get_u16(s, "port", |v| config.server.stream_port = v);
         get_bind_address(s, |v| config.server.stream_bind_address = v.to_string());
@@ -119,6 +129,16 @@ fn get_u32<F: FnOnce(u32)>(section: &ini::Properties, key: &str, f: F) {
     }
 }
 
+fn get_bool<F: FnOnce(bool)>(section: &ini::Properties, key: &str, f: F) {
+    if let Some(v) = section.get(key) {
+        match v.trim().to_ascii_lowercase().as_str() {
+            "true" | "yes" | "on" | "1" => f(true),
+            "false" | "no" | "off" | "0" => f(false),
+            _ => {}
+        }
+    }
+}
+
 fn get_bind_address<F: FnMut(&str)>(section: &ini::Properties, mut f: F) {
     if let Some(v) = section
         .get("bind_to_address")
@@ -141,6 +161,10 @@ pub(crate) struct CliOverrides {
     pub codec: Option<String>,
     pub sampleformat: Option<String>,
     pub sources: Vec<String>,
+    /// Enable control-API auth (CLI can only turn it on; config sets both).
+    pub auth_enabled: bool,
+    /// Override the auth secret.
+    pub auth_secret: Option<String>,
     #[cfg(feature = "encryption")]
     pub encryption_psk: Option<String>,
     #[cfg(feature = "mdns")]
@@ -183,6 +207,12 @@ pub(crate) fn merge_cli(mut config: BinaryConfig, cli: CliOverrides) -> BinaryCo
     }
     if !cli.sources.is_empty() {
         config.sources = cli.sources;
+    }
+    if cli.auth_enabled {
+        config.auth.enabled = true;
+    }
+    if let Some(v) = cli.auth_secret {
+        config.auth.secret = v;
     }
     #[cfg(feature = "encryption")]
     if let Some(v) = cli.encryption_psk {
@@ -245,6 +275,19 @@ mod tests {
     fn missing_file_returns_defaults() {
         let config = parse_config_file("/nonexistent/snapserver.conf");
         assert_eq!(config.server.stream_port, 1704);
+        // No built-in secret, auth off by default.
+        assert!(!config.auth.enabled);
+        assert!(config.auth.secret.is_empty());
+    }
+
+    #[test]
+    fn parse_auth_section() {
+        let mut tmp = tempfile::NamedTempFile::new().unwrap();
+        writeln!(tmp, "[auth]\nenabled = true\nsecret = my-strong-secret").unwrap();
+        let config = parse_config_file(tmp.path().to_str().unwrap());
+        assert!(config.auth.enabled);
+        assert_eq!(config.auth.secret, "my-strong-secret");
+        assert!(config.auth.validate().is_ok());
     }
 
     #[test]
@@ -264,6 +307,8 @@ mod tests {
                 codec: None,
                 sampleformat: None,
                 sources: vec![],
+                auth_enabled: false,
+                auth_secret: None,
                 #[cfg(feature = "mdns")]
                 no_mdns: false,
                 #[cfg(feature = "mdns")]

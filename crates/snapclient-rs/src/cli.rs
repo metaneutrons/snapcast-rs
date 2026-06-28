@@ -208,7 +208,7 @@ fn parse_url(url: &str) -> Result<ServerSettings> {
         rest
     };
 
-    let (host, port) = parse_host_port(rest, default_port(&settings.scheme))?;
+    let (host, port) = parse_host_port(rest, snapcast_proto::DEFAULT_STREAM_PORT)?;
     settings.host = host;
     settings.port = port;
 
@@ -261,13 +261,6 @@ fn parse_port(port_str: &str) -> Result<u16> {
     port_str
         .parse()
         .with_context(|| format!("invalid port: {port_str}"))
-}
-
-fn default_port(scheme: &str) -> u16 {
-    match scheme {
-        snapcast_proto::SCHEME_TCP => snapcast_proto::DEFAULT_STREAM_PORT,
-        _ => snapcast_proto::DEFAULT_STREAM_PORT,
-    }
 }
 
 fn base64_encode_credentials(user: &str, password: &str) -> String {

@@ -184,7 +184,6 @@ pub(crate) mod encoder;
 pub(crate) mod session;
 pub(crate) mod state;
 pub mod status;
-pub(crate) mod stream;
 pub mod time;
 
 /// Settings update pushed to a streaming client via binary protocol.

@@ -20,9 +20,6 @@ pub enum ProtoError {
     /// error, not an I/O failure, and callers may want to treat them differently.
     #[error("JSON payload error: {0}")]
     Json(#[from] serde_json::Error),
-    /// Received an unrecognized message type value.
-    #[error("unknown message type: {0}")]
-    UnknownMessageType(u16),
     /// A length-prefixed field declared a size larger than the protocol allows.
     ///
     /// Guards against an untrusted length prefix triggering an unbounded

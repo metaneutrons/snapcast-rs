@@ -1,4 +1,7 @@
 //! WebSocket connection to a snapserver.
+//!
+//! Hosts the frame send/receive shared with the WSS (TLS) transport — both use
+//! tungstenite's `MaybeTlsStream`, so only connection establishment differs.
 
 use anyhow::{Context, Result};
 use futures_util::{SinkExt, StreamExt};
@@ -9,7 +12,65 @@ use snapcast_proto::types::Timeval;
 use tokio_tungstenite::tungstenite::Message;
 use tokio_tungstenite::{MaybeTlsStream, WebSocketStream};
 
-type WsStream = WebSocketStream<MaybeTlsStream<tokio::net::TcpStream>>;
+/// Shared WebSocket transport stream type.
+///
+/// tungstenite's `MaybeTlsStream` wraps both plain and TLS sockets, so the
+/// plain-WS and WSS transports hold the same stream type and share frame I/O.
+pub(super) type WsStream = WebSocketStream<MaybeTlsStream<tokio::net::TcpStream>>;
+
+/// Send one binary Snapcast frame over a (plain or TLS) WebSocket stream.
+pub(super) async fn send_frame(
+    ws: &mut WsStream,
+    msg_type: MessageType,
+    payload: &MessagePayload,
+) -> Result<()> {
+    let mut base = BaseMessage {
+        msg_type,
+        id: 0,
+        refers_to: 0,
+        sent: Timeval::default(),
+        received: Timeval::default(),
+        size: 0,
+    };
+    super::stamp_sent(&mut base);
+    let frame =
+        factory::serialize(&mut base, payload).map_err(|e| anyhow::anyhow!("serialize: {e}"))?;
+    ws.send(Message::Binary(frame.into())).await?;
+    Ok(())
+}
+
+/// Receive one binary Snapcast frame from a (plain or TLS) WebSocket stream.
+pub(super) async fn recv_frame(ws: &mut WsStream) -> Result<TypedMessage> {
+    loop {
+        let msg = ws
+            .next()
+            .await
+            .context("WebSocket stream ended")?
+            .context("WebSocket error")?;
+        match msg {
+            Message::Binary(data) => {
+                if data.len() < BaseMessage::HEADER_SIZE {
+                    continue;
+                }
+                let mut base = BaseMessage::read_from(&mut &data[..BaseMessage::HEADER_SIZE])
+                    .map_err(|e| anyhow::anyhow!("parse header: {e}"))?;
+                base.received = super::steady_time_of_day();
+                super::ensure_payload_size(base.size)?;
+                let payload = &data[BaseMessage::HEADER_SIZE..];
+                anyhow::ensure!(
+                    payload.len() == base.size as usize,
+                    "payload size mismatch: header={}, actual={}",
+                    base.size,
+                    payload.len()
+                );
+                return factory::deserialize(base, payload)
+                    .map_err(|e| anyhow::anyhow!("deserialize: {e}"));
+            }
+            Message::Close(_) => anyhow::bail!("WebSocket closed"),
+            _ => continue, // skip text/ping/pong
+        }
+    }
+}
 
 /// WebSocket transport for Snapcast binary frames.
 pub struct WsConnection {
@@ -45,53 +106,16 @@ impl WsConnection {
 
     /// Send one binary Snapcast frame.
     pub async fn send(&mut self, msg_type: MessageType, payload: &MessagePayload) -> Result<()> {
-        let ws = self.ws.as_mut().context("not connected")?;
-        let mut base = BaseMessage {
+        send_frame(
+            self.ws.as_mut().context("not connected")?,
             msg_type,
-            id: 0,
-            refers_to: 0,
-            sent: Timeval::default(),
-            received: Timeval::default(),
-            size: 0,
-        };
-        super::stamp_sent(&mut base);
-        let frame = factory::serialize(&mut base, payload)
-            .map_err(|e| anyhow::anyhow!("serialize: {e}"))?;
-        ws.send(Message::Binary(frame.into())).await?;
-        Ok(())
+            payload,
+        )
+        .await
     }
 
     /// Receive one binary Snapcast frame.
     pub async fn recv(&mut self) -> Result<TypedMessage> {
-        let ws = self.ws.as_mut().context("not connected")?;
-        loop {
-            let msg = ws
-                .next()
-                .await
-                .context("WebSocket stream ended")?
-                .context("WebSocket error")?;
-            match msg {
-                Message::Binary(data) => {
-                    if data.len() < BaseMessage::HEADER_SIZE {
-                        continue;
-                    }
-                    let mut base = BaseMessage::read_from(&mut &data[..BaseMessage::HEADER_SIZE])
-                        .map_err(|e| anyhow::anyhow!("parse header: {e}"))?;
-                    base.received = super::steady_time_of_day();
-                    super::ensure_payload_size(base.size)?;
-                    let payload = &data[BaseMessage::HEADER_SIZE..];
-                    anyhow::ensure!(
-                        payload.len() == base.size as usize,
-                        "payload size mismatch: header={}, actual={}",
-                        base.size,
-                        payload.len()
-                    );
-                    return factory::deserialize(base, payload)
-                        .map_err(|e| anyhow::anyhow!("deserialize: {e}"));
-                }
-                Message::Close(_) => anyhow::bail!("WebSocket closed"),
-                _ => continue, // skip text/ping/pong
-            }
-        }
+        recv_frame(self.ws.as_mut().context("not connected")?).await
     }
 }

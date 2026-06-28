@@ -14,6 +14,12 @@ pub enum ProtoError {
     /// An I/O error occurred during read or write.
     #[error("I/O error: {0}")]
     Io(#[from] io::Error),
+    /// A JSON payload failed to (de)serialize.
+    ///
+    /// Distinct from [`ProtoError::Io`]: a serde failure is a malformed-payload
+    /// error, not an I/O failure, and callers may want to treat them differently.
+    #[error("JSON payload error: {0}")]
+    Json(#[from] serde_json::Error),
     /// Received an unrecognized message type value.
     #[error("unknown message type: {0}")]
     UnknownMessageType(u16),

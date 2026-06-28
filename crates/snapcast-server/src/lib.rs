@@ -178,6 +178,7 @@ pub struct WireChunkData {
 }
 
 pub mod auth;
+pub(crate) mod command;
 #[cfg(feature = "encryption")]
 pub(crate) mod crypto;
 pub(crate) mod encoder;
@@ -736,13 +737,12 @@ impl SnapServer {
             }
         });
 
-        let state_file = self.config.state_file.clone();
-        let save_state = |s: &state::ServerState| {
-            if let Some(ref path) = state_file {
-                let _ = s
-                    .save(path)
-                    .map_err(|e| tracing::warn!(error = %e, "Failed to save state"));
-            }
+        let dispatcher = command::Dispatcher {
+            shared_state: Arc::clone(&shared_state),
+            session_srv: Arc::clone(&session_srv),
+            event_tx: event_tx.clone(),
+            state_file: self.config.state_file.clone(),
+            buffer_ms: self.config.buffer_ms as i32,
         };
 
         // Main loop
@@ -755,138 +755,7 @@ impl SnapServer {
                             session_handle.abort();
                             return Ok(());
                         }
-                        Some(ServerCommand::SetClientVolume { client_id, volume, muted }) => {
-                            let mut s = shared_state.lock().await;
-                            if let Some(c) = s.clients.get_mut(&client_id) {
-                                c.config.volume.percent = volume;
-                                c.config.volume.muted = muted;
-                            }
-                            let latency = s.clients.get(&client_id).map(|c| c.config.latency).unwrap_or(0);
-                            save_state(&s);
-                            drop(s);
-                            session_srv.push_settings(ClientSettingsUpdate {
-                                client_id: client_id.clone(),
-                                buffer_ms: self.config.buffer_ms as i32,
-                                latency, volume, muted,
-                            }).await;
-                            let _ = event_tx.try_send(ServerEvent::ClientVolumeChanged { client_id: client_id.clone(), volume, muted });
-                            session_srv.update_routing_for_client(&client_id).await;
-                        }
-                        Some(ServerCommand::SetClientLatency { client_id, latency }) => {
-                            let mut settings_update = None;
-                            let mut s = shared_state.lock().await;
-                            if let Some(c) = s.clients.get_mut(&client_id) {
-                                c.config.latency = latency;
-                                settings_update = Some(ClientSettingsUpdate {
-                                    client_id: client_id.clone(),
-                                    buffer_ms: self.config.buffer_ms as i32,
-                                    latency,
-                                    volume: c.config.volume.percent,
-                                    muted: c.config.volume.muted,
-                                });
-                            }
-                            save_state(&s);
-                            drop(s);
-                            if let Some(update) = settings_update {
-                                session_srv.push_settings(update).await;
-                            }
-                            let _ = event_tx.try_send(ServerEvent::ClientLatencyChanged { client_id, latency });
-                        }
-                        Some(ServerCommand::SetClientName { client_id, name }) => {
-                            let mut s = shared_state.lock().await;
-                            if let Some(c) = s.clients.get_mut(&client_id) {
-                                c.config.name = name.clone();
-                            }
-                            save_state(&s);
-                            drop(s);
-                            let _ = event_tx.try_send(ServerEvent::ClientNameChanged { client_id, name });
-                        }
-                        Some(ServerCommand::SetGroupStream { group_id, stream_id }) => {
-                            let mut s = shared_state.lock().await;
-                            s.set_group_stream(&group_id, &stream_id);
-                            save_state(&s);
-                            drop(s);
-                            let _ = event_tx.try_send(ServerEvent::GroupStreamChanged { group_id: group_id.clone(), stream_id });
-                            session_srv.update_routing_for_group(&group_id).await;
-                        }
-                        Some(ServerCommand::SetGroupMute { group_id, muted }) => {
-                            let mut s = shared_state.lock().await;
-                            if let Some(g) = s.groups.iter_mut().find(|g| g.id == group_id) {
-                                g.muted = muted;
-                            }
-                            save_state(&s);
-                            drop(s);
-                            let _ = event_tx.try_send(ServerEvent::GroupMuteChanged { group_id: group_id.clone(), muted });
-                            session_srv.update_routing_for_group(&group_id).await;
-                        }
-                        Some(ServerCommand::SetGroupName { group_id, name }) => {
-                            let mut s = shared_state.lock().await;
-                            if let Some(g) = s.groups.iter_mut().find(|g| g.id == group_id) {
-                                g.name = name.clone();
-                            }
-                            save_state(&s);
-                            drop(s);
-                            let _ = event_tx.try_send(ServerEvent::GroupNameChanged { group_id, name });
-                        }
-                        Some(ServerCommand::SetGroupClients { group_id, clients }) => {
-                            let mut s = shared_state.lock().await;
-                            s.set_group_clients(&group_id, &clients);
-                            save_state(&s);
-                            drop(s);
-                            // Structural change — mirrors Server.OnUpdate in C++ snapserver
-                            let _ = event_tx.try_send(ServerEvent::ServerUpdated);
-                            session_srv.update_routing_all().await;
-                        }
-                        Some(ServerCommand::DeleteClient { client_id }) => {
-                            let mut s = shared_state.lock().await;
-                            s.remove_client_from_groups(&client_id);
-                            s.clients.remove(&client_id);
-                            save_state(&s);
-                            drop(s);
-                            let _ = event_tx.try_send(ServerEvent::ServerUpdated);
-                            session_srv.update_routing_all().await;
-                        }
-                        Some(ServerCommand::SetStreamMeta { stream_id, metadata }) => {
-                            let mut s = shared_state.lock().await;
-                            if let Some(stream) = s.streams.iter_mut().find(|st| st.id == stream_id) {
-                                stream.properties = metadata.clone();
-                            }
-                            drop(s);
-                            let _ = event_tx.try_send(ServerEvent::StreamMetaChanged { stream_id, metadata });
-                        }
-                        Some(ServerCommand::AddStream { uri, response_tx }) => {
-                            tracing::warn!(uri, "Dynamic stream addition requires application-owned stream orchestration");
-                            let _ = response_tx.send(Err(
-                                "dynamic Stream.AddStream is not supported by the embeddable server after run(); create streams before run()".into(),
-                            ));
-                        }
-                        Some(ServerCommand::RemoveStream { stream_id }) => {
-                            let mut s = shared_state.lock().await;
-                            s.streams.retain(|st| st.id != stream_id);
-                            // Clear stream_id on groups that referenced this stream
-                            for g in &mut s.groups {
-                                if g.stream_id == stream_id {
-                                    g.stream_id.clear();
-                                }
-                            }
-                            save_state(&s);
-                            drop(s);
-                            let _ = event_tx.try_send(ServerEvent::ServerUpdated);
-                            session_srv.update_routing_all().await;
-                        }
-                        Some(ServerCommand::StreamControl { stream_id, command, params }) => {
-                            tracing::debug!(stream_id, command, ?params, "Stream control forwarded");
-                            // Forward to embedder via event — the library doesn't own stream readers
-                            let _ = event_tx.try_send(ServerEvent::StreamControl { stream_id, command, params });
-                        }
-                        Some(ServerCommand::GetStatus { response_tx }) => {
-                            let s = shared_state.lock().await;
-                            let _ = response_tx.send(s.to_status());
-                        }
-                        #[cfg(feature = "custom-protocol")]
-                        Some(ServerCommand::SendToClient { client_id, message }) => {
-                            session_srv.send_custom(&client_id, message.type_id, message.payload).await;
-                        }
+                        Some(cmd) => dispatcher.dispatch(cmd).await,
                     }
                 }
             }

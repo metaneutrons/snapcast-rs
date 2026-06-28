@@ -1,23 +1,15 @@
 use snapcast_client::ClientEvent;
 use snapcast_server::{AudioData, AudioFrame, ServerCommand, ServerEvent};
-use snapcast_tests::{connect_client, expect_event, free_port};
+use snapcast_tests::{connect_client, expect_event, spawn_serving};
 use tokio::sync::mpsc;
 
 /// Start a server with two streams.
 async fn start_two_stream_server() -> TwoStreamServer {
-    let port = free_port();
-    let config = snapcast_server::ServerConfig {
-        stream_port: port,
-        ..Default::default()
-    };
-    let (mut server, events) = snapcast_server::SnapServer::new(config);
+    let (mut server, events) = snapcast_server::SnapServer::new(Default::default());
     let stream_a = server.add_stream("stream_a");
     let stream_b = server.add_stream("stream_b");
     let cmd = server.command_sender();
-    tokio::spawn(async move {
-        server.run().await.ok();
-    });
-    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    let port = spawn_serving(server).await;
     TwoStreamServer {
         events,
         stream_a,

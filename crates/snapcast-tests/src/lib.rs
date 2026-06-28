@@ -1,18 +1,21 @@
 //! Integration test helpers.
 
-use std::net::TcpListener;
-
 use snapcast_client::{ClientConfig, ClientEvent, SnapClient};
 use snapcast_server::{ServerConfig, ServerEvent, SnapServer};
 use tokio::sync::mpsc;
 
-/// Find a free TCP port on localhost.
-pub fn free_port() -> u16 {
-    TcpListener::bind("127.0.0.1:0")
-        .unwrap()
-        .local_addr()
-        .unwrap()
-        .port()
+/// Bind an ephemeral 127.0.0.1 port, spawn `server.serve()` on it, and return
+/// the actual bound port. The library opens no port itself, so tests bind here;
+/// reading the bound port avoids a bind/connect race.
+pub async fn spawn_serving(mut server: SnapServer) -> u16 {
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let port = listener.local_addr().unwrap().port();
+    tokio::spawn(async move {
+        server.serve(listener).await.ok();
+    });
+    // Give the accept loop a moment to start.
+    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    port
 }
 
 /// Server handle with event receiver and audio sender.
@@ -23,21 +26,12 @@ pub struct TestServer {
     pub port: u16,
 }
 
-/// Start a server on a random port. Returns handle after server is listening.
+/// Start a default server on a random port. Returns the handle once serving.
 pub async fn start_server() -> TestServer {
-    let port = free_port();
-    let config = ServerConfig {
-        stream_port: port,
-        ..ServerConfig::default()
-    };
-    let (mut server, events) = SnapServer::new(config);
+    let (mut server, events) = SnapServer::new(ServerConfig::default());
     let audio_tx = server.add_stream("default");
     let cmd = server.command_sender();
-    tokio::spawn(async move {
-        server.run().await.ok();
-    });
-    // Give the listener time to bind
-    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    let port = spawn_serving(server).await;
     TestServer {
         events,
         audio_tx,

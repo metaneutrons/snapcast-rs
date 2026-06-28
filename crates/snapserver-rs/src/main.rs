@@ -242,13 +242,13 @@ fn main() -> anyhow::Result<()> {
             let regtype = snapcast_proto::DEFAULT_MDNS_SERVICE_TYPE
                 .trim_end_matches("local.")
                 .trim_end_matches('.');
-            match astro_dnssd::DNSServiceBuilder::new(regtype, server.config().stream_port)
+            match astro_dnssd::DNSServiceBuilder::new(regtype, server_config.stream_port)
                 .with_name(name)
                 .register()
             {
                 Ok(svc) => {
                     tracing::info!(
-                        port = server.config().stream_port,
+                        port = server_config.stream_port,
                         service_type = regtype,
                         name,
                         "mDNS: advertising"
@@ -406,7 +406,14 @@ fn main() -> anyhow::Result<()> {
             }
         });
 
-        server.run().await
+        // The library owns no port; the binary binds the audio listener and
+        // hands it to serve().
+        let listener = tokio::net::TcpListener::bind((
+            server_config.stream_bind_address.as_str(),
+            server_config.stream_port,
+        ))
+        .await?;
+        server.serve(listener).await
     })
 }
 

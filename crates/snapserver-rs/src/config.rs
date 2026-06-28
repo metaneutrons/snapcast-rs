@@ -20,6 +20,10 @@ pub(crate) struct BinaryConfig {
     pub http_bind_address: String,
     /// HTTP port for JSON-RPC + Snapweb. Default: 1780.
     pub http_port: u16,
+    /// TCP bind address for the binary audio protocol. Default: 0.0.0.0.
+    pub stream_bind_address: String,
+    /// TCP port for the binary audio protocol. Default: 1704.
+    pub stream_port: u16,
     /// Path to Snapweb static files (None = disabled).
     pub doc_root: Option<String>,
     /// Stream source URIs.
@@ -35,6 +39,8 @@ impl Default for BinaryConfig {
             control_port: snapcast_proto::DEFAULT_CONTROL_PORT,
             http_bind_address: snapcast_proto::DEFAULT_BIND_ADDRESS.into(),
             http_port: snapcast_proto::DEFAULT_HTTP_PORT,
+            stream_bind_address: snapcast_proto::DEFAULT_BIND_ADDRESS.into(),
+            stream_port: snapcast_proto::DEFAULT_STREAM_PORT,
             doc_root: None,
             sources: default_sources(),
         }
@@ -86,8 +92,8 @@ pub(crate) fn parse_config_file(path: &str) -> BinaryConfig {
     }
 
     if let Some(s) = ini.section(Some("tcp-streaming")) {
-        get_u16(s, "port", |v| config.server.stream_port = v);
-        get_bind_address(s, |v| config.server.stream_bind_address = v.to_string());
+        get_u16(s, "port", |v| config.stream_port = v);
+        get_bind_address(s, |v| config.stream_bind_address = v.to_string());
     }
 
     if let Some(s) = ini.section(Some("stream")) {
@@ -176,10 +182,10 @@ pub(crate) struct CliOverrides {
 /// Merge CLI overrides into config.
 pub(crate) fn merge_cli(mut config: BinaryConfig, cli: CliOverrides) -> BinaryConfig {
     if let Some(v) = cli.stream_port {
-        config.server.stream_port = v;
+        config.stream_port = v;
     }
     if let Some(v) = cli.stream_bind_address {
-        config.server.stream_bind_address = v;
+        config.stream_bind_address = v;
     }
     if let Some(v) = cli.control_port {
         config.control_port = v;
@@ -267,14 +273,14 @@ mod tests {
         assert_eq!(config.http_port, 8080);
         assert_eq!(config.doc_root, Some("/var/www".into()));
         assert_eq!(config.control_bind_address, "127.0.0.1");
-        assert_eq!(config.server.stream_bind_address, "127.0.0.1");
-        assert_eq!(config.server.stream_port, 2704);
+        assert_eq!(config.stream_bind_address, "127.0.0.1");
+        assert_eq!(config.stream_port, 2704);
     }
 
     #[test]
     fn missing_file_returns_defaults() {
         let config = parse_config_file("/nonexistent/snapserver.conf");
-        assert_eq!(config.server.stream_port, 1704);
+        assert_eq!(config.stream_port, 1704);
         // No built-in secret, auth off by default.
         assert!(!config.auth.enabled);
         assert!(config.auth.secret.is_empty());
@@ -317,8 +323,8 @@ mod tests {
                 encryption_psk: None,
             },
         );
-        assert_eq!(merged.server.stream_bind_address, "::1");
-        assert_eq!(merged.server.stream_port, 9704);
+        assert_eq!(merged.stream_bind_address, "::1");
+        assert_eq!(merged.stream_port, 9704);
         assert_eq!(merged.control_port, 1705);
     }
 }

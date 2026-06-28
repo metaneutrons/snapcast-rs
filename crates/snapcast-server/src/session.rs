@@ -12,8 +12,8 @@ use snapcast_proto::message::server_settings::ServerSettings;
 use snapcast_proto::message::time::Time;
 use snapcast_proto::message::wire_chunk::WireChunk;
 use snapcast_proto::types::Timeval;
-use tokio::io::{AsyncReadExt, AsyncWriteExt};
-use tokio::net::{TcpListener, TcpStream};
+use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
+use tokio::net::TcpListener;
 use tokio::sync::{Mutex, broadcast, mpsc, watch};
 
 use crate::ClientSettingsUpdate;
@@ -148,17 +148,11 @@ impl SessionContext {
 
 /// Manages all streaming client sessions.
 pub struct SessionServer {
-    bind_address: String,
-    port: u16,
     ctx: Arc<SessionContext>,
 }
 
 /// Construction options for [`SessionServer`].
 pub(crate) struct SessionServerConfig {
-    /// TCP bind address.
-    pub bind_address: String,
-    /// TCP port.
-    pub port: u16,
     /// Client playout buffer in milliseconds.
     pub buffer_ms: i32,
     /// Optional streaming client authentication.
@@ -187,8 +181,6 @@ impl SessionServer {
     /// Create a new session server.
     pub(crate) fn new(config: SessionServerConfig) -> Self {
         Self {
-            bind_address: config.bind_address,
-            port: config.port,
             ctx: Arc::new(SessionContext {
                 buffer_ms: config.buffer_ms,
                 auth: config.auth,
@@ -245,14 +237,13 @@ impl SessionServer {
     /// Run the session server — accepts connections and spawns per-client tasks.
     pub async fn run(
         &self,
+        listener: TcpListener,
         chunk_rx: broadcast::Sender<WireChunkData>,
         event_tx: mpsc::Sender<ServerEvent>,
     ) -> Result<()> {
-        let listener = TcpListener::bind((self.bind_address.as_str(), self.port)).await?;
         tracing::info!(
-            bind_address = %self.bind_address,
-            port = self.port,
-            "Stream server listening"
+            local_addr = ?listener.local_addr().ok(),
+            "Stream server accepting clients"
         );
 
         loop {
@@ -291,12 +282,15 @@ impl SessionServer {
 
 // ── Client handler ────────────────────────────────────────────
 
-async fn handle_client(
-    mut stream: TcpStream,
+async fn handle_client<S>(
+    mut stream: S,
     chunk_rx: broadcast::Receiver<WireChunkData>,
     ctx: &SessionContext,
     event_tx: mpsc::Sender<ServerEvent>,
-) -> Result<()> {
+) -> Result<()>
+where
+    S: AsyncRead + AsyncWrite + Unpin + Send + 'static,
+{
     let hello_msg = read_frame_from(&mut stream).await?;
     let hello_id = hello_msg.base.id;
     let hello = match hello_msg.payload {
@@ -405,7 +399,7 @@ async fn handle_client(
 
     // Main loop
     let result = session_loop(SessionLoop {
-        stream: &mut stream,
+        stream,
         chunk_rx,
         settings_rx,
         routing_rx,
@@ -442,8 +436,8 @@ async fn handle_client(
 // This adds up to one select cycle of latency (~20ms at 48kHz) for custom
 // messages, which is acceptable for low-frequency control traffic.
 
-struct SessionLoop<'a> {
-    stream: &'a mut TcpStream,
+struct SessionLoop<'a, S> {
+    stream: S,
     chunk_rx: broadcast::Receiver<WireChunkData>,
     settings_rx: mpsc::Receiver<ClientSettingsUpdate>,
     routing_rx: watch::Receiver<SessionRouting>,
@@ -454,7 +448,10 @@ struct SessionLoop<'a> {
     ctx: &'a SessionContext,
 }
 
-async fn session_loop(args: SessionLoop<'_>) -> Result<()> {
+async fn session_loop<S>(args: SessionLoop<'_, S>) -> Result<()>
+where
+    S: AsyncRead + AsyncWrite + Unpin,
+{
     let SessionLoop {
         stream,
         mut chunk_rx,
@@ -466,7 +463,7 @@ async fn session_loop(args: SessionLoop<'_>) -> Result<()> {
         client_id,
         ctx,
     } = args;
-    let (mut reader, mut writer) = stream.split();
+    let (mut reader, mut writer) = tokio::io::split(stream);
     let mut routing = routing_rx.borrow().clone();
 
     loop {
@@ -618,10 +615,10 @@ async fn write_settings<W: AsyncWriteExt + Unpin>(
     Ok(())
 }
 
-async fn validate_auth(
+async fn validate_auth<S: AsyncWrite + Unpin>(
     validator: &dyn crate::auth::AuthValidator,
     hello: &snapcast_proto::message::hello::Hello,
-    stream: &mut TcpStream,
+    stream: &mut S,
     client_id: &str,
 ) -> Result<()> {
     let auth_result = match &hello.auth {
@@ -676,8 +673,8 @@ fn serialize_msg(
     factory::serialize(&mut base, payload).map_err(|e| anyhow::anyhow!("serialize: {e}"))
 }
 
-async fn send_msg(
-    stream: &mut TcpStream,
+async fn send_msg<W: AsyncWrite + Unpin>(
+    stream: &mut W,
     msg_type: MessageType,
     payload: &MessagePayload,
 ) -> Result<()> {

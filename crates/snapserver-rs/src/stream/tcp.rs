@@ -2,14 +2,14 @@
 
 use anyhow::Result;
 use snapcast_proto::SampleFormat;
-use tokio::io::AsyncReadExt;
+use snapcast_server::AudioFrame;
+use snapcast_server::time::ChunkTimestamper;
 use tokio::net::TcpListener;
 use tokio::sync::mpsc;
 use tokio::task::JoinHandle;
 
 use super::uri::StreamUri;
-use snapcast_server::time::ChunkTimestamper;
-use snapcast_server::{AudioData, AudioFrame};
+use super::{PumpEnd, pump_pcm};
 
 /// Start a TCP listener that reads PCM from connecting clients.
 pub fn start(
@@ -43,25 +43,14 @@ pub fn start(
             match listener.accept().await {
                 Ok((mut stream, peer)) => {
                     tracing::info!(%peer, "TCP stream client connected");
-                    let mut buf = vec![0u8; chunk_bytes];
-                    loop {
-                        match stream.read_exact(&mut buf).await {
-                            Ok(_) => {
-                                let frame = AudioFrame {
-                                    timestamp_usec: ts.next(chunk_frames as u32),
-                                    data: AudioData::Pcm(buf.clone()),
-                                };
-                                if tx.send(frame).await.is_err() {
-                                    return;
-                                }
-                            }
-                            Err(_) => {
-                                tracing::info!(%peer, "TCP stream client disconnected");
-                                break;
-                            }
+                    match pump_pcm(&mut stream, &mut ts, chunk_frames, chunk_bytes, &tx, None).await
+                    {
+                        PumpEnd::SourceEnded => {
+                            tracing::info!(%peer, "TCP stream client disconnected");
+                            ts.reset();
                         }
+                        PumpEnd::TxClosed => return,
                     }
-                    ts.reset();
                 }
                 Err(e) => {
                     tracing::error!(error = %e, "TCP accept failed");

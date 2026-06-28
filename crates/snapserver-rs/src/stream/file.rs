@@ -2,13 +2,14 @@
 
 use anyhow::Result;
 use snapcast_proto::SampleFormat;
+use snapcast_server::AudioFrame;
+use snapcast_server::time::ChunkTimestamper;
 use tokio::io::AsyncReadExt;
 use tokio::sync::mpsc;
 use tokio::task::JoinHandle;
 
 use super::uri::StreamUri;
-use snapcast_server::time::ChunkTimestamper;
-use snapcast_server::{AudioData, AudioFrame};
+use super::{PumpEnd, pump_pcm};
 
 /// Start reading PCM from a file, looping on EOF.
 pub fn start(
@@ -36,22 +37,19 @@ pub fn start(
                         let _ = file.read_exact(&mut skip).await;
                     }
 
-                    let mut buf = vec![0u8; chunk_bytes];
-                    let mut interval = tokio::time::interval(chunk_duration);
-                    loop {
-                        interval.tick().await;
-                        match file.read_exact(&mut buf).await {
-                            Ok(_) => {
-                                let frame = AudioFrame {
-                                    timestamp_usec: ts.next(chunk_frames as u32),
-                                    data: AudioData::Pcm(buf.clone()),
-                                };
-                                if tx.send(frame).await.is_err() {
-                                    return;
-                                }
-                            }
-                            Err(_) => break, // EOF → reopen and loop
-                        }
+                    // Paced reads so a finite file plays back in real time.
+                    match pump_pcm(
+                        &mut file,
+                        &mut ts,
+                        chunk_frames,
+                        chunk_bytes,
+                        &tx,
+                        Some(chunk_duration),
+                    )
+                    .await
+                    {
+                        PumpEnd::SourceEnded => {} // EOF → reopen and loop
+                        PumpEnd::TxClosed => return,
                     }
                 }
                 Err(e) => {

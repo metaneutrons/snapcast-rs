@@ -5,7 +5,6 @@
 //! terminate the loop and are handled by `run()` itself; every other command
 //! lands here.
 
-use std::path::PathBuf;
 use std::sync::Arc;
 
 use tokio::sync::{Mutex, mpsc};
@@ -20,24 +19,13 @@ pub(crate) struct Dispatcher {
     pub(crate) shared_state: Arc<Mutex<ServerState>>,
     /// Session server — pushes settings and recomputes audio routing.
     pub(crate) session_srv: Arc<SessionServer>,
-    /// Outbound event channel to the embedder.
+    /// Outbound event channel to the embedder (events + state snapshots).
     pub(crate) event_tx: mpsc::Sender<ServerEvent>,
-    /// Optional state-persistence file.
-    pub(crate) state_file: Option<PathBuf>,
     /// Playout buffer size in milliseconds (pushed to clients).
     pub(crate) buffer_ms: i32,
 }
 
 impl Dispatcher {
-    /// Persist state to the configured file, logging (not propagating) errors.
-    fn save_state(&self, s: &ServerState) {
-        if let Some(ref path) = self.state_file {
-            let _ = s
-                .save(path)
-                .map_err(|e| tracing::warn!(error = %e, "Failed to save state"));
-        }
-    }
-
     /// Handle one command.
     ///
     /// `Stop`/`None` are handled by the run loop and never reach here.
@@ -59,8 +47,9 @@ impl Dispatcher {
                     .get(&client_id)
                     .map(|c| c.config.latency)
                     .unwrap_or(0);
-                self.save_state(&s);
+                let snapshot = s.clone();
                 drop(s);
+                let _ = self.event_tx.try_send(ServerEvent::StateChanged(snapshot));
                 self.session_srv
                     .push_settings(ClientSettingsUpdate {
                         client_id: client_id.clone(),
@@ -90,8 +79,9 @@ impl Dispatcher {
                         muted: c.config.volume.muted,
                     });
                 }
-                self.save_state(&s);
+                let snapshot = s.clone();
                 drop(s);
+                let _ = self.event_tx.try_send(ServerEvent::StateChanged(snapshot));
                 if let Some(update) = settings_update {
                     self.session_srv.push_settings(update).await;
                 }
@@ -104,8 +94,9 @@ impl Dispatcher {
                 if let Some(c) = s.clients.get_mut(&client_id) {
                     c.config.name = name.clone();
                 }
-                self.save_state(&s);
+                let snapshot = s.clone();
                 drop(s);
+                let _ = self.event_tx.try_send(ServerEvent::StateChanged(snapshot));
                 let _ = self
                     .event_tx
                     .try_send(ServerEvent::ClientNameChanged { client_id, name });
@@ -116,8 +107,9 @@ impl Dispatcher {
             } => {
                 let mut s = self.shared_state.lock().await;
                 s.set_group_stream(&group_id, &stream_id);
-                self.save_state(&s);
+                let snapshot = s.clone();
                 drop(s);
+                let _ = self.event_tx.try_send(ServerEvent::StateChanged(snapshot));
                 let _ = self.event_tx.try_send(ServerEvent::GroupStreamChanged {
                     group_id: group_id.clone(),
                     stream_id,
@@ -129,8 +121,9 @@ impl Dispatcher {
                 if let Some(g) = s.groups.iter_mut().find(|g| g.id == group_id) {
                     g.muted = muted;
                 }
-                self.save_state(&s);
+                let snapshot = s.clone();
                 drop(s);
+                let _ = self.event_tx.try_send(ServerEvent::StateChanged(snapshot));
                 let _ = self.event_tx.try_send(ServerEvent::GroupMuteChanged {
                     group_id: group_id.clone(),
                     muted,
@@ -142,8 +135,9 @@ impl Dispatcher {
                 if let Some(g) = s.groups.iter_mut().find(|g| g.id == group_id) {
                     g.name = name.clone();
                 }
-                self.save_state(&s);
+                let snapshot = s.clone();
                 drop(s);
+                let _ = self.event_tx.try_send(ServerEvent::StateChanged(snapshot));
                 let _ = self
                     .event_tx
                     .try_send(ServerEvent::GroupNameChanged { group_id, name });
@@ -151,8 +145,9 @@ impl Dispatcher {
             ServerCommand::SetGroupClients { group_id, clients } => {
                 let mut s = self.shared_state.lock().await;
                 s.set_group_clients(&group_id, &clients);
-                self.save_state(&s);
+                let snapshot = s.clone();
                 drop(s);
+                let _ = self.event_tx.try_send(ServerEvent::StateChanged(snapshot));
                 // Structural change — mirrors Server.OnUpdate in C++ snapserver
                 let _ = self.event_tx.try_send(ServerEvent::ServerUpdated);
                 self.session_srv.update_routing_all().await;
@@ -161,8 +156,9 @@ impl Dispatcher {
                 let mut s = self.shared_state.lock().await;
                 s.remove_client_from_groups(&client_id);
                 s.clients.remove(&client_id);
-                self.save_state(&s);
+                let snapshot = s.clone();
                 drop(s);
+                let _ = self.event_tx.try_send(ServerEvent::StateChanged(snapshot));
                 let _ = self.event_tx.try_send(ServerEvent::ServerUpdated);
                 self.session_srv.update_routing_all().await;
             }
@@ -198,8 +194,9 @@ impl Dispatcher {
                         g.stream_id.clear();
                     }
                 }
-                self.save_state(&s);
+                let snapshot = s.clone();
                 drop(s);
+                let _ = self.event_tx.try_send(ServerEvent::StateChanged(snapshot));
                 let _ = self.event_tx.try_send(ServerEvent::ServerUpdated);
                 self.session_srv.update_routing_all().await;
             }

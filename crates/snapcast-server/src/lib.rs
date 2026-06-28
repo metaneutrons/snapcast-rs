@@ -183,7 +183,8 @@ pub(crate) mod command;
 pub(crate) mod crypto;
 pub(crate) mod encoder;
 pub(crate) mod session;
-pub(crate) mod state;
+pub mod state;
+pub use state::ServerState;
 pub mod status;
 pub mod time;
 
@@ -206,6 +207,12 @@ pub struct ClientSettingsUpdate {
 #[derive(Debug)]
 #[non_exhaustive]
 pub enum ServerEvent {
+    /// Server state changed and should be persisted by the embedder.
+    ///
+    /// Carries a snapshot taken right after the mutation. The library performs
+    /// no persistence itself; an embedder that wants durability should debounce
+    /// these and write the latest snapshot off the event loop.
+    StateChanged(state::ServerState),
     /// A client connected via the binary protocol.
     ClientConnected {
         /// Unique client identifier.
@@ -443,8 +450,12 @@ pub struct ServerConfig {
     /// Pre-shared key for f32lz4 encryption. `None` = no encryption.
     #[cfg(feature = "encryption")]
     pub encryption_psk: Option<String>,
-    /// Path to persist server state (clients, groups). `None` = no persistence.
-    pub state_file: Option<std::path::PathBuf>,
+    /// Initial server state to seed on startup (clients, groups). `None` = empty.
+    ///
+    /// The library performs no file I/O: the embedder loads this snapshot (e.g.
+    /// from disk) before [`SnapServer::new`] and persists subsequent
+    /// [`ServerEvent::StateChanged`] events itself.
+    pub initial_state: Option<state::ServerState>,
     /// Send audio data to muted clients. Default: false (skip muted, saves bandwidth).
     pub send_audio_to_muted: bool,
 }
@@ -462,7 +473,7 @@ impl Default for ServerConfig {
             client_filter: None,
             #[cfg(feature = "encryption")]
             encryption_psk: None,
-            state_file: None,
+            initial_state: None,
             send_audio_to_muted: false,
         }
     }
@@ -650,13 +661,9 @@ impl SnapServer {
         let streams = std::mem::take(&mut self.streams);
         let mut default_enc = Some(default_enc);
 
-        // Shared state for command handlers
-        let initial_state = self
-            .config
-            .state_file
-            .as_ref()
-            .map(|p| state::ServerState::load(p))
-            .unwrap_or_default();
+        // Shared state for command handlers — seeded from the embedder-supplied
+        // snapshot (the library reads no files).
+        let initial_state = self.config.initial_state.take().unwrap_or_default();
         let shared_state = Arc::new(tokio::sync::Mutex::new(initial_state));
 
         // Create session server before stream registration
@@ -741,7 +748,6 @@ impl SnapServer {
             shared_state: Arc::clone(&shared_state),
             session_srv: Arc::clone(&session_srv),
             event_tx: event_tx.clone(),
-            state_file: self.config.state_file.clone(),
             buffer_ms: self.config.buffer_ms as i32,
         };
 

@@ -9,12 +9,13 @@
 
 use anyhow::{Result, bail};
 use snapcast_proto::SampleFormat;
+#[cfg(feature = "encryption")]
+use snapcast_proto::f32lz4::{F32LZ4_ENC_HEADER_LEN, F32LZ4_ENC_MARKER};
+use snapcast_proto::f32lz4::{F32LZ4_HEADER_LEN, F32LZ4_MAGIC};
 use snapcast_proto::message::codec_header::CodecHeader;
 
 use crate::decoder::Decoder;
 use crate::stream::SampleEncoding;
-
-const MAGIC: &[u8; 4] = b"F32L";
 
 /// F32 LZ4 decoder.
 pub struct F32Lz4Decoder {
@@ -27,10 +28,10 @@ pub struct F32Lz4Decoder {
 
 impl Decoder for F32Lz4Decoder {
     fn set_header(&mut self, header: &CodecHeader) -> Result<SampleFormat> {
-        if header.payload.len() < 12 {
+        if header.payload.len() < F32LZ4_HEADER_LEN {
             bail!("F32LZ4 header too small");
         }
-        if &header.payload[..4] != MAGIC {
+        if &header.payload[..F32LZ4_MAGIC.len()] != F32LZ4_MAGIC {
             bail!("not an F32LZ4 header");
         }
         let rate = u32::from_le_bytes(header.payload[4..8].try_into().unwrap());
@@ -40,8 +41,12 @@ impl Decoder for F32Lz4Decoder {
 
         // Check for encryption marker after the 12-byte base header
         #[cfg(feature = "encryption")]
-        if header.payload.len() >= 32 && &header.payload[12..16] == b"ENC\0" {
-            let salt = &header.payload[16..32];
+        if header.payload.len() >= F32LZ4_ENC_HEADER_LEN
+            && &header.payload[F32LZ4_HEADER_LEN..F32LZ4_HEADER_LEN + F32LZ4_ENC_MARKER.len()]
+                == F32LZ4_ENC_MARKER
+        {
+            let salt =
+                &header.payload[F32LZ4_HEADER_LEN + F32LZ4_ENC_MARKER.len()..F32LZ4_ENC_HEADER_LEN];
             if let Some(ref psk) = self.encryption_psk {
                 self.decryptor = Some(crate::crypto::ChunkDecryptor::new(psk, salt));
                 tracing::info!("F32LZ4 decryption enabled");
@@ -133,7 +138,7 @@ mod tests {
             codec: "f32lz4".into(),
             payload: {
                 let mut h = Vec::new();
-                h.extend_from_slice(MAGIC);
+                h.extend_from_slice(F32LZ4_MAGIC);
                 h.extend_from_slice(&48000u32.to_le_bytes());
                 h.extend_from_slice(&2u16.to_le_bytes());
                 h.extend_from_slice(&32u16.to_le_bytes());

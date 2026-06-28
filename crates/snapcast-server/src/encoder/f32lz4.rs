@@ -6,11 +6,12 @@
 
 use anyhow::Result;
 use snapcast_proto::SampleFormat;
+#[cfg(feature = "encryption")]
+use snapcast_proto::f32lz4::{F32LZ4_ENC_MARKER, F32LZ4_SALT_LEN};
+use snapcast_proto::f32lz4::{F32LZ4_HEADER_LEN, F32LZ4_MAGIC};
 
 use super::{EncodedChunk, Encoder};
 use crate::AudioData;
-
-const MAGIC: &[u8; 4] = b"F32L";
 
 /// Fill buffer with random bytes (uses system RNG).
 #[cfg(feature = "encryption")]
@@ -35,8 +36,8 @@ impl F32Lz4Encoder {
             channels = format.channels(),
             "F32LZ4 encoder initialized"
         );
-        let mut header = Vec::with_capacity(12);
-        header.extend_from_slice(MAGIC);
+        let mut header = Vec::with_capacity(F32LZ4_HEADER_LEN);
+        header.extend_from_slice(F32LZ4_MAGIC);
         header.extend_from_slice(&format.rate().to_le_bytes());
         header.extend_from_slice(&format.channels().to_le_bytes());
         header.extend_from_slice(&32u16.to_le_bytes()); // bits = 32 (f32)
@@ -52,11 +53,11 @@ impl F32Lz4Encoder {
     /// Enable encryption with a pre-shared key. Appends salt to the codec header.
     #[cfg(feature = "encryption")]
     pub fn with_encryption(mut self, psk: &str) -> Self {
-        let mut salt = [0u8; 16];
+        let mut salt = [0u8; F32LZ4_SALT_LEN];
         random_bytes(&mut salt);
         self.encryptor = Some(crate::crypto::ChunkEncryptor::new(psk, &salt));
         // Append encryption marker + salt to header
-        self.header.extend_from_slice(b"ENC\0");
+        self.header.extend_from_slice(F32LZ4_ENC_MARKER);
         self.header.extend_from_slice(&salt);
         tracing::info!("F32LZ4 encryption enabled");
         self
@@ -122,8 +123,8 @@ mod tests {
     fn header_format() {
         let fmt = SampleFormat::new(48000, 16, 2);
         let enc = F32Lz4Encoder::new(fmt);
-        assert_eq!(&enc.header()[..4], b"F32L");
-        assert_eq!(enc.header().len(), 12);
+        assert_eq!(&enc.header()[..4], F32LZ4_MAGIC.as_slice());
+        assert_eq!(enc.header().len(), F32LZ4_HEADER_LEN);
     }
 
     #[test]

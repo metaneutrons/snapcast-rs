@@ -1,9 +1,7 @@
 //! Server state model — clients, groups, streams with JSON persistence.
 
 use std::collections::HashMap;
-use std::path::Path;
 
-use anyhow::Result;
 use serde::{Deserialize, Serialize};
 
 /// Volume settings.
@@ -94,27 +92,6 @@ pub struct ServerState {
 }
 
 impl ServerState {
-    /// Load state from a JSON file, or return default if not found.
-    pub fn load(path: &Path) -> Self {
-        let state: Self = std::fs::read_to_string(path)
-            .ok()
-            .and_then(|s| serde_json::from_str(&s).ok())
-            .unwrap_or_default();
-        tracing::debug!(path = %path.display(), clients = state.clients.len(), groups = state.groups.len(), "state loaded");
-        state
-    }
-
-    /// Save state to a JSON file.
-    pub fn save(&self, path: &Path) -> Result<()> {
-        if let Some(parent) = path.parent() {
-            std::fs::create_dir_all(parent)?;
-        }
-        let json = serde_json::to_string_pretty(self)?;
-        std::fs::write(path, json)?;
-        tracing::debug!(path = %path.display(), "state saved");
-        Ok(())
-    }
-
     /// Get or create a client entry. Returns mutable reference.
     pub fn get_or_create_client(&mut self, id: &str, host_name: &str, mac: &str) -> &mut Client {
         if !self.clients.contains_key(id) {

@@ -20,6 +20,7 @@
 //! See the [protocol documentation](https://github.com/snapcast/snapcast/blob/master/doc/binary_protocol.md)
 //! for the full specification.
 
+pub mod f32lz4;
 pub mod message;
 pub mod sample_format;
 pub mod status;

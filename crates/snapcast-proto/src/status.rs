@@ -53,8 +53,8 @@ impl Default for Snapserver {
     fn default() -> Self {
         Self {
             name: "snapcast-rs".into(),
-            protocol_version: 2,
-            control_protocol_version: 1,
+            protocol_version: crate::PROTOCOL_VERSION,
+            control_protocol_version: crate::CONTROL_PROTOCOL_VERSION,
             version: env!("CARGO_PKG_VERSION").into(),
         }
     }

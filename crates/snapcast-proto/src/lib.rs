@@ -44,6 +44,8 @@ pub const DEFAULT_HTTP_PORT: u16 = 1780;
 pub const DEFAULT_WSS_PORT: u16 = 1788;
 /// Snapcast binary protocol version.
 pub const PROTOCOL_VERSION: u32 = 2;
+/// Snapcast JSON-RPC control protocol version.
+pub const CONTROL_PROTOCOL_VERSION: u32 = 1;
 /// Default sample format: 48000 Hz, 16-bit, stereo.
 pub const DEFAULT_SAMPLE_FORMAT: SampleFormat = SampleFormat::new(48000, 16, 2);
 /// Maximum absolute value of a 24-bit signed integer sample (2^23 - 1).

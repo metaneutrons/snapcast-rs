@@ -1,24 +1,21 @@
 //! WebSocket + TLS (WSS) connection to a snapserver.
+//!
+//! Frame send/receive is shared with the plain-WS transport (see [`super::ws`]);
+//! only connection establishment (the TLS handshake) differs here.
 
 use std::sync::Arc;
 
 use anyhow::{Context, Result};
-use futures_util::{SinkExt, StreamExt};
 use rustls::ClientConfig;
 use snapcast_proto::MessageType;
-use snapcast_proto::message::base::BaseMessage;
-use snapcast_proto::message::factory::{self, MessagePayload, TypedMessage};
-use snapcast_proto::types::Timeval;
+use snapcast_proto::message::factory::{MessagePayload, TypedMessage};
 use tokio_tungstenite::Connector;
-use tokio_tungstenite::tungstenite::Message;
+
+use super::ws::{WsStream, recv_frame, send_frame};
 
 /// WebSocket-over-TLS transport for Snapcast binary frames.
 pub struct WssConnection {
-    ws: Option<
-        tokio_tungstenite::WebSocketStream<
-            tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>,
-        >,
-    >,
+    ws: Option<WsStream>,
     host: String,
     port: u16,
 }
@@ -68,53 +65,16 @@ impl WssConnection {
 
     /// Send one binary Snapcast frame over WSS.
     pub async fn send(&mut self, msg_type: MessageType, payload: &MessagePayload) -> Result<()> {
-        let ws = self.ws.as_mut().context("not connected")?;
-        let mut base = BaseMessage {
+        send_frame(
+            self.ws.as_mut().context("not connected")?,
             msg_type,
-            id: 0,
-            refers_to: 0,
-            sent: Timeval::default(),
-            received: Timeval::default(),
-            size: 0,
-        };
-        super::stamp_sent(&mut base);
-        let frame = factory::serialize(&mut base, payload)
-            .map_err(|e| anyhow::anyhow!("serialize: {e}"))?;
-        ws.send(Message::Binary(frame.into())).await?;
-        Ok(())
+            payload,
+        )
+        .await
     }
 
     /// Receive one binary Snapcast frame over WSS.
     pub async fn recv(&mut self) -> Result<TypedMessage> {
-        let ws = self.ws.as_mut().context("not connected")?;
-        loop {
-            let msg = ws
-                .next()
-                .await
-                .context("WSS stream ended")?
-                .context("WSS error")?;
-            match msg {
-                Message::Binary(data) => {
-                    if data.len() < BaseMessage::HEADER_SIZE {
-                        continue;
-                    }
-                    let mut base = BaseMessage::read_from(&mut &data[..BaseMessage::HEADER_SIZE])
-                        .map_err(|e| anyhow::anyhow!("parse header: {e}"))?;
-                    base.received = super::steady_time_of_day();
-                    super::ensure_payload_size(base.size)?;
-                    let payload = &data[BaseMessage::HEADER_SIZE..];
-                    anyhow::ensure!(
-                        payload.len() == base.size as usize,
-                        "payload size mismatch: header={}, actual={}",
-                        base.size,
-                        payload.len()
-                    );
-                    return factory::deserialize(base, payload)
-                        .map_err(|e| anyhow::anyhow!("deserialize: {e}"));
-                }
-                Message::Close(_) => anyhow::bail!("WSS closed"),
-                _ => continue,
-            }
-        }
+        recv_frame(self.ws.as_mut().context("not connected")?).await
     }
 }

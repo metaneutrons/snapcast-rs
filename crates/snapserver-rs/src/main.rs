@@ -3,6 +3,7 @@ mod config;
 mod control;
 mod http;
 mod jsonrpc;
+mod notify;
 mod stream;
 
 use clap::Parser;
@@ -347,41 +348,23 @@ fn main() -> anyhow::Result<()> {
                         client_id,
                         volume,
                         muted,
-                    } => Some(serde_json::json!({
-                        "jsonrpc": "2.0",
-                        "method": "Client.OnVolumeChanged",
-                        "params": {"id": client_id, "volume": {"percent": volume, "muted": muted}}
-                    })),
+                    } => Some(notify::client_on_volume_changed(&client_id, volume, muted)),
                     ServerEvent::ClientLatencyChanged { client_id, latency } => {
-                        Some(serde_json::json!({
-                            "jsonrpc": "2.0",
-                            "method": "Client.OnLatencyChanged",
-                            "params": {"id": client_id, "latency": latency}
-                        }))
+                        Some(notify::client_on_latency_changed(&client_id, latency))
                     }
-                    ServerEvent::ClientNameChanged { client_id, name } => Some(serde_json::json!({
-                        "jsonrpc": "2.0",
-                        "method": "Client.OnNameChanged",
-                        "params": {"id": client_id, "name": name}
-                    })),
+                    ServerEvent::ClientNameChanged { client_id, name } => {
+                        Some(notify::client_on_name_changed(&client_id, &name))
+                    }
                     ServerEvent::GroupStreamChanged {
                         group_id,
                         stream_id,
-                    } => Some(serde_json::json!({
-                        "jsonrpc": "2.0",
-                        "method": "Group.OnStreamChanged",
-                        "params": {"id": group_id, "stream_id": stream_id}
-                    })),
-                    ServerEvent::GroupMuteChanged { group_id, muted } => Some(serde_json::json!({
-                        "jsonrpc": "2.0",
-                        "method": "Group.OnMute",
-                        "params": {"id": group_id, "mute": muted}
-                    })),
-                    ServerEvent::GroupNameChanged { group_id, name } => Some(serde_json::json!({
-                        "jsonrpc": "2.0",
-                        "method": "Group.OnNameChanged",
-                        "params": {"id": group_id, "name": name}
-                    })),
+                    } => Some(notify::group_on_stream_changed(&group_id, &stream_id)),
+                    ServerEvent::GroupMuteChanged { group_id, muted } => {
+                        Some(notify::group_on_mute(&group_id, muted))
+                    }
+                    ServerEvent::GroupNameChanged { group_id, name } => {
+                        Some(notify::group_on_name_changed(&group_id, &name))
+                    }
                     ServerEvent::StreamStatus { stream_id, status } => {
                         tracing::info!(stream_id, status, "Stream status");
                         // Fetch full stream object for the notification

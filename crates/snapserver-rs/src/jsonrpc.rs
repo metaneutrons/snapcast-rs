@@ -95,11 +95,10 @@ pub(crate) async fn handle_request(
                 })
                 .await;
             let vol = json!({"percent": volume, "muted": muted});
-            ok_with_notify(
+            ok_with_notification(
                 id,
-                json!({"volume": &vol}),
-                "Client.OnVolumeChanged",
-                json!({"id": client_id, "volume": vol}),
+                json!({"volume": vol}),
+                crate::notify::client_on_volume_changed(client_id, volume, muted),
             )
         }
         "Client.SetLatency" => {
@@ -113,11 +112,10 @@ pub(crate) async fn handle_request(
                     latency,
                 })
                 .await;
-            ok_with_notify(
+            ok_with_notification(
                 id,
                 json!({"latency": latency}),
-                "Client.OnLatencyChanged",
-                json!({"id": client_id, "latency": latency}),
+                crate::notify::client_on_latency_changed(client_id, latency),
             )
         }
         "Client.SetName" => {
@@ -131,11 +129,10 @@ pub(crate) async fn handle_request(
                     name: name.clone(),
                 })
                 .await;
-            ok_with_notify(
+            ok_with_notification(
                 id,
                 json!({"name": &name}),
-                "Client.OnNameChanged",
-                json!({"id": client_id, "name": name}),
+                crate::notify::client_on_name_changed(client_id, &name),
             )
         }
 
@@ -168,11 +165,10 @@ pub(crate) async fn handle_request(
                     muted,
                 })
                 .await;
-            ok_with_notify(
+            ok_with_notification(
                 id,
                 json!({"mute": muted}),
-                "Group.OnMute",
-                json!({"id": group_id, "mute": muted}),
+                crate::notify::group_on_mute(group_id, muted),
             )
         }
         "Group.SetStream" => {
@@ -188,11 +184,10 @@ pub(crate) async fn handle_request(
                     stream_id: stream_id.to_string(),
                 })
                 .await;
-            ok_with_notify(
+            ok_with_notification(
                 id,
                 json!({"stream_id": stream_id}),
-                "Group.OnStreamChanged",
-                json!({"id": group_id, "stream_id": stream_id}),
+                crate::notify::group_on_stream_changed(group_id, stream_id),
             )
         }
         "Group.SetClients" => {
@@ -226,11 +221,10 @@ pub(crate) async fn handle_request(
                     name: name.clone(),
                 })
                 .await;
-            ok_with_notify(
+            ok_with_notification(
                 id,
                 json!({"name": &name}),
-                "Group.OnNameChanged",
-                json!({"id": group_id, "name": name}),
+                crate::notify::group_on_name_changed(group_id, &name),
             )
         }
 
@@ -345,6 +339,15 @@ fn ok_with_notify(id: &Value, result: Value, method: &str, params: Value) -> Rpc
     RpcResult::Response {
         response: json!({"jsonrpc": "2.0", "id": id, "result": result}),
         notification: Some(json!({"jsonrpc": "2.0", "method": method, "params": params})),
+    }
+}
+
+/// Like [`ok_with_notify`] but takes a pre-built notification object (from the
+/// [`crate::notify`] builders) so the notification shape has a single source.
+fn ok_with_notification(id: &Value, result: Value, notification: Value) -> RpcResult {
+    RpcResult::Response {
+        response: json!({"jsonrpc": "2.0", "id": id, "result": result}),
+        notification: Some(notification),
     }
 }
 

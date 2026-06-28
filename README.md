@@ -9,6 +9,8 @@
 
 > **⚠️ Pre-1.0 — APIs may break on minor version bumps.** Until version 1.0, minor releases (e.g. 0.3 → 0.4) may contain breaking changes to the public API. Pin your dependency to a specific minor version if you need stability.
 
+> **🚨 Breaking changes in 0.17.0 (library embedders).** The `snapcast-server` library now opens **no port** and reads/writes **no files**: `SnapServer::run()` is replaced by `serve(listener)`, and `ServerConfig.state_file` is replaced by `initial_state` plus a new `ServerEvent::StateChanged` event. `snapcast_proto::ProtoError` is now `#[non_exhaustive]`. The `snapserver-rs` binary is unaffected for end users. **See [Migrating to 0.17.0](#migrating-to-0170) for copy-paste mitigations.**
+
 A Rust reimplementation of [Snapcast](https://github.com/snapcast/snapcast), the excellent multiroom audio system created by [Johannes Pohl (badaix)](https://github.com/badaix). Snapcast synchronizes audio playback across multiple devices with sub-millisecond precision — turning any collection of speakers into a perfectly synced whole-home audio system.
 
 This project exists primarily to serve as a native Rust dependency for [SnapDog](https://github.com/metaneutrons/SnapDogRust), a multiroom audio appliance. Rather than shelling out to C++ binaries or bridging through FFI, SnapDog embeds the Snapcast protocol directly as a library — receiving audio, encoding it, distributing it to clients, and controlling playback, all within a single Rust process.
@@ -170,8 +172,9 @@ let zone2_tx = server.add_stream_with_config("Zone2", StreamConfig {
     ..Default::default()
 });
 
-// Run (blocks until Stop)
-tokio::spawn(async move { server.run().await });
+// The library opens no port: bind the audio listener and hand it to serve().
+let listener = tokio::net::TcpListener::bind("0.0.0.0:1704").await?;
+tokio::spawn(async move { server.serve(listener).await });
 
 // Typed commands
 cmd.send(ServerCommand::SetClientVolume { client_id, volume: 80, muted: false }).await;
@@ -199,6 +202,8 @@ match event {
     ServerEvent::GroupStreamChanged { group_id, stream_id } => {}
     ServerEvent::GroupMuteChanged { group_id, muted } => {}
     ServerEvent::StreamStatus { stream_id, status } => {}
+    ServerEvent::StateChanged(state) => { /* persist `state` if you want durability */ }
+    _ => {} // ServerEvent is #[non_exhaustive]
 }
 ```
 
@@ -206,18 +211,21 @@ match event {
 
 ```rust
 ServerConfig {
-    stream_bind_address: String, // default: "0.0.0.0"
-    stream_port: u16,          // default: 1704
     buffer_ms: u32,            // default: 1000
     codec: String,             // default: "flac" (feature-dependent: flac > f32lz4 > pcm)
     sample_format: String,     // default: "48000:16:2"
     auth: Option<Arc<dyn AuthValidator>>, // default: None (no auth)
     client_filter: Option<Arc<dyn ClientFilter>>, // default: None (accept all)
     encryption_psk: Option<String>, // f32lz4 encryption (feature: encryption)
-    state_file: Option<PathBuf>, // persisted clients/groups
+    initial_state: Option<ServerState>, // seed clients/groups on startup (None = empty)
     send_audio_to_muted: bool, // default: false
 }
 ```
+
+The library opens no listener and persists nothing: bind the audio port yourself
+and pass it to `server.serve(listener)`, and persist `ServerState` from
+`ServerEvent::StateChanged` if you need durability (the bind address/port live in
+the application, e.g. `snapserver-rs`'s config, not in `ServerConfig`).
 
 ### Per-Stream Config
 
@@ -296,11 +304,11 @@ Rejected clients are disconnected immediately after Hello with a warning log.
 
 | Port | Protocol | Owner | Purpose |
 |------|----------|-------|---------|
-| 1704 | TCP | Library | Binary protocol (audio + time sync) |
+| 1704 | TCP | App/Binary | Binary protocol (audio + time sync) |
 | 1705 | TCP | Binary | JSON-RPC control |
 | 1780 | HTTP/WS | Binary | JSON-RPC + Snapweb UI |
 
-Libraries open only the configured binary protocol listener. JSON-RPC/HTTP are binary-only.
+The library crates open **no** listeners. The embedding application (or the `snapserver-rs` binary) binds every port and hands the audio listener to `server.serve(listener)`. JSON-RPC/HTTP are binary-only.
 
 Bind addresses are configurable:
 
@@ -494,6 +502,59 @@ ffmpeg -re -i music.mp3 -f s16le -ar 48000 -ac 2 pipe:1 > /tmp/snapfifo
 - Bounded binary-frame payload allocation on both client and server
 - Structured tracing logging
 
+## Migrating to 0.17.0
+
+`0.17.0` makes the `snapcast-server` library fully I/O-free — it now **opens no port and reads/writes no files**, completing the "protocol engine, not application shell" separation. Three breaking changes affect library embedders (the `snapserver-rs` binary already owns its I/O, so end users are unaffected):
+
+**1. The server no longer binds a port — inject a listener.**
+
+```rust
+// Before (0.16)
+let (mut server, events) = SnapServer::new(config); // config.stream_bind_address / stream_port
+server.run().await?;
+
+// After (0.17)
+let (mut server, events) = SnapServer::new(config); // those fields are gone
+let listener = tokio::net::TcpListener::bind("0.0.0.0:1704").await?;
+server.serve(listener).await?;
+```
+
+`ServerConfig` lost `stream_bind_address` and `stream_port`; the embedder binds the `tokio::net::TcpListener` and passes it to `serve()`. As a bonus the session handler is now generic over the transport and unit-testable over `tokio::io::duplex`.
+
+**2. The server no longer persists state — load/save it yourself.**
+
+```rust
+// Before (0.16): the library read/wrote a JSON file itself
+let config = ServerConfig { state_file: Some("/var/lib/snap/state.json".into()), ..Default::default() };
+
+// After (0.17): supply the initial snapshot, and persist change events
+let initial = std::fs::read_to_string("state.json").ok()
+    .and_then(|s| serde_json::from_str::<ServerState>(&s).ok());
+let config = ServerConfig { initial_state: initial, ..Default::default() };
+let (mut server, mut events) = SnapServer::new(config);
+
+// Persist off the event loop (debounce to the latest snapshot):
+while let Some(ev) = events.recv().await {
+    if let ServerEvent::StateChanged(state) = ev {
+        // e.g. tokio::task::spawn_blocking: write to a temp file + atomic rename
+    }
+}
+```
+
+`ServerState::load`/`save` are removed and `ServerState` is now a public `Serialize`/`Deserialize` type. Besides honoring the no-files contract, this fixes a latency bug: the old code wrote the file **while holding the shared-state lock**, stalling command dispatch on slow storage (e.g. an SD card).
+
+**3. `ProtoError` is now `#[non_exhaustive]`.**
+
+Add a wildcard arm to any `match` on `snapcast_proto::ProtoError` so future variants don't break you:
+
+```rust
+match err {
+    ProtoError::Io(e) => { /* ... */ }
+    ProtoError::Json(e) => { /* ... */ }
+    _ => { /* PayloadTooLarge and future variants */ }
+}
+```
+
 ## Releases
 
 Pre-built binaries for every release:
@@ -513,7 +574,7 @@ Library crates published to [crates.io](https://crates.io): `snapcast-proto`, `s
 ## Known Limitations
 
 - **No WebSocket audio transport** — the server exposes JSON-RPC WebSockets at `/jsonrpc`, but binary audio streaming is TCP-only. The CLI rejects `ws://` and `wss://` for audio clients until a verified binary audio WebSocket contract is implemented.
-- **Dynamic `Stream.AddStream` is application-owned** — the embeddable server can expose and route streams created before `run()`. Runtime `Stream.AddStream` returns an explicit error because the library does not own source readers after startup.
+- **Dynamic `Stream.AddStream` is application-owned** — the embeddable server can expose and route streams created before `serve()`. Runtime `Stream.AddStream` returns an explicit error because the library does not own source readers after startup.
 - **Opus is a native optional feature** — `--features opus` requires system Opus discoverable by `pkg-config` or the native build tools needed by `audiopus_sys`.
 
 ## License

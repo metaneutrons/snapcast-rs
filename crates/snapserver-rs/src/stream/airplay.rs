@@ -2,14 +2,15 @@
 
 use anyhow::Result;
 use snapcast_proto::SampleFormat;
-use tokio::io::AsyncReadExt;
+use snapcast_server::AudioFrame;
+use snapcast_server::time::ChunkTimestamper;
+use tokio::io::{AsyncBufReadExt, AsyncReadExt, BufReader};
 use tokio::process::Command;
 use tokio::sync::mpsc;
 use tokio::task::JoinHandle;
 
 use super::uri::StreamUri;
-use snapcast_server::time::ChunkTimestamper;
-use snapcast_server::{AudioData, AudioFrame};
+use super::{PumpEnd, pump_pcm};
 
 /// Start shairport-sync and read PCM from stdout.
 pub fn start(
@@ -63,16 +64,11 @@ pub fn start(
                 });
             }
 
-            let mut buf = vec![0u8; chunk_bytes];
-            while stdout.read_exact(&mut buf).await.is_ok() {
-                let frame = AudioFrame {
-                    timestamp_usec: ts.next(chunk_frames as u32),
-                    data: AudioData::Pcm(buf.clone()),
-                };
-                if tx.send(frame).await.is_err() {
-                    let _ = child.kill().await;
-                    return;
-                }
+            if let PumpEnd::TxClosed =
+                pump_pcm(&mut stdout, &mut ts, chunk_frames, chunk_bytes, &tx, None).await
+            {
+                let _ = child.kill().await;
+                return;
             }
 
             let _ = child.kill().await;
@@ -88,7 +84,7 @@ async fn parse_airplay_stderr<R: AsyncReadExt + Unpin>(
     stderr: R,
     meta_tx: mpsc::Sender<(String, String)>,
 ) {
-    let mut lines = tokio::io::BufReader::new(stderr).lines();
+    let mut lines = BufReader::new(stderr).lines();
     while let Ok(Some(line)) = lines.next_line().await {
         // shairport-sync metadata format varies by version
         // Common: "Title: ...", "Artist: ...", "Album: ..."
@@ -102,5 +98,3 @@ async fn parse_airplay_stderr<R: AsyncReadExt + Unpin>(
         }
     }
 }
-
-use tokio::io::AsyncBufReadExt;

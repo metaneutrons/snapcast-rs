@@ -2,24 +2,21 @@
 
 use snapcast_client::{ClientConfig, ClientEvent, SnapClient};
 use snapcast_server::{ServerConfig, SnapServer};
-use snapcast_tests::free_port;
+use snapcast_tests::spawn_serving;
 
 #[tokio::test]
 async fn encrypted_f32lz4_end_to_end() {
-    let port = free_port();
     let psk = "test-secret-key-42";
 
     // Server with encryption
     let server_config = ServerConfig {
-        stream_port: port,
         codec: "f32lz4".into(),
         encryption_psk: Some(psk.into()),
         ..ServerConfig::default()
     };
     let (mut server, _events) = SnapServer::new(server_config);
     let audio_tx = server.add_stream("default");
-    tokio::spawn(async move { server.run().await.ok() });
-    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    let port = spawn_serving(server).await;
 
     // Client with matching key
     let client_config = ClientConfig {
@@ -63,19 +60,15 @@ async fn encrypted_f32lz4_end_to_end() {
 
 #[tokio::test]
 async fn wrong_key_disconnects() {
-    let port = free_port();
-
     // Server with encryption
     let server_config = ServerConfig {
-        stream_port: port,
         codec: "f32lz4".into(),
         encryption_psk: Some("server-key".into()),
         ..ServerConfig::default()
     };
     let (mut server, _events) = SnapServer::new(server_config);
     let _audio_tx = server.add_stream("default");
-    tokio::spawn(async move { server.run().await.ok() });
-    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    let port = spawn_serving(server).await;
 
     // Client with WRONG key
     let client_config = ClientConfig {

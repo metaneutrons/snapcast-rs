@@ -37,7 +37,9 @@
 //!     }
 //! });
 //!
-//! server.run().await?;
+//! // The library opens no ports: the embedder binds and hands in the listener.
+//! let listener = tokio::net::TcpListener::bind("0.0.0.0:1704").await?;
+//! server.serve(listener).await?;
 //! # Ok(())
 //! # }
 //! ```
@@ -431,10 +433,6 @@ fn default_codec() -> &'static str {
 
 /// Server configuration for the embeddable library.
 pub struct ServerConfig {
-    /// Bind address for binary protocol client connections. Default: 0.0.0.0.
-    pub stream_bind_address: String,
-    /// TCP port for binary protocol (client connections). Default: 1704.
-    pub stream_port: u16,
     /// Audio buffer size in milliseconds. Default: 1000.
     pub buffer_ms: u32,
     /// Default codec: "f32lz4", "pcm", "opus", "ogg". Default: "f32lz4".
@@ -463,8 +461,6 @@ pub struct ServerConfig {
 impl Default for ServerConfig {
     fn default() -> Self {
         Self {
-            stream_bind_address: snapcast_proto::DEFAULT_BIND_ADDRESS.into(),
-            stream_port: snapcast_proto::DEFAULT_STREAM_PORT,
             buffer_ms: snapcast_proto::DEFAULT_BUFFER_MS,
             codec: default_codec().into(),
             sample_format: snapcast_proto::DEFAULT_SAMPLE_FORMAT_STRING.into(),
@@ -621,11 +617,11 @@ impl SnapServer {
     }
 
     /// Run the server. Blocks until stopped or a fatal error occurs.
-    pub async fn run(&mut self) -> anyhow::Result<()> {
+    pub async fn serve(&mut self, listener: tokio::net::TcpListener) -> anyhow::Result<()> {
         let mut command_rx = self
             .command_rx
             .take()
-            .ok_or_else(|| anyhow::anyhow!("run() already called"))?;
+            .ok_or_else(|| anyhow::anyhow!("serve() already called"))?;
 
         let event_tx = self.event_tx.clone();
 
@@ -641,8 +637,7 @@ impl SnapServer {
         );
 
         tracing::info!(
-            bind_address = %self.config.stream_bind_address,
-            stream_port = self.config.stream_port,
+            local_addr = ?listener.local_addr().ok(),
             "Snapserver starting"
         );
 
@@ -673,8 +668,6 @@ impl SnapServer {
             .map(|(n, _, _)| n.clone())
             .unwrap_or_default();
         let session_srv = Arc::new(session::SessionServer::new(session::SessionServerConfig {
-            bind_address: self.config.stream_bind_address.clone(),
-            port: self.config.stream_port,
             buffer_ms: self.config.buffer_ms as i32,
             auth: self.config.auth.clone(),
             client_filter: self.config.client_filter.clone(),
@@ -737,7 +730,7 @@ impl SnapServer {
         let session_chunk_tx = self.chunk_tx.clone();
         let session_handle = tokio::spawn(async move {
             if let Err(e) = session_for_run
-                .run(session_chunk_tx, session_event_tx)
+                .run(listener, session_chunk_tx, session_event_tx)
                 .await
             {
                 tracing::error!(error = %e, "Session server error");

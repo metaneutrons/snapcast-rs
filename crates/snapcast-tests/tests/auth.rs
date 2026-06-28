@@ -1,12 +1,11 @@
 use snapcast_client::{ClientConfig, ClientEvent, SnapClient};
 use snapcast_server::auth::{Role, StaticAuthValidator, User};
 use snapcast_server::{ServerConfig, SnapServer};
-use snapcast_tests::free_port;
+use snapcast_tests::spawn_serving;
 use std::sync::Arc;
 
-fn auth_server_config(port: u16) -> ServerConfig {
+fn auth_server_config() -> ServerConfig {
     ServerConfig {
-        stream_port: port,
         auth: Some(Arc::new(StaticAuthValidator::new(
             vec![User {
                 name: "player".into(),
@@ -24,11 +23,9 @@ fn auth_server_config(port: u16) -> ServerConfig {
 
 #[tokio::test]
 async fn auth_success() {
-    let port = free_port();
-    let (mut server, _events) = SnapServer::new(auth_server_config(port));
+    let (mut server, _events) = SnapServer::new(auth_server_config());
     let _audio_tx = server.add_stream("default");
-    tokio::spawn(async move { server.run().await.ok() });
-    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    let port = spawn_serving(server).await;
 
     use base64::Engine;
     let creds = base64::engine::general_purpose::STANDARD.encode("player:secret");
@@ -57,11 +54,9 @@ async fn auth_success() {
 
 #[tokio::test]
 async fn auth_rejection() {
-    let port = free_port();
-    let (mut server, _events) = SnapServer::new(auth_server_config(port));
+    let (mut server, _events) = SnapServer::new(auth_server_config());
     let _audio_tx = server.add_stream("default");
-    tokio::spawn(async move { server.run().await.ok() });
-    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    let port = spawn_serving(server).await;
 
     use base64::Engine;
     let creds = base64::engine::general_purpose::STANDARD.encode("player:wrong");

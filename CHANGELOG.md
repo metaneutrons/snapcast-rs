@@ -1,5 +1,28 @@
 # Changelog
 
+## [0.17.0](https://github.com/metaneutrons/snapcast-rs/compare/v0.16.1...v0.17.0) (2026-06-28)
+
+
+### ⚠ BREAKING CHANGES
+
+* **server:** SnapServer::run(&mut self) is replaced by serve(&mut self, listener: tokio::net::TcpListener) — the library no longer binds a port. ServerConfig drops stream_bind_address/stream_port; the embedder binds the listener and hands it to serve().
+* **server:** the snapcast-server library no longer reads or writes files. ServerConfig.state_file (Option<PathBuf>) is replaced by ServerConfig.initial_state (Option<ServerState>); ServerState::load/save are removed. Embedders load the initial snapshot themselves and persist the new ServerEvent::StateChanged(ServerState) events.
+* **proto:** ProtoError is now #[non_exhaustive], so downstream match expressions must include a wildcard arm. This lets future variants be added without a breaking change (the enum already gained Json/PayloadTooLarge and lost UnknownMessageType this cycle). Landing it now, in the same breaking release, prevents a churn of one-off breaks later.
+
+### Bug Fixes
+
+* **proto:** bound length-prefixed reads against DEFAULT_MAX_PAYLOAD_SIZE ([#25](https://github.com/metaneutrons/snapcast-rs/issues/25)) ([0e30962](https://github.com/metaneutrons/snapcast-rs/commit/0e30962094d57f52918a353f8779ca15ec5e9946))
+* **proto:** consolidate the monotonic clock into snapcast-proto (SSOT) ([#26](https://github.com/metaneutrons/snapcast-rs/issues/26)) ([f6af7e2](https://github.com/metaneutrons/snapcast-rs/commit/f6af7e2c0595206b7bc2f8a244e8188b63d4befe))
+* **snapclient:** reuse the PCM buffer in the cpal callback (no RT allocation) ([#28](https://github.com/metaneutrons/snapcast-rs/issues/28)) ([fc2c2b6](https://github.com/metaneutrons/snapcast-rs/commit/fc2c2b66764a15ff242ee27eb0a86dadd7db3292))
+* **snapserver:** harden control-API auth and close the WebSocket bypass ([#27](https://github.com/metaneutrons/snapcast-rs/issues/27)) ([b3ce4e8](https://github.com/metaneutrons/snapcast-rs/commit/b3ce4e870c7083218e29af45fc02acd53ab829f7))
+
+
+### Code Refactoring
+
+* **proto:** mark ProtoError #[non_exhaustive] ([#38](https://github.com/metaneutrons/snapcast-rs/issues/38)) ([952a5b7](https://github.com/metaneutrons/snapcast-rs/commit/952a5b70f0a1662c301c849d30e23efcfd6ada34))
+* **server:** inject the TCP listener instead of binding in the library ([#40](https://github.com/metaneutrons/snapcast-rs/issues/40)) ([d766a37](https://github.com/metaneutrons/snapcast-rs/commit/d766a37e2d6ad37c3a3169ae0bb0ef1a1bea0451))
+* **server:** remove file persistence from the library; emit StateChanged ([#39](https://github.com/metaneutrons/snapcast-rs/issues/39)) ([9d5493f](https://github.com/metaneutrons/snapcast-rs/commit/9d5493f73d0a702f7ec76a8ed75c2b4c9f377cab))
+
 ## [0.16.1](https://github.com/metaneutrons/snapcast-rs/compare/v0.16.0...v0.16.1) (2026-05-31)
 
 

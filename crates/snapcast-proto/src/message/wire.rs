@@ -4,11 +4,28 @@ use std::io::{Read, Write};
 
 use byteorder::{LittleEndian, ReadBytesExt, WriteBytesExt};
 
+use crate::DEFAULT_MAX_PAYLOAD_SIZE;
 use crate::message::base::ProtoError;
+
+/// Read a u32 LE length prefix and validate it against [`DEFAULT_MAX_PAYLOAD_SIZE`].
+///
+/// A malicious or corrupt frame can claim a multi-gigabyte length; allocating
+/// `vec![0u8; len]` from that untrusted value before reading the bytes is an
+/// unbounded-allocation DoS. Reject oversized fields up front instead.
+fn read_checked_len<R: Read>(r: &mut R) -> Result<usize, ProtoError> {
+    let len = r.read_u32::<LittleEndian>()?;
+    if len > DEFAULT_MAX_PAYLOAD_SIZE {
+        return Err(ProtoError::PayloadTooLarge {
+            len: len as usize,
+            max: DEFAULT_MAX_PAYLOAD_SIZE as usize,
+        });
+    }
+    Ok(len as usize)
+}
 
 /// Read a length-prefixed string (u32 LE length + UTF-8 bytes).
 pub fn read_string<R: Read>(r: &mut R) -> Result<String, ProtoError> {
-    let len = r.read_u32::<LittleEndian>()? as usize;
+    let len = read_checked_len(r)?;
     let mut buf = vec![0u8; len];
     r.read_exact(&mut buf)?;
     Ok(String::from_utf8_lossy(&buf).into_owned())
@@ -23,7 +40,7 @@ pub fn write_string<W: Write>(w: &mut W, s: &str) -> Result<(), ProtoError> {
 
 /// Read a length-prefixed byte array (u32 LE length + bytes).
 pub fn read_bytes<R: Read>(r: &mut R) -> Result<Vec<u8>, ProtoError> {
-    let len = r.read_u32::<LittleEndian>()? as usize;
+    let len = read_checked_len(r)?;
     let mut buf = vec![0u8; len];
     r.read_exact(&mut buf)?;
     Ok(buf)
@@ -79,5 +96,37 @@ mod tests {
         let mut cursor = std::io::Cursor::new(&buf);
         let s = read_string(&mut cursor).unwrap();
         assert_eq!(s, "");
+    }
+
+    #[test]
+    fn oversized_length_is_rejected_without_allocating() {
+        // A 4-byte prefix claiming ~4 GiB, with no payload bytes following.
+        // The guard must reject it instead of attempting `vec![0u8; 0xFFFFFFFF]`.
+        let prefix = [0xFF, 0xFF, 0xFF, 0xFF];
+
+        let mut cursor = std::io::Cursor::new(&prefix);
+        match read_string(&mut cursor) {
+            Err(ProtoError::PayloadTooLarge { len, max }) => {
+                assert_eq!(len, 0xFFFF_FFFF);
+                assert_eq!(max, DEFAULT_MAX_PAYLOAD_SIZE as usize);
+            }
+            other => panic!("expected PayloadTooLarge, got {other:?}"),
+        }
+
+        let mut cursor = std::io::Cursor::new(&prefix);
+        assert!(matches!(
+            read_bytes(&mut cursor),
+            Err(ProtoError::PayloadTooLarge { .. })
+        ));
+    }
+
+    #[test]
+    fn max_allowed_length_passes_guard() {
+        // Exactly the cap is accepted by the length check (then fails on the
+        // truncated body via read_exact — i.e. NOT PayloadTooLarge).
+        let mut prefix = Vec::new();
+        prefix.extend_from_slice(&DEFAULT_MAX_PAYLOAD_SIZE.to_le_bytes());
+        let mut cursor = std::io::Cursor::new(&prefix);
+        assert!(matches!(read_bytes(&mut cursor), Err(ProtoError::Io(_))));
     }
 }

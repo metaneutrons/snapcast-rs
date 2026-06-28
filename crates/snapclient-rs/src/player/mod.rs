@@ -134,6 +134,10 @@ fn run_cpal(
 
     let stream_cb = Arc::clone(&stream);
     let tp_cb = Arc::clone(&time_provider);
+    // Reused across callbacks and resized in place, so the realtime audio path
+    // performs no heap allocation after warmup. Allocating inside a cpal
+    // callback can stall the audio thread and cause xruns/glitches.
+    let mut pcm_buf: Vec<u8> = Vec::new();
     let cpal_stream = device.build_output_stream(
         &config,
         move |data: &mut [f32], info: &cpal::OutputCallbackInfo| {
@@ -183,7 +187,7 @@ fn run_cpal(
                 // For now, let's do a simple implementation that matches the requested output frames
                 let input_frames =
                     (num_frames as f64 * format.rate() as f64 / device_rate as f64).ceil() as usize;
-                let mut pcm_buf = vec![0u8; input_frames * frame_size];
+                pcm_buf.resize(input_frames * frame_size, 0);
                 s.get_player_chunk_or_silence(
                     server_now,
                     buffer_dac_usec,
@@ -205,7 +209,7 @@ fn run_cpal(
                     SampleEncoding::Float32,
                 );
             } else {
-                let mut pcm_buf = vec![0u8; num_frames * frame_size];
+                pcm_buf.resize(num_frames * frame_size, 0);
                 s.get_player_chunk_or_silence(
                     server_now,
                     buffer_dac_usec,
@@ -218,7 +222,7 @@ fn run_cpal(
             }
             #[cfg(not(feature = "resampler"))]
             {
-                let mut pcm_buf = vec![0u8; num_frames * frame_size];
+                pcm_buf.resize(num_frames * frame_size, 0);
                 s.get_player_chunk_or_silence(
                     server_now,
                     buffer_dac_usec,

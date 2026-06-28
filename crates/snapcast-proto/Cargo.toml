@@ -15,6 +15,11 @@ serde = { workspace = true }
 serde_json = { workspace = true }
 thiserror = { workspace = true }
 
+# Monotonic clock FFI (CLOCK_MONOTONIC on non-macOS Unix); see src/time.rs.
+# macOS uses mach_* externs directly and needs no libc dependency.
+[target.'cfg(all(unix, not(target_os = "macos")))'.dependencies]
+libc = { workspace = true }
+
 [features]
 custom-protocol = []
 

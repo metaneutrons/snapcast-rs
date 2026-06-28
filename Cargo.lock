@@ -2428,7 +2428,6 @@ dependencies = [
  "futures-util",
  "hkdf",
  "hostname",
- "libc",
  "lz4_flex",
  "mac_address",
  "opus-decoder",
@@ -2450,6 +2449,7 @@ name = "snapcast-proto"
 version = "0.16.1"
 dependencies = [
  "byteorder",
+ "libc",
  "serde",
  "serde_json",
  "thiserror 2.0.18",
@@ -2466,7 +2466,6 @@ dependencies = [
  "chacha20poly1305",
  "getrandom 0.4.2",
  "hkdf",
- "libc",
  "libflac-sys",
  "lz4_flex",
  "ogg",

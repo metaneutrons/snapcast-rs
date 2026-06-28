@@ -257,73 +257,21 @@ pub(super) fn stamp_sent(base: &mut BaseMessage) {
 }
 
 /// Matches the C++ `chronos::steadytimeofday` — monotonic clock time.
-/// On macOS/Linux, `Instant` is based on `CLOCK_MONOTONIC` which counts
-/// seconds since boot, matching the C++ snapserver's clock domain.
+/// On macOS/Linux this samples the same clock domain as the C++ snapserver.
 pub(super) fn steady_time_of_day() -> Timeval {
-    // Instant::now().duration_since(EPOCH) gives time since first call.
-    // We need time since boot. On Unix, Instant uses CLOCK_MONOTONIC
-    // which starts at boot. We can get this via the elapsed time from
-    // a known-early Instant.
-    let usec = monotonic_usec();
+    let usec = snapcast_proto::time::now_usec();
     Timeval {
         sec: (usec / 1_000_000) as i32,
         usec: (usec % 1_000_000) as i32,
     }
 }
 
-/// Microseconds since boot (monotonic clock).
-/// Uses the same clock source as C++ std::chrono::steady_clock.
-#[allow(unsafe_code)] // FFI: mach_continuous_time (macOS), clock_gettime (Linux)
-fn monotonic_usec() -> i64 {
-    #[cfg(target_os = "macos")]
-    {
-        // macOS: C++ steady_clock uses mach_continuous_time, not CLOCK_MONOTONIC.
-        // These differ by ~2s on macOS. We must match the server's clock exactly.
-        unsafe extern "C" {
-            fn mach_continuous_time() -> u64;
-            fn mach_timebase_info(info: *mut MachTimebaseInfo) -> i32;
-        }
-        #[repr(C)]
-        struct MachTimebaseInfo {
-            numer: u32,
-            denom: u32,
-        }
-        static TIMEBASE: std::sync::OnceLock<(u32, u32)> = std::sync::OnceLock::new();
-        let (numer, denom) = *TIMEBASE.get_or_init(|| {
-            let mut info = MachTimebaseInfo { numer: 0, denom: 0 };
-            unsafe {
-                mach_timebase_info(&mut info);
-            }
-            (info.numer, info.denom)
-        });
-        let ticks = unsafe { mach_continuous_time() };
-        let nanos = ticks as i128 * numer as i128 / denom as i128;
-        (nanos / 1_000) as i64
-    }
-    #[cfg(all(unix, not(target_os = "macos")))]
-    {
-        let mut ts = libc::timespec {
-            tv_sec: 0,
-            tv_nsec: 0,
-        };
-        // SAFETY: clock_gettime with CLOCK_MONOTONIC is always safe
-        unsafe {
-            libc::clock_gettime(libc::CLOCK_MONOTONIC, &mut ts);
-        }
-        ts.tv_sec * 1_000_000 + ts.tv_nsec / 1_000
-    }
-    #[cfg(not(unix))]
-    {
-        let now = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap_or_default();
-        now.as_micros() as i64
-    }
-}
-
 /// Current time in microseconds using the steady clock.
+///
+/// Single source of truth lives in [`snapcast_proto::time`] so the client and
+/// server cannot drift onto different clock domains.
 pub fn now_usec() -> i64 {
-    monotonic_usec()
+    snapcast_proto::time::now_usec()
 }
 
 #[cfg(test)]

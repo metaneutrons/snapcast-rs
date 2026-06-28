@@ -79,6 +79,14 @@ struct Cli {
     #[arg(long = "source")]
     sources: Vec<String>,
 
+    /// Require authentication on the control/HTTP/WebSocket APIs
+    #[arg(long = "auth")]
+    auth: bool,
+
+    /// Secret used to sign/verify control-API auth tokens (required with --auth)
+    #[arg(long = "auth-secret")]
+    auth_secret: Option<String>,
+
     /// Disable mDNS advertisement
     #[cfg(feature = "mdns")]
     #[arg(long = "mdns-disable")]
@@ -121,6 +129,8 @@ fn main() -> anyhow::Result<()> {
             codec: cli.codec,
             sampleformat: cli.sampleformat,
             sources: cli.sources,
+            auth_enabled: cli.auth,
+            auth_secret: cli.auth_secret,
             #[cfg(feature = "encryption")]
             encryption_psk: cli.encryption_psk,
             #[cfg(feature = "mdns")]
@@ -129,6 +139,18 @@ fn main() -> anyhow::Result<()> {
             mdns_name: cli.mdns_name,
         },
     );
+
+    // Validate auth before doing anything else: refuse to start an enabled-but-
+    // secretless config that would otherwise sign tokens with an empty key.
+    server_config.auth.validate()?;
+    if server_config.auth.enabled {
+        tracing::info!("Control API authentication: ENABLED");
+    } else {
+        tracing::warn!(
+            "Control API authentication: DISABLED — anyone who can reach the \
+             control/HTTP/WebSocket ports has full control of the server"
+        );
+    }
 
     let codec = server_config.server.codec.clone();
     let sample_format_str = server_config.server.sample_format.clone();
@@ -243,7 +265,7 @@ fn main() -> anyhow::Result<()> {
 
         // JSON-RPC control servers
         let (notify_tx, _) = tokio::sync::broadcast::channel::<serde_json::Value>(256);
-        let auth_cfg = std::sync::Arc::new(auth::AuthConfig::default());
+        let auth_cfg = std::sync::Arc::new(server_config.auth.clone());
         let methods = std::sync::Arc::new(std::collections::HashSet::<String>::new());
         let notifications = std::sync::Arc::new(std::collections::HashSet::<String>::new());
 

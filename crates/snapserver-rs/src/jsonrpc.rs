@@ -308,6 +308,12 @@ pub(crate) async fn handle_request(
 
         // --- Auth ---
         "Server.GetToken" => {
+            // SECURITY (known gap): this mints a valid token for ANY username
+            // with no credential check. The auth gate (TCP/WS/HTTP) is therefore
+            // necessary but not sufficient — real security needs GetToken to
+            // verify credentials against a user store before issuing a token.
+            // Tracked separately; do not treat enabled auth as a security
+            // boundary until this is implemented.
             let username = params["username"].as_str().unwrap_or("anonymous");
             match auth::generate_token(auth_config, username) {
                 Ok(token) => ok(id, json!({"token": token})),

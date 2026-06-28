@@ -14,7 +14,12 @@ struct Claims {
 }
 
 /// Auth configuration.
-#[derive(Debug, Clone)]
+///
+/// `Default` is disabled with an **empty** secret. A real secret must be
+/// supplied explicitly (config/CLI) before authentication is enabled — there
+/// is deliberately no built-in default secret, since a shipped constant would
+/// be public and forgeable by anyone.
+#[derive(Debug, Clone, Default)]
 pub struct AuthConfig {
     /// Whether authentication is required.
     pub enabled: bool,
@@ -22,12 +27,19 @@ pub struct AuthConfig {
     pub secret: String,
 }
 
-impl Default for AuthConfig {
-    fn default() -> Self {
-        Self {
-            enabled: false,
-            secret: "snapcast-default-secret-key-32bytes!".into(),
+impl AuthConfig {
+    /// Reject an inconsistent configuration (enabled without a secret).
+    ///
+    /// Call this at startup and refuse to run on error — an enabled-but-
+    /// secretless config would otherwise sign tokens with an empty key.
+    pub fn validate(&self) -> Result<()> {
+        if self.enabled && self.secret.trim().is_empty() {
+            anyhow::bail!(
+                "authentication is enabled but no secret is configured \
+                 (set [auth] secret in the config file or pass --auth-secret)"
+            );
         }
+        Ok(())
     }
 }
 
@@ -45,6 +57,9 @@ pub fn validate_bearer(config: &AuthConfig, header: Option<&str>) -> Result<Stri
 
 /// Generate a JWT token for the given subject.
 pub fn generate_token(config: &AuthConfig, subject: &str) -> Result<String> {
+    if config.secret.is_empty() {
+        anyhow::bail!("cannot issue token: auth secret is not configured");
+    }
     let exp = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)?
         .as_secs()
@@ -66,6 +81,9 @@ pub fn generate_token(config: &AuthConfig, subject: &str) -> Result<String> {
 
 /// Validate a JWT token. Returns the subject if valid.
 pub fn validate_token(config: &AuthConfig, token: &str) -> Result<String> {
+    if config.secret.is_empty() {
+        anyhow::bail!("cannot validate token: auth secret is not configured");
+    }
     let data = decode::<Claims>(
         token,
         &DecodingKey::from_secret(config.secret.as_bytes()),
@@ -114,5 +132,33 @@ mod tests {
         };
         let token = generate_token(&config1, "user1").unwrap();
         assert!(validate_token(&config2, &token).is_err());
+    }
+
+    #[test]
+    fn default_is_disabled_with_empty_secret() {
+        let config = AuthConfig::default();
+        assert!(!config.enabled);
+        assert!(config.secret.is_empty(), "must not ship a built-in secret");
+        // A disabled config is internally consistent.
+        assert!(config.validate().is_ok());
+    }
+
+    #[test]
+    fn validate_rejects_enabled_without_secret() {
+        let config = AuthConfig {
+            enabled: true,
+            secret: "   ".into(),
+        };
+        assert!(config.validate().is_err());
+    }
+
+    #[test]
+    fn token_ops_refuse_empty_secret() {
+        let config = AuthConfig {
+            enabled: true,
+            secret: String::new(),
+        };
+        assert!(generate_token(&config, "user1").is_err());
+        assert!(validate_token(&config, "any.token.value").is_err());
     }
 }

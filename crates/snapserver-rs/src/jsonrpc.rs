@@ -7,6 +7,18 @@ use crate::auth::{self, AuthConfig};
 /// JSON-RPC error codes.
 const INVALID_PARAMS: i64 = -32602;
 
+/// Bind a required string parameter, or return an `INVALID_PARAMS` error naming
+/// the missing field. Replaces the `let Some(x) = params["k"].as_str() else {
+/// return err(...) }` boilerplate repeated by every handler.
+macro_rules! require_str {
+    ($params:expr, $key:literal, $id:expr) => {
+        match $params[$key].as_str() {
+            Some(value) => value,
+            None => return err($id, INVALID_PARAMS, concat!("missing '", $key, "'")),
+        }
+    };
+}
+
 /// Result of handling a JSON-RPC request.
 pub(crate) enum RpcResult {
     /// Handled: response JSON + optional notification to broadcast.
@@ -51,9 +63,7 @@ pub(crate) async fn handle_request(
             None => err(id, INVALID_PARAMS, "status unavailable"),
         },
         "Server.DeleteClient" => {
-            let Some(client_id) = params["id"].as_str() else {
-                return err(id, INVALID_PARAMS, "missing 'id'");
-            };
+            let client_id = require_str!(params, "id", id);
             let _ = cmd_tx
                 .send(snapcast_server::ServerCommand::DeleteClient {
                     client_id: client_id.to_string(),
@@ -64,9 +74,7 @@ pub(crate) async fn handle_request(
 
         // --- Client ---
         "Client.GetStatus" => {
-            let Some(client_id) = params["id"].as_str() else {
-                return err(id, INVALID_PARAMS, "missing 'id'");
-            };
+            let client_id = require_str!(params, "id", id);
             let Some(status) = get_status(cmd_tx).await else {
                 return err(id, INVALID_PARAMS, "status unavailable");
             };
@@ -82,9 +90,7 @@ pub(crate) async fn handle_request(
             }
         }
         "Client.SetVolume" => {
-            let Some(client_id) = params["id"].as_str() else {
-                return err(id, INVALID_PARAMS, "missing 'id'");
-            };
+            let client_id = require_str!(params, "id", id);
             let volume = params["volume"]["percent"].as_u64().unwrap_or(100).min(100) as u16;
             let muted = params["volume"]["muted"].as_bool().unwrap_or(false);
             let _ = cmd_tx
@@ -102,9 +108,7 @@ pub(crate) async fn handle_request(
             )
         }
         "Client.SetLatency" => {
-            let Some(client_id) = params["id"].as_str() else {
-                return err(id, INVALID_PARAMS, "missing 'id'");
-            };
+            let client_id = require_str!(params, "id", id);
             let latency = params["latency"].as_i64().unwrap_or(0) as i32;
             let _ = cmd_tx
                 .send(snapcast_server::ServerCommand::SetClientLatency {
@@ -119,9 +123,7 @@ pub(crate) async fn handle_request(
             )
         }
         "Client.SetName" => {
-            let Some(client_id) = params["id"].as_str() else {
-                return err(id, INVALID_PARAMS, "missing 'id'");
-            };
+            let client_id = require_str!(params, "id", id);
             let name = params["name"].as_str().unwrap_or("").to_string();
             let _ = cmd_tx
                 .send(snapcast_server::ServerCommand::SetClientName {
@@ -138,9 +140,7 @@ pub(crate) async fn handle_request(
 
         // --- Group ---
         "Group.GetStatus" => {
-            let Some(group_id) = params["id"].as_str() else {
-                return err(id, INVALID_PARAMS, "missing 'id'");
-            };
+            let group_id = require_str!(params, "id", id);
             let Some(status) = get_status(cmd_tx).await else {
                 return err(id, INVALID_PARAMS, "status unavailable");
             };
@@ -155,9 +155,7 @@ pub(crate) async fn handle_request(
             }
         }
         "Group.SetMute" => {
-            let Some(group_id) = params["id"].as_str() else {
-                return err(id, INVALID_PARAMS, "missing 'id'");
-            };
+            let group_id = require_str!(params, "id", id);
             let muted = params["mute"].as_bool().unwrap_or(false);
             let _ = cmd_tx
                 .send(snapcast_server::ServerCommand::SetGroupMute {
@@ -172,12 +170,8 @@ pub(crate) async fn handle_request(
             )
         }
         "Group.SetStream" => {
-            let Some(group_id) = params["id"].as_str() else {
-                return err(id, INVALID_PARAMS, "missing 'id'");
-            };
-            let Some(stream_id) = params["stream_id"].as_str() else {
-                return err(id, INVALID_PARAMS, "missing 'stream_id'");
-            };
+            let group_id = require_str!(params, "id", id);
+            let stream_id = require_str!(params, "stream_id", id);
             let _ = cmd_tx
                 .send(snapcast_server::ServerCommand::SetGroupStream {
                     group_id: group_id.to_string(),
@@ -191,9 +185,7 @@ pub(crate) async fn handle_request(
             )
         }
         "Group.SetClients" => {
-            let Some(group_id) = params["id"].as_str() else {
-                return err(id, INVALID_PARAMS, "missing 'id'");
-            };
+            let group_id = require_str!(params, "id", id);
             let Some(clients) = params["clients"].as_array() else {
                 return err(id, INVALID_PARAMS, "missing 'clients'");
             };
@@ -211,9 +203,7 @@ pub(crate) async fn handle_request(
             ok_with_notify(id, status.clone(), "Server.OnUpdate", status)
         }
         "Group.SetName" => {
-            let Some(group_id) = params["id"].as_str() else {
-                return err(id, INVALID_PARAMS, "missing 'id'");
-            };
+            let group_id = require_str!(params, "id", id);
             let name = params["name"].as_str().unwrap_or("").to_string();
             let _ = cmd_tx
                 .send(snapcast_server::ServerCommand::SetGroupName {
@@ -230,9 +220,7 @@ pub(crate) async fn handle_request(
 
         // --- Stream ---
         "Stream.SetProperty" => {
-            let Some(stream_id) = params["id"].as_str() else {
-                return err(id, INVALID_PARAMS, "missing 'id'");
-            };
+            let stream_id = require_str!(params, "id", id);
             let metadata = params["properties"]
                 .as_object()
                 .map(|o| o.iter().map(|(k, v)| (k.clone(), v.clone())).collect())
@@ -252,12 +240,8 @@ pub(crate) async fn handle_request(
             )
         }
         "Stream.Control" => {
-            let Some(stream_id) = params["id"].as_str() else {
-                return err(id, INVALID_PARAMS, "missing 'id'");
-            };
-            let Some(command) = params["command"].as_str() else {
-                return err(id, INVALID_PARAMS, "missing 'command'");
-            };
+            let stream_id = require_str!(params, "id", id);
+            let command = require_str!(params, "command", id);
             let _ = cmd_tx
                 .send(snapcast_server::ServerCommand::StreamControl {
                     stream_id: stream_id.to_string(),
@@ -268,9 +252,7 @@ pub(crate) async fn handle_request(
             ok(id, json!({"id": stream_id}))
         }
         "Stream.AddStream" => {
-            let Some(stream_uri) = params["streamUri"].as_str() else {
-                return err(id, INVALID_PARAMS, "missing 'streamUri'");
-            };
+            let stream_uri = require_str!(params, "streamUri", id);
             let (tx, rx) = tokio::sync::oneshot::channel();
             let _ = cmd_tx
                 .send(snapcast_server::ServerCommand::AddStream {
@@ -288,9 +270,7 @@ pub(crate) async fn handle_request(
             }
         }
         "Stream.RemoveStream" => {
-            let Some(stream_id) = params["id"].as_str() else {
-                return err(id, INVALID_PARAMS, "missing 'id'");
-            };
+            let stream_id = require_str!(params, "id", id);
             let _ = cmd_tx
                 .send(snapcast_server::ServerCommand::RemoveStream {
                     stream_id: stream_id.to_string(),
@@ -315,9 +295,7 @@ pub(crate) async fn handle_request(
             }
         }
         "Server.Authenticate" => {
-            let Some(token) = params["token"].as_str() else {
-                return err(id, INVALID_PARAMS, "missing 'token'");
-            };
+            let token = require_str!(params, "token", id);
             match auth::validate_token(auth_config, token) {
                 Ok(subject) => ok(id, json!({"ok": true, "subject": subject})),
                 Err(_) => err(id, INVALID_PARAMS, "invalid token"),

@@ -19,7 +19,6 @@ serde = { workspace = true }
 tracing = { workspace = true }
 anyhow = { workspace = true }
 hostname = { workspace = true }
-libc = { workspace = true }
 mac_address = { workspace = true }
 symphonia = { workspace = true }
 opus-decoder = "0.1"

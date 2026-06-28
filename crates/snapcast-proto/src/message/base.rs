@@ -9,7 +9,11 @@ use super::MessageType;
 use crate::types::Timeval;
 
 /// Errors that can occur during message parsing.
+///
+/// `#[non_exhaustive]`: new variants may be added in future releases, so
+/// downstream `match`es must include a wildcard arm.
 #[derive(Debug, Error)]
+#[non_exhaustive]
 pub enum ProtoError {
     /// An I/O error occurred during read or write.
     #[error("I/O error: {0}")]

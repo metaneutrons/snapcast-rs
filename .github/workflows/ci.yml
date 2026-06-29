@@ -11,6 +11,26 @@ env:
   RUSTFLAGS: "-D warnings"
 
 jobs:
+  commit-convention:
+    name: Conventional Commit (PR title)
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request'
+    steps:
+      - name: Validate PR title
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          echo "PR title: $PR_TITLE"
+          # PRs are squash-merged, so the PR title becomes the commit on main
+          # and is what release-please parses for version bumps. Enforce the
+          # same Conventional Commits format as .githooks/commit-msg.
+          if ! printf '%s' "$PR_TITLE" | grep -qE '^(feat|fix|refactor|docs|test|ci|chore|perf|style|build|revert)(\(.+\))?!?: .+'; then
+            echo "::error::PR title must follow Conventional Commits: <type>(<scope>): <description>"
+            echo "Allowed types: feat, fix, refactor, docs, test, ci, chore, perf, style, build, revert (optionally with '!' for breaking)."
+            echo "Got: $PR_TITLE"
+            exit 1
+          fi
+
   fmt:
     name: Format
     runs-on: ubuntu-latest

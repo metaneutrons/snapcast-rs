@@ -216,3 +216,29 @@ CLI/API compatibility, but `flacenc` has no libFLAC-style preset ladder, so
 the level is mapped to `flacenc`'s LPC search order rather than reproducing
 libFLAC's exact presets (the server never sets it — it's always empty in
 practice).
+
+### Supported format envelope (the one behavioral narrowing)
+
+`flacenc` 0.5.x verifies a narrower format envelope at construction than the
+vendored libFLAC did:
+
+| Parameter | `flacenc` (now) | libFLAC (before) |
+|---|---|---|
+| Bit depth | 8–24-bit | up to 32-bit |
+| Sample rate | ≤ 96 kHz | up to ~655 kHz |
+| Channels | 1–8 | 1–8 |
+
+Every default and realistic Snapcast configuration (`48000:16:2` default,
+plus 24-bit and ≤ 96 kHz) is unaffected — this matches the codec table in the
+README, which already documents FLAC as 16/24-bit. A stream requesting 32-bit
+depth, a rate above 96 kHz, or more than 8 channels now fails at encoder
+construction. `FlacEncoder::new` checks these bounds up front and returns an
+explicit, actionable error (e.g. *"FLAC (flacenc) supports up to 24-bit
+samples, got 32-bit — use a 16- or 24-bit sample format, or a different
+codec"*) rather than letting `flacenc`'s opaque `VerifyError` surface as a
+generic init failure. Down-quantizing 32-bit to 24-bit was considered but
+rejected: it would silently degrade resolution and risk a mismatch between the
+STREAMINFO bit depth and the stream's negotiated sample format, so failing
+loudly with a clear remedy is the safer default. These limits, and the
+channel-interleaving alignment of the streaming buffer, are covered by unit
+tests in `flac.rs`.

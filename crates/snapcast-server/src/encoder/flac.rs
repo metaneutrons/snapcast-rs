@@ -90,6 +90,29 @@ impl FlacEncoder {
         let channels = format.channels() as usize;
         let bits = format.bits() as usize;
 
+        // flacenc verifies a narrower envelope than libFLAC accepted: up to
+        // 24-bit samples, sample rate <= 96 kHz, and 1..=8 channels (enforced by
+        // its `StreamInfo::verify`). Reject anything outside it up front with an
+        // actionable message instead of letting flacenc's opaque `VerifyError`
+        // surface as a generic "FLAC stream init failed". This is the one
+        // behavioral narrowing versus the prior libFLAC build (which accepted
+        // 32-bit and rates to ~655 kHz); make it loud rather than silent.
+        if bits > 24 {
+            bail!(
+                "FLAC (flacenc) supports up to 24-bit samples, got {bits}-bit — \
+                 use a 16- or 24-bit sample format, or a different codec"
+            );
+        }
+        if rate > 96_000 {
+            bail!(
+                "FLAC (flacenc) supports sample rates up to 96 kHz, got {rate} Hz — \
+                 use a rate <= 96 kHz, or a different codec"
+            );
+        }
+        if !(1..=8).contains(&channels) {
+            bail!("FLAC (flacenc) supports 1-8 channels, got {channels}");
+        }
+
         // Header: `fLaC` marker + STREAMINFO, no frames. Declare the fixed block
         // size up front (a live stream's total-samples / MD5 / frame-size stats
         // stay at their "unknown" sentinels, exactly as the C++ server emits).
@@ -129,8 +152,19 @@ impl FlacEncoder {
     }
 
     /// Decode a chunk of interleaved little-endian PCM into i32 samples.
+    ///
+    /// Only whole inter-channel frames are decoded; a trailing partial frame
+    /// (possible only from a malformed/truncated chunk — production sources
+    /// always hand us frame-aligned chunks) is dropped rather than carried, so
+    /// the persistent `pending` buffer never loses channel-interleaving
+    /// alignment. This matches the prior libFLAC encoder, which computed
+    /// `frames = samples / channels` per call and ignored any sub-frame
+    /// remainder.
     fn pcm_to_i32(&self, pcm: &[u8]) -> Result<Vec<i32>> {
         let sample_size = self.format.sample_size() as usize;
+        let frame_size = sample_size * self.format.channels() as usize;
+        let aligned = pcm.len() - pcm.len() % frame_size.max(1);
+        let pcm = &pcm[..aligned];
         let mut out = Vec::with_capacity(pcm.len() / sample_size);
         match sample_size {
             2 => {
@@ -232,6 +266,41 @@ mod tests {
         assert!(FlacEncoder::new(fmt, "0").is_ok());
         assert!(FlacEncoder::new(fmt, "8").is_ok());
         assert!(FlacEncoder::new(fmt, "").is_ok());
+    }
+
+    #[test]
+    fn rejects_formats_outside_flacenc_envelope() {
+        // 32-bit depth, >96 kHz, and >8 channels were accepted by libFLAC but
+        // not by flacenc; reject them up front with a clear error rather than an
+        // opaque init failure.
+        assert!(FlacEncoder::new(SampleFormat::new(48000, 32, 2), "").is_err());
+        assert!(FlacEncoder::new(SampleFormat::new(192000, 24, 2), "").is_err());
+        assert!(FlacEncoder::new(SampleFormat::new(48000, 16, 9), "").is_err());
+        // Common/realistic formats still construct (16/24-bit, <=96 kHz, <=8 ch).
+        assert!(FlacEncoder::new(SampleFormat::new(48000, 16, 2), "").is_ok());
+        assert!(FlacEncoder::new(SampleFormat::new(96000, 24, 8), "").is_ok());
+    }
+
+    #[test]
+    fn misaligned_pcm_chunk_stays_frame_aligned() {
+        // A chunk whose byte length isn't a whole number of frames must not
+        // shift channel interleaving for subsequent chunks: the trailing partial
+        // frame is dropped, never carried into the persistent `pending` buffer.
+        let fmt = SampleFormat::new(48000, 16, 2); // 16-bit stereo => 4-byte frame
+        let mut enc = FlacEncoder::new(fmt, "").unwrap();
+        // 100 whole frames + 2 stray bytes (one extra sample).
+        let stray = vec![0u8; 4 * 100 + 2];
+        enc.encode(&AudioData::Pcm(stray)).unwrap();
+        assert_eq!(
+            enc.pending.len() % 2,
+            0,
+            "pending must hold a whole number of stereo frames"
+        );
+        assert_eq!(
+            enc.pending.len(),
+            200,
+            "the stray sub-frame sample is dropped"
+        );
     }
 
     #[test]

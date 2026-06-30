@@ -83,12 +83,10 @@ jobs:
           key: ${{ matrix.target }}
       - name: Install system deps (Linux)
         if: runner.os == 'Linux'
-        run: sudo apt-get update && sudo apt-get install -y libasound2-dev libflac-dev libavahi-compat-libdnssd-dev
-      # No FLAC install step: libflac-sys vendors and builds FLAC itself via
-      # CMake (default `build-flac`/`build-ogg` features) on every platform,
-      # so cmake-rs's target-aware compiler resolution handles real
-      # cross-compilation (e.g. x86_64-apple-darwin from an arm64 runner)
-      # without a matching system/Homebrew library.
+        run: sudo apt-get update && sudo apt-get install -y libasound2-dev libavahi-compat-libdnssd-dev
+      # No FLAC system dep: the `flac` feature uses flacenc (pure Rust), so the
+      # release build cross-compiles to every target with no C toolchain or
+      # system/Homebrew library (libasound2/avahi above are for cpal + mDNS).
       - name: Build release
         run: |
           cargo build --release --target ${{ matrix.target }} -p snapclient-rs

@@ -250,7 +250,7 @@ StreamConfig {
 | Feature  | Default | C dep     | Description |
 |----------|---------|-----------|-------------|
 | `f32lz4` | —       | none      | f32 LZ4 codec (lz4_flex) |
-| `flac`   | ✅      | libFLAC   | FLAC encoding |
+| `flac`   | ✅      | none      | FLAC encoding (pure Rust, flacenc) |
 | `opus`   | —       | libopus   | Opus encoding |
 | `vorbis` | —       | libvorbis | Vorbis encoding |
 | `custom-protocol` | — | none | Custom binary messages (type 9+) |
@@ -333,7 +333,7 @@ Equivalent config file keys are `bind_to_address` or `bind_address` under `[tcp-
 |--------|---------|-------|-----------|---------|
 | PCM    | ✅ always | none | 16/24/32-bit | zero |
 | f32lz4 | optional | none | 32-bit float | zero |
-| FLAC   | ✅ default | libFLAC | 16/24-bit (decoded to f32) | 24ms (block size) |
+| FLAC   | ✅ default | none | 16/24-bit (decoded to f32) | 24ms (block size) |
 | Opus   | optional | libopus | 16-bit | 20ms |
 | Vorbis | optional | libvorbis | lossy | variable |
 
@@ -468,11 +468,12 @@ cargo build --release --features f32lz4                  # + f32lz4 (pure Rust)
 cargo build --release --no-default-features --features f32lz4  # pure Rust, no C deps
 ```
 
-Native codec features need their system libraries available to the linker:
+PCM, **FLAC**, and f32lz4 are pure Rust — no system library or C toolchain
+needed. The remaining native codec features need their system libraries
+available to the linker:
 
 | Feature | Linux package examples | macOS package examples |
 |---------|------------------------|------------------------|
-| `flac` | `libflac-dev` | `flac` |
 | `opus` | `libopus-dev pkg-config` | `opus pkg-config` |
 | `vorbis` | `libvorbis-dev` | `libvorbis` |
 
@@ -502,7 +503,7 @@ ffmpeg -re -i music.mp3 -f s16le -ar 48000 -ac 2 pipe:1 > /tmp/snapfifo
 
 ## Code Quality
 
-- `#![deny(unsafe_code)]` on all library crates, with narrow module-level FFI exceptions for the platform monotonic clock (in `snapcast-proto`) and native FLAC callbacks (in `snapcast-server`)
+- `#![deny(unsafe_code)]` on all library crates; the only `unsafe` is one narrow FFI exception for the platform monotonic clock in `snapcast-proto` — `snapcast-client` and `snapcast-server` are entirely `unsafe`-free
 - Warning-clean `cargo check`, `cargo test`, and `cargo clippy -- -D warnings` gates
 - No crate-level `#![allow]` blankets and no TODO markers in production code
 - Shared defaults/constants in `snapcast-proto` instead of duplicated magic strings
@@ -565,7 +566,7 @@ match err {
 
 ## Releases
 
-Pre-built binaries for every release, all with FLAC support (vendored and statically built — no system library needed on any platform):
+Pre-built binaries for every release, all with FLAC support (pure Rust — no system library or C toolchain needed on any platform):
 
 | Platform | Target triple | Client | Server |
 |----------|----------------|--------|--------|

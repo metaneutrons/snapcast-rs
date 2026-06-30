@@ -1,15 +1,16 @@
 # FLAC encoder evaluation: pure Rust vs. vendored C
 
-**Status:** recorded finding, 2026-06-30. **Not yet implemented** — the
-server still ships its current `libflac-sys`-based encoder
-(`crates/snapcast-server/src/encoder/flac.rs`). This document captures why
-FLAC encoding is C today, what changed on crates.io since the last attempt
-to make it pure Rust, and the decision for when we revisit it.
+**Status:** **Implemented, 2026-06-30.**
+`crates/snapcast-server/src/encoder/flac.rs` now encodes FLAC with `flacenc`
+(pure Rust). `libflac-sys`, CMake, and the C-toolchain build requirement are
+gone, and `snapcast-server` is now free of `unsafe` entirely. This document
+records why FLAC encoding *was* C, what changed on crates.io to make a
+pure-Rust move viable, and why `flacenc` was chosen.
 
 ## TL;DR
 
-**We'll move to [`flacenc`](https://crates.io/crates/flacenc) when we next
-touch the FLAC encoder.** Both `flacenc` and
+**Migrated to [`flacenc`](https://crates.io/crates/flacenc).** Both `flacenc`
+and
 [`oxideav-flac`](https://crates.io/crates/oxideav-flac) pass a real
 correctness spike — chunked streaming encode that decodes bit-exact via two
 independent decoders, including the partial-block edge case. `flacenc` wins
@@ -23,10 +24,11 @@ lifecycle (`0.0.x`, ~2.5 months old at evaluation time) than we'd want to
 depend on today. **Worth revisiting once it reaches a more established
 release.**
 
-## Why FLAC encoding is C today
+## Why FLAC encoding was C (history)
 
-`snapcast-server`'s FLAC encoder has flipped implementations twice already,
-both times for protocol-correctness reasons, not lack of trying pure Rust:
+`snapcast-server`'s FLAC encoder had flipped implementations twice before
+this, both times for protocol-correctness reasons, not lack of trying pure
+Rust:
 
 1. Originally `flac-bound` (C bindings).
 2. Switched to [`flac-codec`](https://crates.io/crates/flac-codec) (pure
@@ -38,12 +40,12 @@ both times for protocol-correctness reasons, not lack of trying pure Rust:
    Each call's file-level framing leaked into the frame stream, causing
    client decode errors (`frame header reserved bit`).
 
-`libflac-sys` vendors the real libFLAC C source and builds it via CMake at
-compile time, uniformly on every platform (no system package needed — see
-the README's "Code Quality" section). It works correctly, confirmed by CI on
-all 5 release targets. The only real cost is that it's not pure Rust: a
-`flac`-feature build needs a C/C++ toolchain + CMake available, which is
-otherwise unnecessary for this project.
+`libflac-sys` vendored the real libFLAC C source and built it via CMake at
+compile time, uniformly on every platform (no system package needed). It
+worked correctly. The only real cost was that it wasn't pure Rust: a
+`flac`-feature build needed a C/C++ toolchain + CMake available, which is
+otherwise unnecessary for this project — and the FLAC write-callback was the
+last `unsafe` block in `snapcast-server`. Both are now gone.
 
 ## Why revisit now
 
@@ -174,9 +176,8 @@ dependency tree:
 
 ## Decision
 
-Use `flacenc` (with `default-features = false`) when we migrate
-`snapcast-server`'s FLAC encoder off `libflac-sys`. Both candidates are
-bitstream-verified correct, so this isn't a correctness call — `flacenc`'s
+`flacenc` (with `default-features = false`). Both candidates are
+bitstream-verified correct, so this wasn't a correctness call — `flacenc`'s
 much longer track record, broader adoption, and leaner dependency footprint
 once slimmed make it the safer long-term dependency for an encoder this
 project's audio path relies on.
@@ -189,12 +190,29 @@ simply earlier in its lifecycle than we'd want to depend on for this today.
 `0.x` past the earliest `0.0` stage, a longer track record, broader
 adoption).
 
-## Scope of a future migration (not yet planned in detail)
+## What the migration did
 
-Out of scope for this document, but worth noting for whoever picks this up:
-replacing `crates/snapcast-server/src/encoder/flac.rs`'s `libflac-sys` calls
-with `flacenc` per the wrapper shape validated in the spike; dropping the
-`libflac-sys`/`cmake` dependency and the now-unneeded C-toolchain build
-requirement; updating the README's FLAC vendoring note and feature table;
-and extending the spike's correctness coverage (24-bit, real throughput
-numbers) before cutting over in production.
+`crates/snapcast-server/src/encoder/flac.rs` was rewritten against `flacenc`:
+
+- The encoder buffers incoming interleaved PCM and emits fixed 1152-sample
+  FLAC frames via `flacenc::encode_fixed_size_frame`, with the `fLaC` marker +
+  STREAMINFO header built once via `Stream::write`. This keeps the on-wire
+  stream byte-structurally the same as the libFLAC version (same frame
+  cadence, same fixed-block-size STREAMINFO, same "empty result while
+  buffering" contract the server's stream loop already relies on), so every
+  existing test stays green.
+- `libflac-sys` and its `cmake` build dependency are dropped; the `flac`
+  feature now pulls only `flacenc` (no system library, no C toolchain).
+- The FLAC write-callback was the last `unsafe` in `snapcast-server`, so the
+  crate is now entirely `unsafe`-free under its `#![deny(unsafe_code)]`.
+- Validated three independent ways: the existing end-to-end round trip
+  (server encode → `symphonia` client decode) in `snapcast-tests/tests/audio.rs`,
+  unit tests for 16-bit, 24-bit, buffering cadence, and header/frame
+  separation, and a manual `flac -t` (C reference) pass over the production
+  buffering output.
+
+The compression-level option (`0..=8`) is still accepted and validated for
+CLI/API compatibility, but `flacenc` has no libFLAC-style preset ladder, so
+the level is mapped to `flacenc`'s LPC search order rather than reproducing
+libFLAC's exact presets (the server never sets it — it's always empty in
+practice).

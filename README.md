@@ -13,7 +13,7 @@
 
 A Rust reimplementation of [Snapcast](https://github.com/snapcast/snapcast), the excellent multiroom audio system created by [Johannes Pohl (badaix)](https://github.com/badaix). Snapcast synchronizes audio playback across multiple devices with sub-millisecond precision — turning any collection of speakers into a perfectly synced whole-home audio system.
 
-This project exists primarily to serve as a native Rust dependency for [SnapDog](https://github.com/metaneutrons/SnapDogRust), a multiroom audio appliance. Rather than shelling out to C++ binaries or bridging through FFI, SnapDog embeds the Snapcast protocol directly as a library — receiving audio, encoding it, distributing it to clients, and controlling playback, all within a single Rust process.
+This project exists primarily to serve as a native Rust dependency for [SnapDog](https://github.com/SnapDogRocks/snapdog), a multiroom audio appliance. Rather than shelling out to C++ binaries or bridging through FFI, SnapDog embeds the Snapcast protocol directly as a library — receiving audio, encoding it, distributing it to clients, and controlling playback, all within a single Rust process.
 
 To make this possible, snapcast-rs separates the protocol engine from the application shell. The **library crates** (`snapcast-client`, `snapcast-server`) implement the Snapcast binary protocol, audio encoding/decoding, and time synchronization — but own no audio devices, open no HTTP ports, and read no config files. They communicate exclusively through typed Rust channels, making them straightforward to embed in any application.
 
@@ -40,7 +40,18 @@ let _mdns = astro_dnssd::DNSServiceBuilder::new("_myapp._tcp", port)
 
 For full interoperability with C++ clients, use `--codec flac` or `--codec pcm` and leave `custom-protocol` and `encryption` disabled.
 
-## Key Features (Version 0.11+)
+## Install
+
+The library crates are published on [crates.io](https://crates.io) (requires Rust **1.88+**):
+
+```bash
+cargo add snapcast-client   # embeddable client engine
+cargo add snapcast-server   # embeddable server engine
+```
+
+`snapcast-proto` is pulled in transitively — add it directly only if you use the wire types. The `snapclient-rs` / `snapserver-rs` binaries are **not** on crates.io; grab a pre-built one from [Releases](https://github.com/metaneutrons/snapcast-rs/releases) or build from source (see [Building](#building)).
+
+## Key Features
 
 - **Dynamic Audio Pipeline**: The client automatically re-initializes the audio device when the server changes sample rate or channels.
 - **Integrated Resampling**: Automatic fallback to `rubato`-based resampling if the local hardware doesn't support the server's native format.
@@ -48,7 +59,7 @@ For full interoperability with C++ clients, use `--codec flac` or `--codec pcm` 
 - **Bounded Protocol Reads**: Client and server reject oversized binary-protocol payloads before allocation.
 - **Per-Stream Format Ownership**: Each server stream owns its codec/sample-format encoder state instead of leaking global defaults into per-stream paths.
 - **Lossless f32 Decode Path**: FLAC and f32lz4 decoders output native f32 samples — no intermediate 16-bit quantization. 24-bit FLAC preserves full resolution end-to-end.
-- **Configurable Bind Addresses**: Library and binary listeners can bind loopback, IPv4, IPv6, or deployment-specific interfaces.
+- **Configurable Bind Addresses**: The binary's listeners bind loopback, IPv4, IPv6, or deployment-specific interfaces — the libraries open no listeners, so the embedder supplies the already-bound socket.
 - **Systemd Integration**: Native `sd-notify` support on Linux for service readiness and real-time status reporting (volume, codec, format).
 - **Public Audio Monitoring**: Public `audio_rx` channel in the library for real-time PCM monitoring and analysis.
 - **End-to-End Testing**: Robust integration test suite verifying the entire audio transmission path from server to client.
@@ -131,7 +142,6 @@ ClientConfig {
     instance: u32,             // for multiple clients on one host
     host_id: String,           // unique identifier (default: MAC)
     latency: i32,              // additional latency offset (ms)
-    mdns_service_type: String, // default: "_snapcast._tcp.local."
     client_name: String,       // default: "Snapclient"
     encryption_psk: Option<String>, // f32lz4 encryption (feature: encryption)
 }
@@ -142,7 +152,6 @@ ClientConfig {
 | Feature     | Default | C dep | Description |
 |-------------|---------|-------|-------------|
 | `f32lz4`    | —       | none  | f32 LZ4 codec (lz4_flex) |
-| `mdns`      | ✅      | none  | mDNS server discovery |
 | `websocket` | —       | none  | Experimental transport module only; `SnapConnection::new` rejects `ws://` until binary audio WS is implemented |
 | `tls`       | —       | none  | Experimental WSS module only; `SnapConnection::new` rejects `wss://` until binary audio WS is implemented |
 | `resampler` | —       | none  | Sample rate conversion (rubato) |
@@ -194,7 +203,7 @@ audio_tx.send(AudioFrame {
 
 // Reactive events
 match event {
-    ServerEvent::ClientConnected { id, name, mac } => {}
+    ServerEvent::ClientConnected { id, hello } => {} // hello: Hello (mac, host_name, …)
     ServerEvent::ClientDisconnected { id } => {}
     ServerEvent::ClientVolumeChanged { client_id, volume, muted } => {}
     ServerEvent::ClientLatencyChanged { client_id, latency } => {}
@@ -379,7 +388,7 @@ This means Rust servers can send custom messages to Rust clients while C++ clien
 
 ### Use Case: Client-Side EQ
 
-A Rust-based multiroom system (e.g. [SnapDog](https://github.com/metaneutrons/SnapDogRust)) can push per-client EQ settings through the binary protocol — no JSON-RPC, no HTTP, no extra connections:
+A Rust-based multiroom system (e.g. [SnapDog](https://github.com/SnapDogRocks/snapdog)) can push per-client EQ settings through the binary protocol — no JSON-RPC, no HTTP, no extra connections:
 
 ```rust
 use snapcast_proto::CustomMessage;
@@ -493,8 +502,7 @@ ffmpeg -re -i music.mp3 -f s16le -ar 48000 -ac 2 pipe:1 > /tmp/snapfifo
 
 ## Code Quality
 
-- `#![forbid(unsafe_code)]` on protocol crate
-- `#![deny(unsafe_code)]` on client/server libraries, with narrow module-level FFI exceptions for platform clocks and native FLAC callbacks
+- `#![deny(unsafe_code)]` on all library crates, with narrow module-level FFI exceptions for the platform monotonic clock (in `snapcast-proto`) and native FLAC callbacks (in `snapcast-server`)
 - Warning-clean `cargo check`, `cargo test`, and `cargo clippy -- -D warnings` gates
 - No crate-level `#![allow]` blankets and no TODO markers in production code
 - Shared defaults/constants in `snapcast-proto` instead of duplicated magic strings

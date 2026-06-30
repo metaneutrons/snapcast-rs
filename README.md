@@ -565,17 +565,17 @@ match err {
 
 ## Releases
 
-Pre-built binaries for every release:
+Pre-built binaries for every release, all with FLAC support (vendored and statically built — no system library needed on any platform):
 
-| Platform | Client | Server | FLAC |
-|----------|--------|--------|------|
-| Linux x86_64 | ✅ | ✅ | ✅ |
-| Linux aarch64 | ✅ | ✅ | ✅ |
-| macOS x86_64 | ✅ | ✅ | ✅ |
-| macOS aarch64 | ✅ | ✅ | ✅ |
-| Windows x86_64 | ✅ | ✅ | — |
+| Platform | Target triple | Client | Server |
+|----------|----------------|--------|--------|
+| Linux x86_64 | `x86_64-unknown-linux-gnu` | ✅ | ✅ |
+| Linux aarch64 | `aarch64-unknown-linux-gnu` | ✅ | ✅ |
+| macOS x86_64 (Intel) | `x86_64-apple-darwin` | ✅ | ✅ |
+| macOS aarch64 (Apple Silicon) | `aarch64-apple-darwin` | ✅ | ✅ |
+| Windows x86_64 | `x86_64-pc-windows-msvc` | ✅ | ✅ |
 
-Download from [GitHub Releases](https://github.com/metaneutrons/snapcast-rs/releases).
+Download from [GitHub Releases](https://github.com/metaneutrons/snapcast-rs/releases) — assets are named `snapclient-rs-<target>` / `snapserver-rs-<target>` (`.exe` on Windows), e.g. `snapserver-rs-aarch64-apple-darwin` or `snapclient-rs-x86_64-pc-windows-msvc.exe`.
 
 Library crates published to [crates.io](https://crates.io): `snapcast-proto`, `snapcast-client`, `snapcast-server`.
 

@@ -241,7 +241,7 @@ the application, e.g. `snapserver-rs`'s config, not in `ServerConfig`).
 ```rust
 StreamConfig {
     codec: Option<String>,         // override server codec (e.g. "f32lz4", "flac")
-    sample_format: Option<String>, // override server format (e.g. "48000:32:2")
+    sample_format: Option<String>, // override server format (e.g. "48000:24:2"; FLAC caps at 24-bit — use pcm/f32lz4 for 32-bit)
 }
 ```
 
@@ -336,6 +336,14 @@ Equivalent config file keys are `bind_to_address` or `bind_address` under `[tcp-
 | FLAC   | ✅ default | none | 16/24-bit (decoded to f32) | 24ms (block size) |
 | Opus   | optional | libopus | 16-bit | 20ms |
 | Vorbis | optional | libvorbis | lossy | variable |
+
+> **FLAC format envelope.** The pure-Rust `flacenc` encoder supports up to
+> **24-bit** samples, sample rates up to **96 kHz**, and **1–8 channels**. A
+> stream outside that range (32-bit, >96 kHz, or >8 channels) is rejected when
+> its encoder is constructed, with an explicit error — use **PCM** or **f32lz4**
+> (both 32-bit-capable) for those formats. The prior libFLAC backend accepted
+> 32-bit and higher rates; this is the one intentional narrowing from the
+> pure-Rust migration.
 
 f32lz4 path (zero conversion, full precision):
 

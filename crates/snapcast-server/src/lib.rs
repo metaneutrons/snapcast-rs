@@ -435,7 +435,8 @@ fn default_codec() -> &'static str {
 pub struct ServerConfig {
     /// Audio buffer size in milliseconds. Default: 1000.
     pub buffer_ms: u32,
-    /// Default codec: "f32lz4", "pcm", "opus", "ogg". Default: "f32lz4".
+    /// Codec name, e.g. "flac", "f32lz4", "pcm".
+    /// Default: "flac" (feature-dependent: flac > f32lz4 > pcm).
     pub codec: String,
     /// Default sample format. Default: 48000:16:2.
     pub sample_format: String,

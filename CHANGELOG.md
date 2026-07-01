@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.17.1](https://github.com/metaneutrons/snapcast-rs/compare/v0.17.0...v0.17.1) (2026-07-01)
+
+
+### Bug Fixes
+
+* **ci:** cross-compile release binaries correctly and stop clobbering assets ([#47](https://github.com/metaneutrons/snapcast-rs/issues/47)) ([ee18721](https://github.com/metaneutrons/snapcast-rs/commit/ee18721800487e3fa00064c4f11dc838af1d4663))
+
+
+### Code Refactoring
+
+* **server:** pure-Rust FLAC encoder via flacenc (drop libflac-sys) ([9c5836c](https://github.com/metaneutrons/snapcast-rs/commit/9c5836cf6cac4b0f2177b7b42df5ba7899eb5788))
+
 ## [0.17.0](https://github.com/metaneutrons/snapcast-rs/compare/v0.16.1...v0.17.0) (2026-06-28)
 
 

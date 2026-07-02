@@ -327,4 +327,419 @@ mod tests {
         assert_eq!(merged.stream_port, 9704);
         assert_eq!(merged.control_port, 1705);
     }
+
+    // ---- Wave-4 additions ----
+
+    /// Build `CliOverrides` with all fields at their no-op (None/empty/false)
+    /// default so individual tests only set the one field under test.
+    fn empty_cli() -> CliOverrides {
+        CliOverrides {
+            stream_bind_address: None,
+            stream_port: None,
+            control_bind_address: None,
+            control_port: None,
+            http_bind_address: None,
+            http_port: None,
+            doc_root: None,
+            buffer: None,
+            codec: None,
+            sampleformat: None,
+            sources: vec![],
+            auth_enabled: false,
+            auth_secret: None,
+            #[cfg(feature = "mdns")]
+            no_mdns: false,
+            #[cfg(feature = "mdns")]
+            mdns_name: None,
+            #[cfg(feature = "encryption")]
+            encryption_psk: None,
+        }
+    }
+
+    fn config_from(contents: &str) -> BinaryConfig {
+        let mut tmp = tempfile::NamedTempFile::new().unwrap();
+        write!(tmp, "{contents}").unwrap();
+        tmp.flush().unwrap();
+        parse_config_file(tmp.path().to_str().unwrap())
+    }
+
+    // ---- Defaults ----
+
+    #[test]
+    fn default_config_has_expected_ports_and_addresses() {
+        let config = BinaryConfig::default();
+        assert_eq!(config.control_port, 1705);
+        assert_eq!(config.http_port, 1780);
+        assert_eq!(config.stream_port, 1704);
+        assert_eq!(config.control_bind_address, "0.0.0.0");
+        assert_eq!(config.http_bind_address, "0.0.0.0");
+        assert_eq!(config.stream_bind_address, "0.0.0.0");
+        assert_eq!(config.doc_root, None);
+        // Feature-dependent default codec: flac > f32lz4 > pcm.
+        // With default features, `flac` is enabled.
+        assert_eq!(config.server.codec, "flac");
+        assert_eq!(config.server.sample_format, "48000:16:2");
+        assert_eq!(config.server.buffer_ms, 1000);
+    }
+
+    #[test]
+    fn default_sources_is_non_empty_single_entry() {
+        let sources = default_sources();
+        assert_eq!(sources.len(), 1);
+        // On unix the default source is the snapfifo pipe.
+        #[cfg(unix)]
+        assert_eq!(sources[0], "pipe:///tmp/snapfifo?name=default");
+        #[cfg(not(unix))]
+        assert!(sources[0].starts_with("tcp://"));
+    }
+
+    #[test]
+    fn missing_file_keeps_default_sources() {
+        let config = parse_config_file("/nonexistent/does/not/exist.conf");
+        assert_eq!(config.sources, default_sources());
+        assert_eq!(config.http_port, 1780);
+        assert_eq!(config.control_port, 1705);
+        assert_eq!(config.server.codec, "flac");
+    }
+
+    // ---- Multiple sources ----
+
+    #[test]
+    fn multiple_sources_are_collected_in_order() {
+        let config =
+            config_from("[stream]\nsource = pipe:///tmp/a?name=a\nsource = pipe:///tmp/b?name=b\n");
+        assert_eq!(
+            config.sources,
+            vec!["pipe:///tmp/a?name=a", "pipe:///tmp/b?name=b"]
+        );
+    }
+
+    #[test]
+    fn empty_stream_section_leaves_default_sources() {
+        // A [stream] section with no `source` keys must not clobber the
+        // defaults with an empty Vec.
+        let config = config_from("[stream]\ncodec = pcm\n");
+        assert_eq!(config.sources, default_sources());
+        assert_eq!(config.server.codec, "pcm");
+    }
+
+    // ---- Codec / sample format / buffer overrides from INI ----
+
+    #[test]
+    fn stream_section_overrides_codec_sampleformat_buffer() {
+        let config =
+            config_from("[stream]\ncodec = pcm\nsampleformat = 44100:24:2\nbuffer = 2000\n");
+        assert_eq!(config.server.codec, "pcm");
+        assert_eq!(config.server.sample_format, "44100:24:2");
+        assert_eq!(config.server.buffer_ms, 2000);
+    }
+
+    #[test]
+    fn invalid_buffer_value_leaves_default() {
+        // Non-numeric buffer must be ignored (parse fails silently).
+        let config = config_from("[stream]\nbuffer = notanumber\n");
+        assert_eq!(config.server.buffer_ms, 1000);
+    }
+
+    // ---- Port parsing edge cases ----
+
+    #[test]
+    fn port_at_u16_max_is_parsed() {
+        let config = config_from("[http]\nport = 65535\n");
+        assert_eq!(config.http_port, 65535);
+    }
+
+    #[test]
+    fn port_above_u16_max_is_ignored() {
+        // 99999 > u16::MAX (65535) — parse fails, default retained.
+        let config = config_from("[http]\nport = 99999\n");
+        assert_eq!(config.http_port, 1780);
+    }
+
+    #[test]
+    fn non_numeric_port_is_ignored() {
+        let config = config_from("[tcp-control]\nport = abc\n");
+        assert_eq!(config.control_port, 1705);
+    }
+
+    #[test]
+    fn negative_port_is_ignored() {
+        // "-1" does not parse as u16.
+        let config = config_from("[tcp-streaming]\nport = -1\n");
+        assert_eq!(config.stream_port, 1704);
+    }
+
+    #[test]
+    fn port_zero_is_parsed() {
+        let config = config_from("[tcp-streaming]\nport = 0\n");
+        assert_eq!(config.stream_port, 0);
+    }
+
+    // ---- bind address precedence ----
+
+    #[test]
+    fn bind_to_address_takes_precedence_over_bind_address() {
+        let config =
+            config_from("[http]\nbind_to_address = 10.0.0.1\nbind_address = 192.168.1.1\n");
+        assert_eq!(config.http_bind_address, "10.0.0.1");
+    }
+
+    #[test]
+    fn bind_address_used_when_bind_to_address_absent() {
+        let config = config_from("[tcp-control]\nbind_address = 127.0.0.1\n");
+        assert_eq!(config.control_bind_address, "127.0.0.1");
+    }
+
+    #[test]
+    fn missing_bind_keys_leave_default() {
+        let config = config_from("[http]\nport = 1234\n");
+        assert_eq!(config.http_bind_address, "0.0.0.0");
+        assert_eq!(config.http_port, 1234);
+    }
+
+    // ---- auth section / bool parsing ----
+
+    #[test]
+    fn auth_enabled_accepts_various_truthy_values() {
+        for truthy in ["true", "TRUE", "Yes", "on", "ON", "1"] {
+            let config = config_from(&format!("[auth]\nenabled = {truthy}\nsecret = s\n"));
+            assert!(config.auth.enabled, "value {truthy:?} should enable auth");
+        }
+    }
+
+    #[test]
+    fn auth_enabled_accepts_various_falsy_values() {
+        for falsy in ["false", "FALSE", "No", "off", "OFF", "0"] {
+            // Start from an enabled default via CLI would be cleaner, but the
+            // default is already disabled, so assert the value is not flipped on.
+            let config = config_from(&format!("[auth]\nenabled = {falsy}\n"));
+            assert!(
+                !config.auth.enabled,
+                "value {falsy:?} should not enable auth"
+            );
+        }
+    }
+
+    #[test]
+    fn auth_enabled_ignores_unrecognized_value() {
+        // A garbage value leaves `enabled` at its default (false) — the closure
+        // is never called for unrecognized strings.
+        let config = config_from("[auth]\nenabled = maybe\n");
+        assert!(!config.auth.enabled);
+    }
+
+    #[test]
+    fn auth_secret_with_surrounding_whitespace_bool() {
+        // get_bool trims whitespace before matching.
+        let config = config_from("[auth]\nenabled =   true  \n");
+        assert!(config.auth.enabled);
+    }
+
+    #[test]
+    fn auth_enabled_without_secret_fails_validation() {
+        let config = config_from("[auth]\nenabled = true\n");
+        assert!(config.auth.enabled);
+        assert!(config.auth.secret.is_empty());
+        // Enabled auth with no secret is an invalid combination.
+        assert!(config.auth.validate().is_err());
+    }
+
+    // ---- resolve_encryption (default build: encryption feature OFF) ----
+
+    #[cfg(not(feature = "encryption"))]
+    #[test]
+    fn f32lz4e_codec_falls_back_to_f32lz4_without_encryption_feature() {
+        let config = config_from("[stream]\ncodec = f32lz4e\n");
+        // The encrypted alias is rewritten to plain f32lz4.
+        assert_eq!(config.server.codec, "f32lz4");
+    }
+
+    #[cfg(not(feature = "encryption"))]
+    #[test]
+    fn non_alias_codec_unchanged_by_resolve_encryption() {
+        let config = config_from("[stream]\ncodec = pcm\n");
+        assert_eq!(config.server.codec, "pcm");
+    }
+
+    #[cfg(feature = "encryption")]
+    #[test]
+    fn f32lz4e_codec_rewritten_and_default_psk_applied() {
+        let config = config_from("[stream]\ncodec = f32lz4e\n");
+        assert_eq!(config.server.codec, "f32lz4");
+        assert_eq!(
+            config.server.encryption_psk.as_deref(),
+            Some(snapcast_proto::DEFAULT_ENCRYPTION_PSK)
+        );
+    }
+
+    #[cfg(feature = "encryption")]
+    #[test]
+    fn f32lz4e_codec_keeps_explicit_psk() {
+        let config = config_from("[stream]\ncodec = f32lz4e\nencryption_psk = my-explicit-key\n");
+        assert_eq!(config.server.codec, "f32lz4");
+        assert_eq!(
+            config.server.encryption_psk.as_deref(),
+            Some("my-explicit-key")
+        );
+    }
+
+    // ---- merge_cli: overrides, no-ops, precedence ----
+
+    #[test]
+    fn merge_cli_none_fields_leave_config_unchanged() {
+        let config = config_from(
+            "[http]\nport = 8080\nbind_to_address = ::1\n[stream]\ncodec = pcm\nbuffer = 500\n",
+        );
+        let merged = merge_cli(config, empty_cli());
+        assert_eq!(merged.http_port, 8080);
+        assert_eq!(merged.http_bind_address, "::1");
+        assert_eq!(merged.server.codec, "pcm");
+        assert_eq!(merged.server.buffer_ms, 500);
+    }
+
+    #[test]
+    fn merge_cli_overrides_all_scalar_fields() {
+        let merged = merge_cli(
+            BinaryConfig::default(),
+            CliOverrides {
+                stream_bind_address: Some("1.1.1.1".into()),
+                stream_port: Some(2001),
+                control_bind_address: Some("2.2.2.2".into()),
+                control_port: Some(2002),
+                http_bind_address: Some("3.3.3.3".into()),
+                http_port: Some(2003),
+                doc_root: Some("/srv/web".into()),
+                buffer: Some(3000),
+                codec: Some("pcm".into()),
+                sampleformat: Some("96000:24:2".into()),
+                ..empty_cli()
+            },
+        );
+        assert_eq!(merged.stream_bind_address, "1.1.1.1");
+        assert_eq!(merged.stream_port, 2001);
+        assert_eq!(merged.control_bind_address, "2.2.2.2");
+        assert_eq!(merged.control_port, 2002);
+        assert_eq!(merged.http_bind_address, "3.3.3.3");
+        assert_eq!(merged.http_port, 2003);
+        assert_eq!(merged.doc_root, Some("/srv/web".into()));
+        assert_eq!(merged.server.buffer_ms, 3000);
+        assert_eq!(merged.server.codec, "pcm");
+        assert_eq!(merged.server.sample_format, "96000:24:2");
+    }
+
+    #[test]
+    fn merge_cli_sources_override_only_when_non_empty() {
+        // Non-empty CLI sources replace config sources.
+        let config = config_from("[stream]\nsource = pipe:///tmp/from-file\n");
+        let merged = merge_cli(
+            config,
+            CliOverrides {
+                sources: vec!["tcp://cli:4953".into()],
+                ..empty_cli()
+            },
+        );
+        assert_eq!(merged.sources, vec!["tcp://cli:4953"]);
+
+        // Empty CLI sources leave the file-provided sources intact.
+        let config2 = config_from("[stream]\nsource = pipe:///tmp/from-file\n");
+        let merged2 = merge_cli(config2, empty_cli());
+        assert_eq!(merged2.sources, vec!["pipe:///tmp/from-file"]);
+    }
+
+    #[test]
+    fn merge_cli_auth_enabled_only_turns_on() {
+        let mut config = BinaryConfig::default();
+        config.auth.enabled = false;
+        let merged = merge_cli(
+            config,
+            CliOverrides {
+                auth_enabled: true,
+                ..empty_cli()
+            },
+        );
+        assert!(merged.auth.enabled);
+    }
+
+    #[test]
+    fn merge_cli_auth_enabled_false_does_not_disable_config() {
+        // CLI can only turn auth ON; a false flag must not turn off auth that
+        // the config file enabled.
+        let mut config = BinaryConfig::default();
+        config.auth.enabled = true;
+        let merged = merge_cli(
+            config,
+            CliOverrides {
+                auth_enabled: false,
+                ..empty_cli()
+            },
+        );
+        assert!(merged.auth.enabled);
+    }
+
+    #[test]
+    fn merge_cli_auth_secret_overrides() {
+        let merged = merge_cli(
+            BinaryConfig::default(),
+            CliOverrides {
+                auth_secret: Some("cli-secret".into()),
+                ..empty_cli()
+            },
+        );
+        assert_eq!(merged.auth.secret, "cli-secret");
+    }
+
+    #[test]
+    fn merge_cli_resolves_f32lz4e_codec() {
+        // merge_cli calls resolve_encryption after applying the codec override.
+        let merged = merge_cli(
+            BinaryConfig::default(),
+            CliOverrides {
+                codec: Some("f32lz4e".into()),
+                ..empty_cli()
+            },
+        );
+        // Regardless of the encryption feature, the alias is normalized away.
+        assert_eq!(merged.server.codec, "f32lz4");
+    }
+
+    // ---- combined config + CLI precedence ----
+
+    #[test]
+    fn cli_overrides_take_precedence_over_config_file() {
+        let config =
+            config_from("[http]\nport = 8080\n[tcp-control]\nport = 9705\n[stream]\ncodec = pcm\n");
+        let merged = merge_cli(
+            config,
+            CliOverrides {
+                http_port: Some(1111),
+                codec: Some("flac".into()),
+                ..empty_cli()
+            },
+        );
+        // Overridden by CLI.
+        assert_eq!(merged.http_port, 1111);
+        assert_eq!(merged.server.codec, "flac");
+        // Not overridden by CLI — keeps the config-file value.
+        assert_eq!(merged.control_port, 9705);
+    }
+
+    // ---- INI structure edge cases ----
+
+    #[test]
+    fn unknown_sections_and_keys_are_ignored() {
+        let config =
+            config_from("[unknown-section]\nfoo = bar\n[http]\nport = 4242\nunknown_key = zzz\n");
+        assert_eq!(config.http_port, 4242);
+        // Everything else stays at defaults.
+        assert_eq!(config.control_port, 1705);
+    }
+
+    #[test]
+    fn empty_file_yields_defaults() {
+        let config = config_from("");
+        assert_eq!(config.http_port, 1780);
+        assert_eq!(config.control_port, 1705);
+        assert_eq!(config.stream_port, 1704);
+        assert_eq!(config.sources, default_sources());
+    }
 }

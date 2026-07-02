@@ -463,4 +463,601 @@ mod tests {
         };
         assert_eq!(notification.unwrap()["params"]["stream_id"], "music");
     }
+
+    // === Wave-4 additions ===================================================
+    //
+    // These cover the remaining request->response logic of every dispatchable
+    // method: happy path plus the error paths (missing/invalid params, unknown
+    // method, malformed method field, wrong id echoing). Socket transport and
+    // the real ServerCommand executor are out of scope — the mock command sink
+    // stands in for state. Fire-and-forget commands need no mock reply, so most
+    // handlers exercise here via the shared `mock_server()`; handlers that await
+    // a reply (`Stream.AddStream`) use the dedicated helper below.
+
+    /// Unwrap a `RpcResult::Response`, panicking on `Unknown`.
+    fn resp(result: RpcResult) -> (Value, Option<Value>) {
+        match result {
+            RpcResult::Response {
+                response,
+                notification,
+            } => (response, notification),
+            RpcResult::Unknown => panic!("expected Response, got Unknown"),
+        }
+    }
+
+    /// A command sink that answers `AddStream` with the supplied result and
+    /// still serves `GetStatus` (needed for the post-add `Server.OnUpdate`).
+    fn mock_server_addstream(
+        result: Result<String, String>,
+    ) -> (AuthConfig, tokio::sync::mpsc::Sender<ServerCommand>) {
+        let (cmd_tx, mut cmd_rx) = tokio::sync::mpsc::channel::<ServerCommand>(16);
+        tokio::spawn(async move {
+            let mut result = Some(result);
+            while let Some(cmd) = cmd_rx.recv().await {
+                match cmd {
+                    ServerCommand::AddStream { response_tx, .. } => {
+                        if let Some(r) = result.take() {
+                            let _ = response_tx.send(r);
+                        }
+                    }
+                    ServerCommand::GetStatus { response_tx } => {
+                        let _ = response_tx.send(status::ServerStatus::default());
+                    }
+                    _ => {}
+                }
+            }
+        });
+        (AuthConfig::default(), cmd_tx)
+    }
+
+    /// An auth-enabled config with a real secret, plus a matching valid token.
+    fn auth_enabled() -> (AuthConfig, tokio::sync::mpsc::Sender<ServerCommand>) {
+        let (_disabled, cmd_tx) = mock_server();
+        let config = AuthConfig {
+            enabled: true,
+            secret: "wave4-test-secret-at-least-32-bytes!".into(),
+        };
+        (config, cmd_tx)
+    }
+
+    // --- Envelope helpers ------------------------------------------------
+
+    #[test]
+    fn ok_envelope_shape() {
+        let (response, notification) = resp(ok(&json!(7), json!({"a": 1})));
+        assert_eq!(response["jsonrpc"], "2.0");
+        assert_eq!(response["id"], 7);
+        assert_eq!(response["result"]["a"], 1);
+        assert!(response.get("error").is_none());
+        assert!(notification.is_none());
+    }
+
+    #[test]
+    fn err_envelope_shape() {
+        let (response, notification) = resp(err(&json!("abc"), INVALID_PARAMS, "boom"));
+        assert_eq!(response["jsonrpc"], "2.0");
+        assert_eq!(response["id"], "abc");
+        assert_eq!(response["error"]["code"], INVALID_PARAMS);
+        assert_eq!(response["error"]["message"], "boom");
+        assert!(response.get("result").is_none());
+        assert!(notification.is_none());
+    }
+
+    #[test]
+    fn ok_with_notify_pairs_response_and_notification() {
+        let (response, notification) = resp(ok_with_notify(
+            &json!(1),
+            json!({"r": true}),
+            "Server.OnUpdate",
+            json!({"p": 2}),
+        ));
+        assert_eq!(response["result"]["r"], true);
+        let n = notification.expect("notification present");
+        assert_eq!(n["jsonrpc"], "2.0");
+        assert_eq!(n["method"], "Server.OnUpdate");
+        assert_eq!(n["params"]["p"], 2);
+    }
+
+    // --- Server.* --------------------------------------------------------
+
+    #[tokio::test]
+    async fn server_get_rpc_version() {
+        let (auth_config, cmd_tx) = mock_server();
+        let req = json!({"jsonrpc": "2.0", "id": 10, "method": "Server.GetRPCVersion"});
+        let (response, notification) = resp(handle_request(&req, &auth_config, &cmd_tx).await);
+        assert_eq!(
+            response["result"],
+            json!({"major": 2, "minor": 0, "patch": 0})
+        );
+        assert!(notification.is_none());
+    }
+
+    #[tokio::test]
+    async fn server_delete_client_echoes_id() {
+        let (auth_config, cmd_tx) = mock_server();
+        let req = json!({
+            "jsonrpc": "2.0", "id": 11,
+            "method": "Server.DeleteClient", "params": {"id": "c1"}
+        });
+        let (response, _) = resp(handle_request(&req, &auth_config, &cmd_tx).await);
+        assert_eq!(response["result"]["id"], "c1");
+        assert_eq!(response["id"], 11);
+    }
+
+    #[tokio::test]
+    async fn server_delete_client_missing_id_is_invalid_params() {
+        let (auth_config, cmd_tx) = mock_server();
+        let req =
+            json!({"jsonrpc": "2.0", "id": 12, "method": "Server.DeleteClient", "params": {}});
+        let (response, _) = resp(handle_request(&req, &auth_config, &cmd_tx).await);
+        assert_eq!(response["error"]["code"], INVALID_PARAMS);
+        assert_eq!(response["error"]["message"], "missing 'id'");
+    }
+
+    // --- Client.* --------------------------------------------------------
+
+    #[tokio::test]
+    async fn client_get_status_found() {
+        let (auth_config, cmd_tx) = mock_server();
+        let req = json!({
+            "jsonrpc": "2.0", "id": 20,
+            "method": "Client.GetStatus", "params": {"id": "c1"}
+        });
+        let (response, _) = resp(handle_request(&req, &auth_config, &cmd_tx).await);
+        assert_eq!(response["result"]["client"]["id"], "c1");
+    }
+
+    #[tokio::test]
+    async fn client_get_status_not_found() {
+        let (auth_config, cmd_tx) = mock_server();
+        let req = json!({
+            "jsonrpc": "2.0", "id": 21,
+            "method": "Client.GetStatus", "params": {"id": "nope"}
+        });
+        let (response, _) = resp(handle_request(&req, &auth_config, &cmd_tx).await);
+        assert_eq!(response["error"]["code"], INVALID_PARAMS);
+        assert_eq!(response["error"]["message"], "client not found");
+    }
+
+    #[tokio::test]
+    async fn client_get_status_missing_id() {
+        let (auth_config, cmd_tx) = mock_server();
+        let req = json!({"jsonrpc": "2.0", "id": 22, "method": "Client.GetStatus", "params": {}});
+        let (response, _) = resp(handle_request(&req, &auth_config, &cmd_tx).await);
+        assert_eq!(response["error"]["message"], "missing 'id'");
+    }
+
+    #[tokio::test]
+    async fn client_set_volume_clamps_above_100() {
+        let (auth_config, cmd_tx) = mock_server();
+        let req = json!({
+            "jsonrpc": "2.0", "id": 23,
+            "method": "Client.SetVolume",
+            "params": {"id": "c1", "volume": {"percent": 250, "muted": false}}
+        });
+        let (response, notification) = resp(handle_request(&req, &auth_config, &cmd_tx).await);
+        // percent > 100 is clamped to 100.
+        assert_eq!(response["result"]["volume"]["percent"], 100);
+        let n = notification.expect("notification present");
+        assert_eq!(n["params"]["volume"]["percent"], 100);
+    }
+
+    #[tokio::test]
+    async fn client_set_volume_defaults_when_fields_missing_or_wrong_type() {
+        let (auth_config, cmd_tx) = mock_server();
+        // No `volume` object at all: percent defaults to 100, muted to false.
+        let req = json!({
+            "jsonrpc": "2.0", "id": 24,
+            "method": "Client.SetVolume", "params": {"id": "c1"}
+        });
+        let (response, _) = resp(handle_request(&req, &auth_config, &cmd_tx).await);
+        assert_eq!(response["result"]["volume"]["percent"], 100);
+        assert_eq!(response["result"]["volume"]["muted"], false);
+
+        // `muted` present but wrong type (string) -> defaults to false.
+        let req = json!({
+            "jsonrpc": "2.0", "id": 25,
+            "method": "Client.SetVolume",
+            "params": {"id": "c1", "volume": {"percent": 30, "muted": "yes"}}
+        });
+        let (response, _) = resp(handle_request(&req, &auth_config, &cmd_tx).await);
+        assert_eq!(response["result"]["volume"]["percent"], 30);
+        assert_eq!(response["result"]["volume"]["muted"], false);
+    }
+
+    #[tokio::test]
+    async fn client_set_volume_missing_id() {
+        let (auth_config, cmd_tx) = mock_server();
+        let req = json!({
+            "jsonrpc": "2.0", "id": 26,
+            "method": "Client.SetVolume", "params": {"volume": {"percent": 10}}
+        });
+        let (response, notification) = resp(handle_request(&req, &auth_config, &cmd_tx).await);
+        assert_eq!(response["error"]["message"], "missing 'id'");
+        assert!(notification.is_none());
+    }
+
+    #[tokio::test]
+    async fn client_set_latency_happy_path() {
+        let (auth_config, cmd_tx) = mock_server();
+        let req = json!({
+            "jsonrpc": "2.0", "id": 27,
+            "method": "Client.SetLatency", "params": {"id": "c1", "latency": 100}
+        });
+        let (response, notification) = resp(handle_request(&req, &auth_config, &cmd_tx).await);
+        assert_eq!(response["result"]["latency"], 100);
+        let n = notification.expect("notification present");
+        assert_eq!(n["method"], "Client.OnLatencyChanged");
+        assert_eq!(n["params"]["latency"], 100);
+        assert_eq!(n["params"]["id"], "c1");
+    }
+
+    #[tokio::test]
+    async fn client_set_latency_defaults_to_zero() {
+        let (auth_config, cmd_tx) = mock_server();
+        // Missing `latency` -> defaults to 0.
+        let req = json!({
+            "jsonrpc": "2.0", "id": 28,
+            "method": "Client.SetLatency", "params": {"id": "c1"}
+        });
+        let (response, _) = resp(handle_request(&req, &auth_config, &cmd_tx).await);
+        assert_eq!(response["result"]["latency"], 0);
+    }
+
+    #[tokio::test]
+    async fn client_set_name_happy_path() {
+        let (auth_config, cmd_tx) = mock_server();
+        let req = json!({
+            "jsonrpc": "2.0", "id": 29,
+            "method": "Client.SetName", "params": {"id": "c1", "name": "Kitchen"}
+        });
+        let (response, notification) = resp(handle_request(&req, &auth_config, &cmd_tx).await);
+        assert_eq!(response["result"]["name"], "Kitchen");
+        let n = notification.expect("notification present");
+        assert_eq!(n["method"], "Client.OnNameChanged");
+        assert_eq!(n["params"]["name"], "Kitchen");
+    }
+
+    #[tokio::test]
+    async fn client_set_name_defaults_to_empty() {
+        let (auth_config, cmd_tx) = mock_server();
+        let req = json!({
+            "jsonrpc": "2.0", "id": 30,
+            "method": "Client.SetName", "params": {"id": "c1"}
+        });
+        let (response, _) = resp(handle_request(&req, &auth_config, &cmd_tx).await);
+        assert_eq!(response["result"]["name"], "");
+    }
+
+    // --- Group.* ---------------------------------------------------------
+
+    #[tokio::test]
+    async fn group_get_status_found() {
+        let (auth_config, cmd_tx) = mock_server();
+        let req = json!({
+            "jsonrpc": "2.0", "id": 40,
+            "method": "Group.GetStatus", "params": {"id": "g1"}
+        });
+        let (response, _) = resp(handle_request(&req, &auth_config, &cmd_tx).await);
+        assert_eq!(response["result"]["group"]["id"], "g1");
+    }
+
+    #[tokio::test]
+    async fn group_get_status_not_found() {
+        let (auth_config, cmd_tx) = mock_server();
+        let req = json!({
+            "jsonrpc": "2.0", "id": 41,
+            "method": "Group.GetStatus", "params": {"id": "ghost"}
+        });
+        let (response, _) = resp(handle_request(&req, &auth_config, &cmd_tx).await);
+        assert_eq!(response["error"]["message"], "group not found");
+    }
+
+    #[tokio::test]
+    async fn group_set_mute_happy_path() {
+        let (auth_config, cmd_tx) = mock_server();
+        let req = json!({
+            "jsonrpc": "2.0", "id": 42,
+            "method": "Group.SetMute", "params": {"id": "g1", "mute": true}
+        });
+        let (response, notification) = resp(handle_request(&req, &auth_config, &cmd_tx).await);
+        // Group uses the "mute" key (not "muted") on both result and notification.
+        assert_eq!(response["result"]["mute"], true);
+        let n = notification.expect("notification present");
+        assert_eq!(n["method"], "Group.OnMute");
+        assert_eq!(n["params"]["mute"], true);
+        assert!(n["params"]["muted"].is_null());
+    }
+
+    #[tokio::test]
+    async fn group_set_mute_defaults_false() {
+        let (auth_config, cmd_tx) = mock_server();
+        let req = json!({
+            "jsonrpc": "2.0", "id": 43,
+            "method": "Group.SetMute", "params": {"id": "g1"}
+        });
+        let (response, _) = resp(handle_request(&req, &auth_config, &cmd_tx).await);
+        assert_eq!(response["result"]["mute"], false);
+    }
+
+    #[tokio::test]
+    async fn group_set_stream_missing_stream_id() {
+        let (auth_config, cmd_tx) = mock_server();
+        let req = json!({
+            "jsonrpc": "2.0", "id": 44,
+            "method": "Group.SetStream", "params": {"id": "g1"}
+        });
+        let (response, notification) = resp(handle_request(&req, &auth_config, &cmd_tx).await);
+        assert_eq!(response["error"]["message"], "missing 'stream_id'");
+        assert!(notification.is_none());
+    }
+
+    #[tokio::test]
+    async fn group_set_clients_happy_path_broadcasts_update() {
+        let (auth_config, cmd_tx) = mock_server();
+        let req = json!({
+            "jsonrpc": "2.0", "id": 45,
+            "method": "Group.SetClients",
+            "params": {"id": "g1", "clients": ["c1", "c2"]}
+        });
+        let (response, notification) = resp(handle_request(&req, &auth_config, &cmd_tx).await);
+        // Result is the fresh full status; notification is a Server.OnUpdate.
+        assert!(response["result"]["server"]["groups"].is_array());
+        let n = notification.expect("notification present");
+        assert_eq!(n["method"], "Server.OnUpdate");
+    }
+
+    #[tokio::test]
+    async fn group_set_clients_missing_array_is_invalid_params() {
+        let (auth_config, cmd_tx) = mock_server();
+        // `clients` is an object, not an array -> as_array() fails.
+        let req = json!({
+            "jsonrpc": "2.0", "id": 46,
+            "method": "Group.SetClients",
+            "params": {"id": "g1", "clients": {"not": "an array"}}
+        });
+        let (response, notification) = resp(handle_request(&req, &auth_config, &cmd_tx).await);
+        assert_eq!(response["error"]["message"], "missing 'clients'");
+        assert!(notification.is_none());
+    }
+
+    #[tokio::test]
+    async fn group_set_name_happy_path() {
+        let (auth_config, cmd_tx) = mock_server();
+        let req = json!({
+            "jsonrpc": "2.0", "id": 47,
+            "method": "Group.SetName", "params": {"id": "g1", "name": "Main Room"}
+        });
+        let (response, notification) = resp(handle_request(&req, &auth_config, &cmd_tx).await);
+        assert_eq!(response["result"]["name"], "Main Room");
+        let n = notification.expect("notification present");
+        assert_eq!(n["method"], "Group.OnNameChanged");
+        assert_eq!(n["params"]["name"], "Main Room");
+    }
+
+    // --- Stream.* --------------------------------------------------------
+
+    #[tokio::test]
+    async fn stream_set_property_happy_path() {
+        let (auth_config, cmd_tx) = mock_server();
+        let req = json!({
+            "jsonrpc": "2.0", "id": 50,
+            "method": "Stream.SetProperty",
+            "params": {"id": "default", "properties": {"artist": "Test"}}
+        });
+        let (response, notification) = resp(handle_request(&req, &auth_config, &cmd_tx).await);
+        assert_eq!(response["result"]["id"], "default");
+        assert_eq!(response["result"]["properties"]["artist"], "Test");
+        let n = notification.expect("notification present");
+        assert_eq!(n["method"], "Stream.OnUpdate");
+        assert_eq!(n["params"]["properties"]["artist"], "Test");
+    }
+
+    #[tokio::test]
+    async fn stream_set_property_missing_id() {
+        let (auth_config, cmd_tx) = mock_server();
+        let req = json!({
+            "jsonrpc": "2.0", "id": 51,
+            "method": "Stream.SetProperty", "params": {"properties": {}}
+        });
+        let (response, _) = resp(handle_request(&req, &auth_config, &cmd_tx).await);
+        assert_eq!(response["error"]["message"], "missing 'id'");
+    }
+
+    #[tokio::test]
+    async fn stream_control_happy_path() {
+        let (auth_config, cmd_tx) = mock_server();
+        let req = json!({
+            "jsonrpc": "2.0", "id": 52,
+            "method": "Stream.Control",
+            "params": {"id": "default", "command": "next", "params": {}}
+        });
+        let (response, notification) = resp(handle_request(&req, &auth_config, &cmd_tx).await);
+        assert_eq!(response["result"]["id"], "default");
+        assert!(notification.is_none());
+    }
+
+    #[tokio::test]
+    async fn stream_control_missing_command() {
+        let (auth_config, cmd_tx) = mock_server();
+        let req = json!({
+            "jsonrpc": "2.0", "id": 53,
+            "method": "Stream.Control", "params": {"id": "default"}
+        });
+        let (response, _) = resp(handle_request(&req, &auth_config, &cmd_tx).await);
+        assert_eq!(response["error"]["message"], "missing 'command'");
+    }
+
+    #[tokio::test]
+    async fn stream_add_stream_success() {
+        let (auth_config, cmd_tx) = mock_server_addstream(Ok("stream-42".into()));
+        let req = json!({
+            "jsonrpc": "2.0", "id": 54,
+            "method": "Stream.AddStream",
+            "params": {"streamUri": "pipe:///tmp/snapfifo?name=default"}
+        });
+        let (response, notification) = resp(handle_request(&req, &auth_config, &cmd_tx).await);
+        assert_eq!(response["result"]["id"], "stream-42");
+        let n = notification.expect("notification present");
+        assert_eq!(n["method"], "Server.OnUpdate");
+    }
+
+    #[tokio::test]
+    async fn stream_add_stream_backend_error() {
+        let (auth_config, cmd_tx) = mock_server_addstream(Err("bad uri".into()));
+        let req = json!({
+            "jsonrpc": "2.0", "id": 55,
+            "method": "Stream.AddStream", "params": {"streamUri": "bogus://x"}
+        });
+        let (response, notification) = resp(handle_request(&req, &auth_config, &cmd_tx).await);
+        assert_eq!(response["error"]["code"], INVALID_PARAMS);
+        assert_eq!(response["error"]["message"], "bad uri");
+        assert!(notification.is_none());
+    }
+
+    #[tokio::test]
+    async fn stream_add_stream_missing_uri() {
+        let (auth_config, cmd_tx) = mock_server_addstream(Ok("unused".into()));
+        let req = json!({"jsonrpc": "2.0", "id": 56, "method": "Stream.AddStream", "params": {}});
+        let (response, _) = resp(handle_request(&req, &auth_config, &cmd_tx).await);
+        assert_eq!(response["error"]["message"], "missing 'streamUri'");
+    }
+
+    #[tokio::test]
+    async fn stream_remove_stream_happy_path() {
+        let (auth_config, cmd_tx) = mock_server();
+        let req = json!({
+            "jsonrpc": "2.0", "id": 57,
+            "method": "Stream.RemoveStream", "params": {"id": "default"}
+        });
+        let (response, notification) = resp(handle_request(&req, &auth_config, &cmd_tx).await);
+        assert_eq!(response["result"]["id"], "default");
+        let n = notification.expect("notification present");
+        assert_eq!(n["method"], "Server.OnUpdate");
+    }
+
+    // --- Auth ------------------------------------------------------------
+
+    #[tokio::test]
+    async fn server_get_token_with_enabled_auth() {
+        let (auth_config, cmd_tx) = auth_enabled();
+        let req = json!({
+            "jsonrpc": "2.0", "id": 60,
+            "method": "Server.GetToken", "params": {"username": "bob"}
+        });
+        let (response, _) = resp(handle_request(&req, &auth_config, &cmd_tx).await);
+        let token = response["result"]["token"].as_str().expect("token issued");
+        assert!(!token.is_empty());
+        // Round-trip: the issued token validates back to the requested subject.
+        assert_eq!(auth::validate_token(&auth_config, token).unwrap(), "bob");
+    }
+
+    #[tokio::test]
+    async fn server_get_token_defaults_to_anonymous() {
+        let (auth_config, cmd_tx) = auth_enabled();
+        let req = json!({"jsonrpc": "2.0", "id": 61, "method": "Server.GetToken", "params": {}});
+        let (response, _) = resp(handle_request(&req, &auth_config, &cmd_tx).await);
+        let token = response["result"]["token"].as_str().expect("token issued");
+        assert_eq!(
+            auth::validate_token(&auth_config, token).unwrap(),
+            "anonymous"
+        );
+    }
+
+    #[tokio::test]
+    async fn server_get_token_fails_without_secret() {
+        // Default AuthConfig has an empty secret -> generate_token errors.
+        let (auth_config, cmd_tx) = mock_server();
+        let req = json!({
+            "jsonrpc": "2.0", "id": 62,
+            "method": "Server.GetToken", "params": {"username": "bob"}
+        });
+        let (response, _) = resp(handle_request(&req, &auth_config, &cmd_tx).await);
+        assert_eq!(response["error"]["code"], INVALID_PARAMS);
+        assert!(
+            response["error"]["message"]
+                .as_str()
+                .unwrap()
+                .contains("token generation failed")
+        );
+    }
+
+    #[tokio::test]
+    async fn server_authenticate_valid_token() {
+        let (auth_config, cmd_tx) = auth_enabled();
+        let token = auth::generate_token(&auth_config, "alice").unwrap();
+        let req = json!({
+            "jsonrpc": "2.0", "id": 63,
+            "method": "Server.Authenticate", "params": {"token": token}
+        });
+        let (response, _) = resp(handle_request(&req, &auth_config, &cmd_tx).await);
+        assert_eq!(response["result"]["ok"], true);
+        assert_eq!(response["result"]["subject"], "alice");
+    }
+
+    #[tokio::test]
+    async fn server_authenticate_invalid_token() {
+        let (auth_config, cmd_tx) = auth_enabled();
+        let req = json!({
+            "jsonrpc": "2.0", "id": 64,
+            "method": "Server.Authenticate", "params": {"token": "not.a.jwt"}
+        });
+        let (response, _) = resp(handle_request(&req, &auth_config, &cmd_tx).await);
+        assert_eq!(response["error"]["code"], INVALID_PARAMS);
+        assert_eq!(response["error"]["message"], "invalid token");
+    }
+
+    #[tokio::test]
+    async fn server_authenticate_missing_token() {
+        let (auth_config, cmd_tx) = auth_enabled();
+        let req =
+            json!({"jsonrpc": "2.0", "id": 65, "method": "Server.Authenticate", "params": {}});
+        let (response, _) = resp(handle_request(&req, &auth_config, &cmd_tx).await);
+        assert_eq!(response["error"]["message"], "missing 'token'");
+    }
+
+    // --- Dispatch edge cases --------------------------------------------
+
+    #[tokio::test]
+    async fn empty_method_is_unknown() {
+        let (auth_config, cmd_tx) = mock_server();
+        // No `method` field at all: `.as_str().unwrap_or("")` -> "" -> Unknown.
+        let req = json!({"jsonrpc": "2.0", "id": 70, "params": {}});
+        assert!(matches!(
+            handle_request(&req, &auth_config, &cmd_tx).await,
+            RpcResult::Unknown
+        ));
+    }
+
+    #[tokio::test]
+    async fn non_string_method_is_unknown() {
+        let (auth_config, cmd_tx) = mock_server();
+        // `method` present but wrong type (number): as_str() -> None -> "".
+        let req = json!({"jsonrpc": "2.0", "id": 71, "method": 12345, "params": {}});
+        assert!(matches!(
+            handle_request(&req, &auth_config, &cmd_tx).await,
+            RpcResult::Unknown
+        ));
+    }
+
+    #[tokio::test]
+    async fn string_id_is_echoed_in_response() {
+        let (auth_config, cmd_tx) = mock_server();
+        let req = json!({
+            "jsonrpc": "2.0", "id": "req-abc",
+            "method": "Server.GetRPCVersion"
+        });
+        let (response, _) = resp(handle_request(&req, &auth_config, &cmd_tx).await);
+        assert_eq!(response["id"], "req-abc");
+    }
+
+    #[tokio::test]
+    async fn null_id_error_response_still_echoes_null() {
+        let (auth_config, cmd_tx) = mock_server();
+        // Missing id -> Value::Null; an error response must still carry it.
+        let req = json!({"method": "Server.DeleteClient", "params": {}});
+        let (response, _) = resp(handle_request(&req, &auth_config, &cmd_tx).await);
+        assert!(response["id"].is_null());
+        assert_eq!(response["error"]["message"], "missing 'id'");
+    }
 }

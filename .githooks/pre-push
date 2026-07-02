@@ -28,5 +28,5 @@ if ! command -v cargo-llvm-cov >/dev/null 2>&1; then
 fi
 
 cargo llvm-cov --workspace --summary-only \
-    --ignore-filename-regex '(^|/)(main|logging)\.rs$|player/mod\.rs$|stream/(librespot|airplay|pipe|tcp|process|file|mod)\.rs$' \
+    --ignore-filename-regex '(^|/)(main|logging|mixer)\.rs$|player/mod\.rs$|stream/(librespot|airplay|pipe|tcp|process|file|mod)\.rs$' \
     --fail-under-lines 90

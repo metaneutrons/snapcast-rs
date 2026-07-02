@@ -398,4 +398,110 @@ mod tests {
         assert!(SnapConnection::new("ws", "localhost", 1780).is_err());
         assert!(SnapConnection::new("wss", "localhost", 1788).is_err());
     }
+
+    #[test]
+    fn snapconnection_new_accepts_tcp() {
+        let conn = SnapConnection::new(snapcast_proto::SCHEME_TCP, "localhost", 1704).unwrap();
+        assert!(matches!(conn, SnapConnection::Tcp(_)));
+    }
+
+    #[test]
+    fn snapconnection_new_rejects_unknown_scheme() {
+        assert!(SnapConnection::new("gopher", "localhost", 70).is_err());
+    }
+
+    // ---- read_frame error paths ----
+
+    #[tokio::test]
+    async fn read_frame_empty_reader_errors() {
+        // Header read_exact fails immediately on an empty reader.
+        let mut cursor = std::io::Cursor::new(Vec::<u8>::new());
+        assert!(read_frame(&mut cursor).await.is_err());
+    }
+
+    #[tokio::test]
+    async fn read_frame_truncated_header_errors() {
+        // Fewer than HEADER_SIZE bytes → header read_exact fails.
+        let mut cursor = std::io::Cursor::new(vec![0u8; BaseMessage::HEADER_SIZE - 1]);
+        assert!(read_frame(&mut cursor).await.is_err());
+    }
+
+    #[tokio::test]
+    async fn read_frame_truncated_payload_errors() {
+        // A valid frame with its last payload byte chopped off: the header parses,
+        // but the payload read_exact runs short.
+        let payload = MessagePayload::Time(Time {
+            latency: Timeval { sec: 0, usec: 5 },
+        });
+        let mut base = BaseMessage {
+            msg_type: MessageType::Time,
+            id: 1,
+            refers_to: 0,
+            sent: Timeval::default(),
+            received: Timeval::default(),
+            size: 0,
+        };
+        let mut buf = Vec::new();
+        write_frame(&mut buf, &mut base, &payload).await.unwrap();
+        buf.truncate(buf.len() - 1);
+        let mut cursor = std::io::Cursor::new(buf);
+        assert!(read_frame(&mut cursor).await.is_err());
+    }
+
+    // ---- TcpConnection "not connected" paths ----
+
+    #[tokio::test]
+    async fn send_when_not_connected_errors() {
+        let mut conn = TcpConnection::new("localhost", 1704);
+        let payload = MessagePayload::Time(Time::default());
+        assert!(conn.send(MessageType::Time, &payload).await.is_err());
+    }
+
+    #[tokio::test]
+    async fn recv_when_not_connected_errors() {
+        let mut conn = TcpConnection::new("localhost", 1704);
+        assert!(conn.recv().await.is_err());
+    }
+
+    #[tokio::test]
+    async fn send_request_when_not_connected_errors_and_advances_id() {
+        let mut conn = TcpConnection::new("localhost", 1704);
+        conn.next_id = u16::MAX; // exercise the wrapping_add
+        let payload = MessagePayload::Time(Time::default());
+        let res = conn
+            .send_request(MessageType::Time, &payload, Duration::from_millis(10))
+            .await;
+        assert!(res.is_err(), "not connected");
+        assert_eq!(conn.next_id, 0, "next_id wraps past u16::MAX");
+    }
+
+    #[test]
+    fn disconnect_clears_stream_and_pending() {
+        let mut conn = TcpConnection::new("localhost", 1704);
+        let (tx, _rx) = oneshot::channel();
+        conn.pending.insert(5, PendingRequest { tx });
+        assert_eq!(conn.pending.len(), 1);
+        conn.disconnect();
+        assert!(conn.stream.is_none());
+        assert!(conn.pending.is_empty());
+    }
+
+    // ---- steady-clock helpers ----
+
+    #[test]
+    fn time_helpers_produce_positive_values() {
+        assert!(now_usec() > 0);
+        let tv = steady_time_of_day();
+        assert!(tv.sec > 0 || tv.usec > 0);
+        let mut base = BaseMessage {
+            msg_type: MessageType::Time,
+            id: 0,
+            refers_to: 0,
+            sent: Timeval::default(),
+            received: Timeval::default(),
+            size: 0,
+        };
+        stamp_sent(&mut base);
+        assert!(base.sent.sec > 0 || base.sent.usec > 0);
+    }
 }

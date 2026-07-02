@@ -90,12 +90,23 @@ impl FromStr for SampleFormat {
         if parts.len() != 3 {
             return Err(SampleFormatError::InvalidFormat(s.to_string()));
         }
-        let parse = |p: &str| -> Result<u32, SampleFormatError> {
+        let parse_u32 = |p: &str| -> Result<u32, SampleFormatError> {
             if p == "*" { Ok(0) } else { Ok(p.parse()?) }
         };
-        let rate = parse(parts[0])?;
-        let bits = parse(parts[1])? as u16;
-        let channels = parse(parts[2])? as u16;
+        // Reject out-of-range bits/channels rather than silently wrapping via
+        // `as u16` (e.g. "65536" previously became 0).
+        let parse_u16 = |p: &str| -> Result<u16, SampleFormatError> {
+            if p == "*" {
+                Ok(0)
+            } else {
+                p.parse::<u32>()?
+                    .try_into()
+                    .map_err(|_| SampleFormatError::InvalidFormat(s.to_string()))
+            }
+        };
+        let rate = parse_u32(parts[0])?;
+        let bits = parse_u16(parts[1])?;
+        let channels = parse_u16(parts[2])?;
         Ok(Self::new(rate, bits, channels))
     }
 }
@@ -144,6 +155,16 @@ mod tests {
         assert!("48000:16".parse::<SampleFormat>().is_err());
         assert!("48000:16:2:1".parse::<SampleFormat>().is_err());
         assert!("".parse::<SampleFormat>().is_err());
+    }
+
+    #[test]
+    fn parse_rejects_out_of_range_fields() {
+        // bits/channels above u16::MAX must error, not silently wrap via `as u16`.
+        assert!("48000:65536:2".parse::<SampleFormat>().is_err());
+        assert!("48000:16:70000".parse::<SampleFormat>().is_err());
+        // Realistic values still parse.
+        assert!("48000:16:2".parse::<SampleFormat>().is_ok());
+        assert_eq!("48000:24:2".parse::<SampleFormat>().unwrap().bits(), 24);
     }
 
     #[test]

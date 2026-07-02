@@ -110,11 +110,11 @@ jobs:
       # realtime audio callback (player/mod.rs), logging setup, and the external
       # stream-source readers (librespot/airplay/pipe/tcp/process/file). The
       # threshold is a RATCHET — raise it as coverage climbs, never lower it.
-      - name: Coverage gate (>= 85% lines on the testable surface)
+      - name: Coverage gate (>= 90% lines on the testable surface)
         run: >
           cargo llvm-cov --workspace --summary-only
           --ignore-filename-regex '(^|/)(main|logging)\.rs$|player/mod\.rs$|stream/(librespot|airplay|pipe|tcp|process|file|mod)\.rs$'
-          --fail-under-lines 85
+          --fail-under-lines 90
 
   build-linux:
     name: Build (Linux)

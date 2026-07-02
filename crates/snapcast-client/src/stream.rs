@@ -699,4 +699,173 @@ mod tests {
 
         assert_eq!(out1, out2);
     }
+
+    // ---- PcmChunk edge cases ----
+
+    #[test]
+    fn pcm_chunk_duration_zero_rate() {
+        // rate == 0 short-circuits to a 0 duration (guards a divide-by-zero).
+        let f = SampleFormat::new(0, 16, 2);
+        let chunk = PcmChunk::new(Timeval { sec: 0, usec: 0 }, vec![0u8; 16], f);
+        assert_eq!(chunk.duration_usec(), 0);
+    }
+
+    #[test]
+    fn pcm_chunk_zero_frame_size_is_safe() {
+        // channels == 0 => frame_size 0 => read_frames and duration are no-ops.
+        let f = SampleFormat::new(48000, 16, 0);
+        let mut chunk = PcmChunk::new(Timeval { sec: 0, usec: 0 }, vec![0u8; 16], f);
+        assert_eq!(chunk.duration_usec(), 0);
+        let mut buf = vec![0u8; 16];
+        assert_eq!(chunk.read_frames(&mut buf, 4), 0);
+    }
+
+    #[test]
+    fn pcm_chunk_seek_past_end_clamps() {
+        let f = fmt();
+        let mut chunk = make_chunk(0, 0, 10, f);
+        chunk.seek(1000); // far past the 10 available frames
+        assert!(chunk.is_end());
+        let mut buf = vec![0u8; f.frame_size() as usize];
+        assert_eq!(chunk.read_frames(&mut buf, 1), 0);
+    }
+
+    #[test]
+    fn pcm_chunk_is_end_lifecycle() {
+        let f = fmt();
+        let mut chunk = make_chunk(0, 0, 5, f);
+        assert!(!chunk.is_end());
+        let mut buf = vec![0u8; 5 * f.frame_size() as usize];
+        chunk.read_frames(&mut buf, 5);
+        assert!(chunk.is_end());
+    }
+
+    // ---- Stream accessors / encoding ----
+
+    #[test]
+    fn stream_accessors_report_format_and_encoding() {
+        let s = Stream::new(SampleFormat::new(44100, 16, 1));
+        assert_eq!(s.format().rate(), 44100);
+        assert_eq!(s.format().channels(), 1);
+        assert_eq!(s.encoding(), SampleEncoding::PcmInt);
+    }
+
+    #[test]
+    fn stream_with_float32_encoding() {
+        let s = Stream::with_encoding(fmt(), SampleEncoding::Float32);
+        assert_eq!(s.encoding(), SampleEncoding::Float32);
+    }
+
+    // ---- silence helpers ----
+
+    #[test]
+    fn get_silence_zeroes_output() {
+        let f = fmt();
+        let s = Stream::new(f);
+        let mut buf = vec![0xAAu8; 480 * f.frame_size() as usize];
+        s.get_silence(&mut buf, 480);
+        assert!(buf.iter().all(|&b| b == 0));
+    }
+
+    #[test]
+    fn or_silence_fills_when_empty() {
+        let f = fmt();
+        let mut s = Stream::new(f);
+        let mut buf = vec![0xAAu8; 480 * f.frame_size() as usize];
+        let result = s.get_player_chunk_or_silence(100_000_000, 0, &mut buf, 480);
+        assert!(!result, "empty stream underruns");
+        assert!(
+            buf.iter().all(|&b| b == 0),
+            "silence is written on underrun"
+        );
+    }
+
+    // ---- hard-sync chunk skipping (age > 0 path) ----
+
+    #[test]
+    fn hard_sync_skips_stale_chunk_and_aligns_to_next() {
+        let f = fmt();
+        let mut s = Stream::new(f);
+        s.set_buffer_ms(1000);
+        // Stale chunk (age far beyond its own duration) then an aligned one (age 0).
+        s.add_chunk(make_chunk(90, 0, 4800, f));
+        s.add_chunk(make_chunk(99, 0, 4800, f));
+        let mut buf = vec![0u8; 480 * f.frame_size() as usize];
+        let result = s.get_player_chunk(100_000_000, 0, &mut buf, 480);
+        assert!(
+            result,
+            "should align to the good chunk after skipping the stale one"
+        );
+        assert!(
+            buf.iter().any(|&b| b != 0),
+            "expected real audio, not silence"
+        );
+    }
+
+    #[test]
+    fn hard_sync_returns_false_when_all_chunks_stale() {
+        let f = fmt();
+        let mut s = Stream::new(f);
+        s.set_buffer_ms(1000);
+        // Every chunk is older than its own duration → skip loop exhausts, no alignment.
+        s.add_chunk(make_chunk(90, 0, 480, f));
+        s.add_chunk(make_chunk(91, 0, 480, f));
+        let mut buf = vec![0u8; 480 * f.frame_size() as usize];
+        assert!(!s.get_player_chunk(100_000_000, 0, &mut buf, 480));
+    }
+
+    // ---- normal playback (after hard sync completes) ----
+
+    #[test]
+    fn normal_playback_after_hard_sync() {
+        let f = fmt();
+        let mut s = Stream::new(f);
+        s.set_buffer_ms(1000);
+        s.add_chunk(make_chunk(99, 0, 48000, f)); // one second of audio, aligned at age 0
+        let mut buf = vec![0u8; 480 * f.frame_size() as usize];
+        assert!(s.get_player_chunk(100_000_000, 0, &mut buf, 480));
+        assert!(
+            !s.hard_sync,
+            "hard sync completes on the first aligned call"
+        );
+        // Subsequent calls take the normal drift-correction playback path.
+        let mut played = false;
+        for i in 1..10i64 {
+            let now = 100_000_000 + i * 10_000; // +10 ms == 480 frames @ 48 kHz
+            if s.get_player_chunk(now, 0, &mut buf, 480) {
+                played = true;
+            }
+        }
+        assert!(played, "normal playback should deliver frames");
+    }
+
+    #[test]
+    fn normal_playback_retriggers_hard_sync_on_large_age() {
+        let f = fmt();
+        let mut s = Stream::new(f);
+        s.set_buffer_ms(1000);
+        s.add_chunk(make_chunk(99, 0, 48000, f));
+        let mut buf = vec![0u8; 480 * f.frame_size() as usize];
+        assert!(s.get_player_chunk(100_000_000, 0, &mut buf, 480));
+        assert!(!s.hard_sync);
+        // Jump the clock >500 ms forward → age exceeds the hard-sync age threshold.
+        let result = s.get_player_chunk(100_700_000, 0, &mut buf, 480);
+        assert!(s.hard_sync, "a >500 ms age must re-trigger hard sync");
+        assert!(!result, "an out-of-range age returns false");
+    }
+
+    #[test]
+    fn out_of_order_timestamps_do_not_panic() {
+        let f = fmt();
+        let mut s = Stream::new(f);
+        s.set_buffer_ms(1000);
+        // Decreasing then increasing timestamps must never panic the sync loop.
+        s.add_chunk(make_chunk(101, 0, 480, f));
+        s.add_chunk(make_chunk(99, 0, 480, f));
+        s.add_chunk(make_chunk(100, 0, 480, f));
+        let mut buf = vec![0u8; 480 * f.frame_size() as usize];
+        for i in 0..5i64 {
+            let _ = s.get_player_chunk(100_000_000 + i * 10_000, 0, &mut buf, 480);
+        }
+    }
 }

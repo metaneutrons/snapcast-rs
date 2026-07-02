@@ -23,5 +23,8 @@ libc = { workspace = true }
 [features]
 custom-protocol = []
 
+[dev-dependencies]
+proptest = "1"
+
 [package.metadata.docs.rs]
 all-features = false

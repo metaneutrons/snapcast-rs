@@ -47,11 +47,24 @@ pub struct TestClient {
     pub cmd: mpsc::Sender<snapcast_client::ClientCommand>,
 }
 
-/// Connect a client to the given server port.
+/// Connect a client to the given server port, with an empty host id.
+///
+/// An empty host id makes the server derive the client id from the machine MAC —
+/// fine for single-client tests, but it collapses multiple concurrent clients
+/// into one id/group. Multi-client tests must give each client a distinct id via
+/// [`connect_client_with_id`].
 pub async fn connect_client(port: u16) -> TestClient {
+    connect_client_with_id(port, "").await
+}
+
+/// Connect a client with an explicit `host_id`, so the server assigns it a
+/// distinct client id/group. Required for tests with more than one concurrent
+/// client.
+pub async fn connect_client_with_id(port: u16, host_id: &str) -> TestClient {
     let config = ClientConfig {
         host: "127.0.0.1".into(),
         port,
+        host_id: host_id.to_string(),
         ..ClientConfig::default()
     };
     let (mut client, events, audio_rx) = SnapClient::new(config);

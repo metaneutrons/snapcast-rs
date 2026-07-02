@@ -74,7 +74,12 @@ impl PcmChunk {
         }
         let available_bytes = self.data.len() - self.read_pos;
         let available_frames = available_bytes / frame_size;
-        let to_read = (frames as usize).min(available_frames);
+        // Also bound by the output capacity: a chunk whose format differs from
+        // the caller's frame size must never write past `output`. In the normal
+        // matched-format path (`output` sized for `frames`) this cap is a no-op.
+        let to_read = (frames as usize)
+            .min(available_frames)
+            .min(output.len() / frame_size);
         let bytes = to_read * frame_size;
         output[..bytes].copy_from_slice(&self.data[self.read_pos..self.read_pos + bytes]);
         self.read_pos += bytes;
@@ -580,6 +585,16 @@ mod tests {
         let read = chunk.read_frames(&mut buf, 50);
         assert_eq!(read, 50);
         assert!(chunk.is_end());
+    }
+
+    #[test]
+    fn read_frames_bounded_by_output() {
+        // A chunk with more data than the output can hold must fill only the
+        // output (no panic), returning the number of whole frames written.
+        let f = fmt();
+        let mut chunk = make_chunk(0, 0, 100, f); // 100 frames available
+        let mut buf = vec![0u8; 10 * f.frame_size() as usize]; // room for 10
+        assert_eq!(chunk.read_frames(&mut buf, 100), 10);
     }
 
     #[test]

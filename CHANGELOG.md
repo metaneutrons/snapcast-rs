@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.17.2](https://github.com/metaneutrons/snapcast-rs/compare/v0.17.1...v0.17.2) (2026-07-02)
+
+
+### Bug Fixes
+
+* harden audio-path input handling ([#63](https://github.com/metaneutrons/snapcast-rs/issues/63)) ([3e61f21](https://github.com/metaneutrons/snapcast-rs/commit/3e61f211fbf19ccb249d968268729af9c01fc1ae))
+
 ## [0.17.1](https://github.com/metaneutrons/snapcast-rs/compare/v0.17.0...v0.17.1) (2026-07-01)
 
 

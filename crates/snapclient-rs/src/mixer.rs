@@ -165,3 +165,205 @@ fn detect_alsa_control() -> Option<String> {
         }
     })
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // ---- VolumeState ----
+
+    #[test]
+    fn volume_state_new_defaults() {
+        let vol = VolumeState::new();
+        assert_eq!(vol.percent.load(Ordering::Relaxed), 100);
+        assert!(!vol.muted.load(Ordering::Relaxed));
+    }
+
+    #[test]
+    fn gain_default_is_unity() {
+        let vol = VolumeState::new();
+        assert_eq!(vol.gain(), 1.0);
+    }
+
+    #[test]
+    fn gain_scales_linearly_with_percent() {
+        let vol = VolumeState::new();
+        vol.percent.store(50, Ordering::Relaxed);
+        assert_eq!(vol.gain(), 0.5);
+
+        vol.percent.store(25, Ordering::Relaxed);
+        assert_eq!(vol.gain(), 0.25);
+
+        vol.percent.store(0, Ordering::Relaxed);
+        assert_eq!(vol.gain(), 0.0);
+    }
+
+    #[test]
+    fn gain_full_scale_at_100() {
+        let vol = VolumeState::new();
+        vol.percent.store(100, Ordering::Relaxed);
+        assert_eq!(vol.gain(), 1.0);
+    }
+
+    #[test]
+    fn gain_muted_is_zero_regardless_of_percent() {
+        let vol = VolumeState::new();
+        // A non-zero percent that would otherwise produce audible gain.
+        vol.percent.store(80, Ordering::Relaxed);
+        vol.muted.store(true, Ordering::Relaxed);
+        assert_eq!(vol.gain(), 0.0);
+
+        // Un-muting restores the underlying percent-derived gain.
+        vol.muted.store(false, Ordering::Relaxed);
+        assert_eq!(vol.gain(), 0.8);
+    }
+
+    #[test]
+    fn gain_matches_percent_over_full_range() {
+        let vol = VolumeState::new();
+        for p in 0u8..=100 {
+            vol.percent.store(p, Ordering::Relaxed);
+            let expected = p as f32 / 100.0;
+            assert!(
+                (vol.gain() - expected).abs() < f32::EPSILON,
+                "percent {p} -> gain {} != {expected}",
+                vol.gain()
+            );
+        }
+    }
+
+    // ---- Mixer::from_str parsing ----
+
+    #[test]
+    fn from_str_software_selects_software_backend() {
+        let (mixer, _vol) = Mixer::from_str("software");
+        assert!(matches!(mixer, Mixer::Software(_)));
+    }
+
+    #[test]
+    fn from_str_empty_defaults_to_software() {
+        let (mixer, _vol) = Mixer::from_str("");
+        assert!(matches!(mixer, Mixer::Software(_)));
+    }
+
+    #[test]
+    fn from_str_none_selects_no_control() {
+        let (mixer, _vol) = Mixer::from_str("none");
+        assert!(matches!(mixer, Mixer::None));
+    }
+
+    #[test]
+    fn from_str_unknown_mode_falls_back_to_software() {
+        let (mixer, _vol) = Mixer::from_str("bogus");
+        assert!(matches!(mixer, Mixer::Software(_)));
+    }
+
+    #[test]
+    fn from_str_splits_on_colon_and_ignores_param_for_software() {
+        // `split_once(':')` means the mode is only the part before the colon;
+        // "software:whatever" is still the software backend.
+        let (mixer, _vol) = Mixer::from_str("software:ignored");
+        assert!(matches!(mixer, Mixer::Software(_)));
+    }
+
+    #[test]
+    fn from_str_none_with_colon_param_is_still_none() {
+        let (mixer, _vol) = Mixer::from_str("none:whatever");
+        assert!(matches!(mixer, Mixer::None));
+    }
+
+    // On non-Linux targets the ALSA backend is compiled out, so "hardware"
+    // deterministically falls back to the software mixer (no hardware probe).
+    #[test]
+    #[cfg(not(target_os = "linux"))]
+    fn from_str_hardware_falls_back_to_software_off_linux() {
+        let (mixer, _vol) = Mixer::from_str("hardware");
+        assert!(matches!(mixer, Mixer::Software(_)));
+
+        // A named control is likewise ignored off-Linux.
+        let (mixer2, _vol2) = Mixer::from_str("hardware:Master");
+        assert!(matches!(mixer2, Mixer::Software(_)));
+    }
+
+    // ---- from_str returned VolumeState handle ----
+
+    #[test]
+    fn from_str_returns_default_volume_handle() {
+        let (_mixer, vol) = Mixer::from_str("software");
+        assert_eq!(vol.percent.load(Ordering::Relaxed), 100);
+        assert!(!vol.muted.load(Ordering::Relaxed));
+    }
+
+    #[test]
+    fn from_str_software_handle_is_shared_with_backend() {
+        // The returned handle must alias the Arc stored inside the Software
+        // variant, otherwise set_volume() would update invisible state.
+        let (mixer, vol) = Mixer::from_str("software");
+        match &mixer {
+            Mixer::Software(inner) => {
+                assert!(
+                    Arc::ptr_eq(inner, &vol),
+                    "returned handle must be the backend's Arc"
+                );
+            }
+            _ => panic!("expected software backend"),
+        }
+    }
+
+    // ---- Mixer::set_volume dispatch ----
+
+    #[test]
+    fn set_volume_software_updates_shared_state() {
+        let (mixer, vol) = Mixer::from_str("software");
+        mixer.set_volume(75, false);
+        assert_eq!(vol.percent.load(Ordering::Relaxed), 75);
+        assert!(!vol.muted.load(Ordering::Relaxed));
+
+        // Observed through gain(): 75% unmuted -> 0.75.
+        assert_eq!(vol.gain(), 0.75);
+    }
+
+    #[test]
+    fn set_volume_software_applies_mute() {
+        let (mixer, vol) = Mixer::from_str("software");
+        mixer.set_volume(60, true);
+        assert_eq!(vol.percent.load(Ordering::Relaxed), 60);
+        assert!(vol.muted.load(Ordering::Relaxed));
+        // Muted overrides percent in the gain calculation.
+        assert_eq!(vol.gain(), 0.0);
+    }
+
+    #[test]
+    fn set_volume_software_boundary_values() {
+        let (mixer, vol) = Mixer::from_str("software");
+
+        mixer.set_volume(0, false);
+        assert_eq!(vol.percent.load(Ordering::Relaxed), 0);
+        assert_eq!(vol.gain(), 0.0);
+
+        mixer.set_volume(100, false);
+        assert_eq!(vol.percent.load(Ordering::Relaxed), 100);
+        assert_eq!(vol.gain(), 1.0);
+    }
+
+    #[test]
+    fn set_volume_software_last_write_wins() {
+        let (mixer, vol) = Mixer::from_str("software");
+        mixer.set_volume(30, true);
+        mixer.set_volume(90, false);
+        assert_eq!(vol.percent.load(Ordering::Relaxed), 90);
+        assert!(!vol.muted.load(Ordering::Relaxed));
+        assert_eq!(vol.gain(), 0.9);
+    }
+
+    #[test]
+    fn set_volume_none_is_a_noop_on_returned_handle() {
+        // For the `none` backend the returned handle is a fresh default state
+        // that set_volume never touches.
+        let (mixer, vol) = Mixer::from_str("none");
+        mixer.set_volume(10, true);
+        assert_eq!(vol.percent.load(Ordering::Relaxed), 100);
+        assert!(!vol.muted.load(Ordering::Relaxed));
+        assert_eq!(vol.gain(), 1.0);
+    }
+}

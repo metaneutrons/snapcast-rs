@@ -24,9 +24,8 @@ async fn server_sees_client_connect_and_disconnect() {
         .send(snapcast_client::ClientCommand::Stop)
         .await
         .ok();
-    tokio::time::sleep(std::time::Duration::from_millis(100)).await;
 
-    // Server should see ClientDisconnected
+    // Server should see ClientDisconnected (event-driven wait below)
     let deadline = tokio::time::Instant::now() + std::time::Duration::from_millis(2000);
     loop {
         match tokio::time::timeout_at(deadline, server.events.recv()).await {

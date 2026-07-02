@@ -70,6 +70,22 @@ async fn wait_for_connect(events: &mut mpsc::Receiver<ServerEvent>) -> String {
     }
 }
 
+/// Helper: wait (event-driven, no sleep) for a specific server event, so a
+/// command's effect is observed before the following assertion runs.
+async fn wait_for_server_event<F>(events: &mut mpsc::Receiver<ServerEvent>, mut pred: F)
+where
+    F: FnMut(&ServerEvent) -> bool,
+{
+    let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(2);
+    loop {
+        match tokio::time::timeout_at(deadline, events.recv()).await {
+            Ok(Some(ev)) if pred(&ev) => return,
+            Ok(Some(_)) => continue,
+            _ => panic!("Timed out waiting for server event"),
+        }
+    }
+}
+
 #[tokio::test]
 async fn client_receives_audio_only_from_assigned_stream() {
     let mut server = start_two_stream_server().await;
@@ -87,21 +103,13 @@ async fn client_receives_audio_only_from_assigned_stream() {
     let (group_id, stream_id) = get_client_group(&server.cmd, &client_id).await;
     assert_eq!(stream_id, "stream_a");
 
-    // Send audio on stream_a — client should receive it
+    // Exercise the pipeline: assigned stream carries audio, the other does not.
     for _ in 0..5 {
         server.stream_a.send(tone_frame()).await.unwrap();
-    }
-    tokio::time::sleep(std::time::Duration::from_millis(200)).await;
-
-    // Send audio on stream_b — client should NOT receive it (different stream)
-    // We verify indirectly: if the client got stream_b audio, it would be
-    // mixed/corrupted. The fact that the pipeline doesn't error proves filtering.
-    for _ in 0..5 {
         server.stream_b.send(silence_frame()).await.unwrap();
     }
-    tokio::time::sleep(std::time::Duration::from_millis(200)).await;
 
-    // Switch client's group to stream_b
+    // Switch client's group to stream_b and wait for the routing change to apply.
     server
         .cmd
         .send(ServerCommand::SetGroupStream {
@@ -110,22 +118,20 @@ async fn client_receives_audio_only_from_assigned_stream() {
         })
         .await
         .unwrap();
-
-    // Give routing update time to propagate
-    tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+    wait_for_server_event(&mut server.events, |e| {
+        matches!(e, ServerEvent::GroupStreamChanged { .. })
+    })
+    .await;
 
     // Verify the switch happened
     let (_, new_stream) = get_client_group(&server.cmd, &client_id).await;
     assert_eq!(new_stream, "stream_b");
 
-    // Now stream_b audio should reach the client, stream_a should not
+    // Now stream_b audio should reach the client, stream_a should not.
     for _ in 0..5 {
         server.stream_b.send(tone_frame()).await.unwrap();
-    }
-    for _ in 0..5 {
         server.stream_a.send(silence_frame()).await.unwrap();
     }
-    tokio::time::sleep(std::time::Duration::from_millis(200)).await;
 
     // If we got here without panics/errors, stream routing works end-to-end:
     // - Client only received audio from its assigned stream
@@ -155,13 +161,15 @@ async fn muted_client_receives_no_audio() {
         })
         .await
         .unwrap();
-    tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+    wait_for_server_event(&mut server.events, |e| {
+        matches!(e, ServerEvent::ClientVolumeChanged { muted: true, .. })
+    })
+    .await;
 
     // Send audio — muted client should not receive chunks (server skips sending)
     for _ in 0..5 {
         server.stream_a.send(tone_frame()).await.unwrap();
     }
-    tokio::time::sleep(std::time::Duration::from_millis(200)).await;
 
     // Unmute
     server
@@ -173,11 +181,13 @@ async fn muted_client_receives_no_audio() {
         })
         .await
         .unwrap();
-    tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+    wait_for_server_event(&mut server.events, |e| {
+        matches!(e, ServerEvent::ClientVolumeChanged { muted: false, .. })
+    })
+    .await;
 
     // Audio should flow again
     for _ in 0..5 {
         server.stream_a.send(tone_frame()).await.unwrap();
     }
-    tokio::time::sleep(std::time::Duration::from_millis(200)).await;
 }

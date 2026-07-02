@@ -2,7 +2,7 @@
 # Pre-push: format check + clippy (all targets), then the coverage gate.
 #
 # The coverage gate mirrors the CI `Coverage` job (.github/workflows/ci.yml):
-# default features, genuine I/O excluded whole-file, >= 85% lines on the
+# default features, genuine I/O excluded whole-file, >= 90% lines on the
 # testable surface. It needs cargo-llvm-cov (`cargo install cargo-llvm-cov`);
 # if it isn't installed the gate is skipped locally (CI still enforces it).
 #
@@ -29,4 +29,4 @@ fi
 
 cargo llvm-cov --workspace --summary-only \
     --ignore-filename-regex '(^|/)(main|logging)\.rs$|player/mod\.rs$|stream/(librespot|airplay|pipe|tcp|process|file|mod)\.rs$' \
-    --fail-under-lines 85
+    --fail-under-lines 90

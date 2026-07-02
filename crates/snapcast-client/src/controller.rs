@@ -423,3 +423,192 @@ fn samples_to_f32(data: &[u8], format: SampleFormat, encoding: SampleEncoding) -
         },
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use snapcast_proto::message::base::BaseMessage;
+    use snapcast_proto::message::wire_chunk::WireChunk;
+    use snapcast_proto::types::Timeval;
+
+    /// Build a controller wired to in-memory channels (no network is touched until
+    /// `connect()` is called, which these tests never do).
+    fn make_controller() -> (
+        Controller,
+        mpsc::Receiver<ClientEvent>,
+        mpsc::Receiver<crate::AudioFrame>,
+        Arc<Mutex<Stream>>,
+    ) {
+        let (event_tx, event_rx) = mpsc::channel(64);
+        let (_cmd_tx, cmd_rx) = mpsc::channel(64);
+        let (audio_tx, audio_rx) = mpsc::channel(64);
+        let time_provider = Arc::new(Mutex::new(TimeProvider::new()));
+        let stream = Arc::new(Mutex::new(Stream::new(SampleFormat::new(48000, 16, 2))));
+        let cfg = crate::ClientConfig {
+            scheme: snapcast_proto::SCHEME_TCP.into(),
+            host: "example.invalid".into(),
+            ..Default::default()
+        };
+        let ctrl = Controller::new(
+            cfg,
+            event_tx,
+            cmd_rx,
+            audio_tx,
+            time_provider,
+            Arc::clone(&stream),
+        )
+        .unwrap();
+        (ctrl, event_rx, audio_rx, stream)
+    }
+
+    fn base(msg_type: MessageType) -> BaseMessage {
+        BaseMessage {
+            msg_type,
+            id: 0,
+            refers_to: 0,
+            sent: Timeval::default(),
+            received: Timeval::default(),
+            size: 0,
+        }
+    }
+
+    fn drain_events(rx: &mut mpsc::Receiver<ClientEvent>) -> Vec<ClientEvent> {
+        let mut out = Vec::new();
+        while let Ok(ev) = rx.try_recv() {
+            out.push(ev);
+        }
+        out
+    }
+
+    // ---- samples_to_f32 ----
+
+    #[test]
+    fn samples_to_f32_i16_normalizes_full_scale() {
+        let f = SampleFormat::new(48000, 16, 2);
+        let out = samples_to_f32(&i16::MAX.to_le_bytes(), f, SampleEncoding::PcmInt);
+        assert_eq!(out.len(), 1);
+        assert!((out[0] - 1.0).abs() < 1e-4);
+    }
+
+    #[test]
+    fn samples_to_f32_float32_passthrough() {
+        let f = SampleFormat::new(48000, 32, 2);
+        let out = samples_to_f32(&0.5f32.to_le_bytes(), f, SampleEncoding::Float32);
+        assert_eq!(out, vec![0.5]);
+    }
+
+    #[test]
+    fn samples_to_f32_24bit_zero() {
+        let f = SampleFormat::new(48000, 24, 2);
+        let out = samples_to_f32(&0i32.to_le_bytes(), f, SampleEncoding::PcmInt);
+        assert_eq!(out, vec![0.0]);
+    }
+
+    #[test]
+    fn samples_to_f32_unsupported_bit_depth_is_empty() {
+        let f = SampleFormat::new(48000, 8, 2);
+        assert!(samples_to_f32(&[1, 2, 3, 4], f, SampleEncoding::PcmInt).is_empty());
+    }
+
+    // ---- handle_message branches ----
+
+    #[test]
+    fn handle_server_settings_emits_settings_and_volume() {
+        let (mut ctrl, mut event_rx, _audio, _stream) = make_controller();
+        let msg = TypedMessage {
+            base: base(MessageType::ServerSettings),
+            payload: MessagePayload::ServerSettings(ServerSettings {
+                buffer_ms: 1000,
+                latency: 0,
+                volume: 60,
+                muted: false,
+            }),
+        };
+        ctrl.handle_message(msg).unwrap();
+        let events = drain_events(&mut event_rx);
+        assert!(
+            events
+                .iter()
+                .any(|e| matches!(e, ClientEvent::ServerSettings { .. }))
+        );
+        assert!(
+            events
+                .iter()
+                .any(|e| matches!(e, ClientEvent::VolumeChanged { volume: 60, .. }))
+        );
+    }
+
+    #[test]
+    fn handle_time_message_updates_provider_without_panic() {
+        let (mut ctrl, _e, _a, _s) = make_controller();
+        let mut b = base(MessageType::Time);
+        b.sent = Timeval { sec: 1, usec: 0 };
+        b.received = Timeval { sec: 1, usec: 500 };
+        let msg = TypedMessage {
+            base: b,
+            payload: MessagePayload::Time(Time {
+                latency: Timeval { sec: 0, usec: 200 },
+            }),
+        };
+        ctrl.handle_message(msg).unwrap();
+    }
+
+    #[test]
+    fn handle_error_message_is_nonfatal() {
+        let (mut ctrl, _e, _a, _s) = make_controller();
+        let msg = TypedMessage {
+            base: base(MessageType::Error),
+            payload: MessagePayload::Error(snapcast_proto::message::error::Error {
+                code: 500,
+                error: "boom".into(),
+                message: "server error".into(),
+            }),
+        };
+        assert!(ctrl.handle_message(msg).is_ok());
+    }
+
+    #[test]
+    fn handle_wirechunk_without_decoder_emits_no_audio() {
+        let (mut ctrl, _e, mut audio_rx, _s) = make_controller();
+        let msg = TypedMessage {
+            base: base(MessageType::WireChunk),
+            payload: MessagePayload::WireChunk(WireChunk {
+                timestamp: Timeval { sec: 1, usec: 0 },
+                payload: vec![0u8; 16],
+            }),
+        };
+        ctrl.handle_message(msg).unwrap();
+        assert!(audio_rx.try_recv().is_err(), "no decoder → no audio frame");
+    }
+
+    // ---- init_audio_pipeline ----
+
+    #[test]
+    fn init_audio_pipeline_rejects_unknown_codec() {
+        let (mut ctrl, _e, _a, _s) = make_controller();
+        let header = CodecHeader {
+            codec: "totally-bogus".into(),
+            payload: vec![],
+        };
+        assert!(ctrl.init_audio_pipeline(&header).is_err());
+    }
+
+    // ---- session ----
+
+    #[tokio::test]
+    async fn session_without_host_bails_before_connecting() {
+        let (event_tx, _event_rx) = mpsc::channel(8);
+        let (_cmd_tx, cmd_rx) = mpsc::channel(8);
+        let (audio_tx, _audio_rx) = mpsc::channel(8);
+        let time_provider = Arc::new(Mutex::new(TimeProvider::new()));
+        let stream = Arc::new(Mutex::new(Stream::new(SampleFormat::new(48000, 16, 2))));
+        let cfg = crate::ClientConfig {
+            scheme: snapcast_proto::SCHEME_TCP.into(),
+            host: String::new(),
+            ..Default::default()
+        };
+        let mut ctrl =
+            Controller::new(cfg, event_tx, cmd_rx, audio_tx, time_provider, stream).unwrap();
+        assert!(ctrl.session().await.is_err());
+    }
+}

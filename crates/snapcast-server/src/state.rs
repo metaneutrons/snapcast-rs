@@ -367,4 +367,50 @@ mod tests {
         // All hex
         assert!(id.replace('-', "").chars().all(|c| c.is_ascii_hexdigit()));
     }
+
+    #[tokio::test]
+    async fn concurrent_mutations_keep_each_client_in_one_group() {
+        use std::sync::Arc;
+        use tokio::sync::Mutex;
+
+        // ServerState is always reached through Arc<Mutex<_>> in the server, so the
+        // realistic concern is that interleaved mutations under the lock keep the
+        // routing invariant intact: every client belongs to exactly one group.
+        let state = Arc::new(Mutex::new(ServerState::default()));
+        {
+            let mut s = state.lock().await;
+            for i in 0..10 {
+                let id = format!("c{i}");
+                s.get_or_create_client(&id, "host", "mac");
+                s.group_for_client(&id, "default");
+            }
+        }
+
+        let mut handles = Vec::new();
+        for t in 0..8u32 {
+            let st = Arc::clone(&state);
+            handles.push(tokio::spawn(async move {
+                for i in 0..50u32 {
+                    let id = format!("c{}", (t + i) % 10);
+                    let mut s = st.lock().await;
+                    if let Some(c) = s.clients.get_mut(&id) {
+                        c.config.volume.muted = i % 2 == 0;
+                    }
+                    let gid = s.group_for_client(&id, "default").id.clone();
+                    s.set_group_stream(&gid, "streamX");
+                }
+            }));
+        }
+        for h in handles {
+            h.await.unwrap();
+        }
+
+        let s = state.lock().await;
+        for cid in s.clients.keys() {
+            let count = s.groups.iter().filter(|g| g.clients.contains(cid)).count();
+            assert_eq!(count, 1, "client {cid} must be in exactly one group");
+        }
+        // The churn must not leave any group empty.
+        assert!(s.groups.iter().all(|g| !g.clients.is_empty()));
+    }
 }

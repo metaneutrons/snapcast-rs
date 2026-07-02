@@ -40,3 +40,42 @@ impl ChunkTimestamper {
         self.samples_written = 0;
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn now_usec_is_positive_and_nondecreasing() {
+        let a = now_usec();
+        let b = now_usec();
+        assert!(a > 0);
+        assert!(b >= a);
+    }
+
+    #[test]
+    fn first_chunk_is_anchored_at_start() {
+        let mut ts = ChunkTimestamper::new(48_000);
+        let start = ts.start_usec;
+        assert_eq!(ts.next(1024), start);
+    }
+
+    #[test]
+    fn timestamps_advance_by_exact_sample_duration() {
+        let mut ts = ChunkTimestamper::new(48_000);
+        let t0 = ts.next(48_000);
+        let t1 = ts.next(48_000);
+        // 48000 frames at 48 kHz is exactly one second (1,000,000 µs) apart.
+        assert_eq!(t1 - t0, 1_000_000);
+    }
+
+    #[test]
+    fn reset_rewinds_the_sample_counter() {
+        let mut ts = ChunkTimestamper::new(44_100);
+        ts.next(44_100);
+        ts.next(44_100);
+        ts.reset();
+        // After reset the next chunk is anchored at the (new) start again.
+        assert_eq!(ts.next(0), ts.start_usec);
+    }
+}

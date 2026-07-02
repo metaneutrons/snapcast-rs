@@ -15,36 +15,10 @@
 //! `audio_rx`: `should_send_chunk` filters chunks server-side by stream match
 //! and mute state, so a filtered client receives literally zero frames.
 
-use snapcast_client::{ClientConfig, ClientEvent, SnapClient};
+use snapcast_client::ClientEvent;
 use snapcast_server::{AudioData, AudioFrame, ServerCommand, ServerEvent, SnapServer};
-use snapcast_tests::{TestClient, expect_event, spawn_serving};
+use snapcast_tests::{TestClient, connect_client_with_id, expect_event, spawn_serving};
 use tokio::sync::mpsc;
-
-/// Connect a client with an explicit unique `host_id`.
-///
-/// The harness `connect_client` leaves `host_id` empty, so every client falls
-/// back to the machine's MAC address and the server collapses them into ONE
-/// client id / group. A multi-client test needs distinct ids, so we build the
-/// `ClientConfig` locally (mirroring `snapcast_tests::connect_client`) and set
-/// a unique `host_id`.
-async fn connect_client_with_id(port: u16, host_id: &str) -> TestClient {
-    let config = ClientConfig {
-        host: "127.0.0.1".into(),
-        port,
-        host_id: host_id.to_string(),
-        ..ClientConfig::default()
-    };
-    let (mut client, events, audio_rx) = SnapClient::new(config);
-    let cmd = client.command_sender();
-    tokio::spawn(async move {
-        client.run().await.ok();
-    });
-    TestClient {
-        events,
-        audio_rx,
-        cmd,
-    }
-}
 
 // ---------------------------------------------------------------------------
 // Server harness with two named streams (like stream_routing.rs).

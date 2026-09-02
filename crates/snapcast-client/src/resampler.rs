@@ -165,7 +165,7 @@ mod tests {
         let in_bytes = frames * in_fmt.frame_size() as usize;
         let mut data = vec![0u8; in_bytes];
         // Fill with a simple pattern
-        for (i, chunk) in data.chunks_exact_mut(2).enumerate() {
+        for (i, chunk) in data.as_chunks_mut::<2>().0.iter_mut().enumerate() {
             let sample = ((i as f64 * 0.1).sin() * 10000.0) as i16;
             chunk.copy_from_slice(&sample.to_le_bytes());
         }

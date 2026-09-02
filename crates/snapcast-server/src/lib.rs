@@ -152,7 +152,7 @@ impl F32AudioSender {
         if self.buf.is_empty() {
             return Ok(());
         }
-        let chunk: Vec<f32> = self.buf.drain(..).collect();
+        let chunk: Vec<f32> = std::mem::take(&mut self.buf);
         let ch = self.channels.max(1) as usize;
         let frames = (chunk.len() / ch) as u32;
         let ts = self

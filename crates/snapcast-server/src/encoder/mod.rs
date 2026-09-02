@@ -121,17 +121,23 @@ pub(crate) fn f32_to_pcm(samples: &[f32], bits: u16) -> Vec<u8> {
 pub(crate) fn pcm_to_f32(pcm: &[u8], bits: u16) -> Vec<f32> {
     match bits {
         16 => pcm
-            .chunks_exact(2)
+            .as_chunks::<2>()
+            .0
+            .iter()
             .map(|c| i16::from_le_bytes([c[0], c[1]]) as f32 / i16::MAX as f32)
             .collect(),
         24 => pcm
-            .chunks_exact(4)
+            .as_chunks::<4>()
+            .0
+            .iter()
             .map(|c| {
                 i32::from_le_bytes([c[0], c[1], c[2], c[3]]) as f32 / snapcast_proto::PCM_24BIT_MAX
             })
             .collect(),
         32 => pcm
-            .chunks_exact(4)
+            .as_chunks::<4>()
+            .0
+            .iter()
             .map(|c| i32::from_le_bytes([c[0], c[1], c[2], c[3]]) as f32 / i32::MAX as f32)
             .collect(),
         _ => pcm_to_f32(pcm, 16),

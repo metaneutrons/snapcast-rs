@@ -271,24 +271,48 @@ fn write_samples_to_output(
     output.fill(0.0);
     match encoding {
         SampleEncoding::Float32 => {
-            for (i, chunk) in samples.chunks_exact(4).take(output.len()).enumerate() {
+            for (i, chunk) in samples
+                .as_chunks::<4>()
+                .0
+                .iter()
+                .take(output.len())
+                .enumerate()
+            {
                 output[i] = f32::from_le_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]);
             }
         }
         SampleEncoding::PcmInt => match format.bits() {
             16 => {
-                for (i, chunk) in samples.chunks_exact(2).take(output.len()).enumerate() {
+                for (i, chunk) in samples
+                    .as_chunks::<2>()
+                    .0
+                    .iter()
+                    .take(output.len())
+                    .enumerate()
+                {
                     output[i] = i16::from_le_bytes([chunk[0], chunk[1]]) as f32 / i16::MAX as f32;
                 }
             }
             24 => {
-                for (i, chunk) in samples.chunks_exact(4).take(output.len()).enumerate() {
+                for (i, chunk) in samples
+                    .as_chunks::<4>()
+                    .0
+                    .iter()
+                    .take(output.len())
+                    .enumerate()
+                {
                     output[i] = i32::from_le_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]) as f32
                         / snapcast_proto::PCM_24BIT_MAX;
                 }
             }
             32 => {
-                for (i, chunk) in samples.chunks_exact(4).take(output.len()).enumerate() {
+                for (i, chunk) in samples
+                    .as_chunks::<4>()
+                    .0
+                    .iter()
+                    .take(output.len())
+                    .enumerate()
+                {
                     output[i] = i32::from_le_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]) as f32
                         / i32::MAX as f32;
                 }

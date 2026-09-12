@@ -171,7 +171,7 @@ dependency tree:
 | Own test suite | 163 unit tests, all pass | 206 tests (incl. a dedicated `roundtrip.rs`), all pass |
 | API stability | `0.5.x` | `0.0.x` — semver says anything can break |
 | Security advisories | none | none |
-| MSRV | 1.65 | 1.80 — both well under our `1.88` |
+| MSRV | 1.65 | 1.80 — both well under our `1.94.1` |
 | Dependency footprint | With `default-features = false` (verified it still builds and the spike still passes): just `crc`/`heapless`/`md-5`/`num-traits` — no `crossbeam-channel`, no `serde` | `oxideav-core` + `oxideav-id3` pull `serde_json` + the full `syn`/`quote`/`proc-macro2` chain via `thiserror-impl` — heavier than slimmed `flacenc` |
 
 ## Decision

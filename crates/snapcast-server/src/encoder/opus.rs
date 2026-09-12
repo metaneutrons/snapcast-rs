@@ -122,8 +122,10 @@ impl Encoder for OpusEncoder {
                 break;
             }
             let samples: Vec<i16> = chunk
-                .chunks_exact(2)
-                .map(|b| i16::from_le_bytes([b[0], b[1]]))
+                .as_chunks::<2>()
+                .0
+                .iter()
+                .map(|sample| i16::from_le_bytes(*sample))
                 .collect();
 
             match self.encoder.encode(&samples, &mut encode_buf) {

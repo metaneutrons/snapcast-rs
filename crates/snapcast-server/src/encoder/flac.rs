@@ -168,13 +168,17 @@ impl FlacEncoder {
         let mut out = Vec::with_capacity(pcm.len() / sample_size);
         match sample_size {
             2 => {
-                for c in pcm.chunks_exact(2) {
-                    out.push(i16::from_le_bytes([c[0], c[1]]) as i32);
+                let (samples, remainder) = pcm.as_chunks::<2>();
+                debug_assert!(remainder.is_empty());
+                for sample in samples {
+                    out.push(i16::from_le_bytes(*sample) as i32);
                 }
             }
             4 => {
-                for c in pcm.chunks_exact(4) {
-                    out.push(i32::from_le_bytes([c[0], c[1], c[2], c[3]]));
+                let (samples, remainder) = pcm.as_chunks::<4>();
+                debug_assert!(remainder.is_empty());
+                for sample in samples {
+                    out.push(i32::from_le_bytes(*sample));
                 }
             }
             other => bail!("unsupported sample size: {other}"),

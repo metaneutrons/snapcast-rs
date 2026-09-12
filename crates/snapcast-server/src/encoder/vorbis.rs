@@ -87,16 +87,14 @@ impl Encoder for VorbisEncoder {
                 };
                 match sample_size {
                     2 => {
-                        for (i, chunk) in pcm.chunks_exact(2).enumerate() {
-                            let s = i16::from_le_bytes([chunk[0], chunk[1]]) as f32 * scale;
+                        for (i, sample) in pcm.as_chunks::<2>().0.iter().enumerate() {
+                            let s = i16::from_le_bytes(*sample) as f32 * scale;
                             bufs[i % channels].push(s);
                         }
                     }
                     4 => {
-                        for (i, chunk) in pcm.chunks_exact(4).enumerate() {
-                            let s = i32::from_le_bytes([chunk[0], chunk[1], chunk[2], chunk[3]])
-                                as f32
-                                * scale;
+                        for (i, sample) in pcm.as_chunks::<4>().0.iter().enumerate() {
+                            let s = i32::from_le_bytes(*sample) as f32 * scale;
                             bufs[i % channels].push(s);
                         }
                     }

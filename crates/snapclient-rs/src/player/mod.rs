@@ -271,26 +271,24 @@ fn write_samples_to_output(
     output.fill(0.0);
     match encoding {
         SampleEncoding::Float32 => {
-            for (i, chunk) in samples.chunks_exact(4).take(output.len()).enumerate() {
-                output[i] = f32::from_le_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]);
+            for (output, sample) in output.iter_mut().zip(samples.as_chunks::<4>().0) {
+                *output = f32::from_le_bytes(*sample);
             }
         }
         SampleEncoding::PcmInt => match format.bits() {
             16 => {
-                for (i, chunk) in samples.chunks_exact(2).take(output.len()).enumerate() {
-                    output[i] = i16::from_le_bytes([chunk[0], chunk[1]]) as f32 / i16::MAX as f32;
+                for (output, sample) in output.iter_mut().zip(samples.as_chunks::<2>().0) {
+                    *output = i16::from_le_bytes(*sample) as f32 / i16::MAX as f32;
                 }
             }
             24 => {
-                for (i, chunk) in samples.chunks_exact(4).take(output.len()).enumerate() {
-                    output[i] = i32::from_le_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]) as f32
-                        / snapcast_proto::PCM_24BIT_MAX;
+                for (output, sample) in output.iter_mut().zip(samples.as_chunks::<4>().0) {
+                    *output = i32::from_le_bytes(*sample) as f32 / snapcast_proto::PCM_24BIT_MAX;
                 }
             }
             32 => {
-                for (i, chunk) in samples.chunks_exact(4).take(output.len()).enumerate() {
-                    output[i] = i32::from_le_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]) as f32
-                        / i32::MAX as f32;
+                for (output, sample) in output.iter_mut().zip(samples.as_chunks::<4>().0) {
+                    *output = i32::from_le_bytes(*sample) as f32 / i32::MAX as f32;
                 }
             }
             _ => output.fill(0.0),

@@ -400,24 +400,29 @@ fn get_mac_address() -> String {
 fn samples_to_f32(data: &[u8], format: SampleFormat, encoding: SampleEncoding) -> Vec<f32> {
     match encoding {
         SampleEncoding::Float32 => data
-            .chunks_exact(4)
-            .map(|c| f32::from_le_bytes([c[0], c[1], c[2], c[3]]))
+            .as_chunks::<4>()
+            .0
+            .iter()
+            .map(|sample| f32::from_le_bytes(*sample))
             .collect(),
         SampleEncoding::PcmInt => match format.bits() {
             16 => data
-                .chunks_exact(2)
-                .map(|c| i16::from_le_bytes([c[0], c[1]]) as f32 / i16::MAX as f32)
+                .as_chunks::<2>()
+                .0
+                .iter()
+                .map(|sample| i16::from_le_bytes(*sample) as f32 / i16::MAX as f32)
                 .collect(),
             24 => data
-                .chunks_exact(4)
-                .map(|c| {
-                    i32::from_le_bytes([c[0], c[1], c[2], c[3]]) as f32
-                        / snapcast_proto::PCM_24BIT_MAX
-                })
+                .as_chunks::<4>()
+                .0
+                .iter()
+                .map(|sample| i32::from_le_bytes(*sample) as f32 / snapcast_proto::PCM_24BIT_MAX)
                 .collect(),
             32 => data
-                .chunks_exact(4)
-                .map(|c| i32::from_le_bytes([c[0], c[1], c[2], c[3]]) as f32 / i32::MAX as f32)
+                .as_chunks::<4>()
+                .0
+                .iter()
+                .map(|sample| i32::from_le_bytes(*sample) as f32 / i32::MAX as f32)
                 .collect(),
             _ => Vec::new(),
         },

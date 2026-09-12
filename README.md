@@ -42,7 +42,7 @@ For full interoperability with C++ clients, use `--codec flac` or `--codec pcm` 
 
 ## Install
 
-The library crates are published on [crates.io](https://crates.io) (requires Rust **1.88+**):
+The library crates are published on [crates.io](https://crates.io) (requires Rust **1.94.1+**):
 
 ```bash
 cargo add snapcast-client   # embeddable client engine

@@ -30,7 +30,7 @@ env:
 jobs:
   release-please:
     if: github.event_name == 'push'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     environment: release
     outputs:
       release_created: ${{ steps.rp.outputs.release_created }}
@@ -63,7 +63,7 @@ jobs:
   resolve-tag:
     needs: [release-please]
     if: always() && (github.event_name == 'workflow_dispatch' || needs.release-please.outputs.release_created == 'true')
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     outputs:
       tag_name: ${{ steps.tag.outputs.tag_name }}
     steps:
@@ -84,7 +84,7 @@ jobs:
       matrix:
         include:
           - target: x86_64-unknown-linux-gnu
-            os: ubuntu-latest
+            os: ubuntu-24.04
           - target: aarch64-unknown-linux-gnu
             os: ubuntu-24.04-arm
           - target: x86_64-apple-darwin
@@ -132,7 +132,7 @@ jobs:
 
   upload-release-artifacts:
     name: Upload Release Artifacts
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     environment: release
     needs: [resolve-tag, build]
     if: always() && needs.resolve-tag.result == 'success' && needs.build.result == 'success'
@@ -156,7 +156,7 @@ jobs:
 
   crates-io:
     name: Publish to crates.io
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     needs: [release-please, resolve-tag, build]
     if: >-
       always() &&

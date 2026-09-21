@@ -133,6 +133,7 @@ jobs:
   upload-release-artifacts:
     name: Upload Release Artifacts
     runs-on: ubuntu-latest
+    environment: release
     needs: [resolve-tag, build]
     if: always() && needs.resolve-tag.result == 'success' && needs.build.result == 'success'
     permissions:

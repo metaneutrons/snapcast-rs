@@ -9,10 +9,15 @@ on:
         description: >-
           Existing release tag to (re)build and upload platform binaries for
           (e.g. v0.17.0). The tag's GitHub Release must already exist — this
-          only rebuilds and uploads binaries to it, using the build logic
-          from this branch. Skips release-please and crates.io publish.
+          rebuilds and uploads binaries to it using the build logic from this
+          branch. Skips release-please; crates.io publication is opt-in below.
         required: true
         type: string
+      publish_crates:
+        description: Publish missing library crates from the requested tag
+        required: false
+        default: false
+        type: boolean
 
 permissions:
   contents: write
@@ -141,10 +146,16 @@ jobs:
   crates-io:
     name: Publish to crates.io
     runs-on: ubuntu-latest
-    needs: [release-please, build]
-    if: always() && needs.release-please.outputs.release_created == 'true' && needs.build.result == 'success'
+    needs: [release-please, resolve-tag, build]
+    if: >-
+      always() &&
+      needs.build.result == 'success' &&
+      (needs.release-please.outputs.release_created == 'true' ||
+      (github.event_name == 'workflow_dispatch' && inputs.publish_crates))
     steps:
       - uses: actions/checkout@v6
+        with:
+          ref: ${{ needs.resolve-tag.outputs.tag_name }}
       - uses: dtolnay/rust-toolchain@stable
       - name: Publish libraries
         shell: bash
@@ -163,6 +174,7 @@ jobs:
           crate_is_available() {
             curl --fail --silent --output /dev/null \
               --retry 3 --retry-delay 2 \
+              --user-agent "snapcast-rs-release/$2 (https://github.com/metaneutrons/snapcast-rs)" \
               "https://crates.io/api/v1/crates/$1/$2"
           }
 

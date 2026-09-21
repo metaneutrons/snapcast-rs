@@ -1,5 +1,20 @@
 # Changelog
 
+## [0.18.0](https://github.com/metaneutrons/snapcast-rs/compare/v0.17.2...v0.18.0) (2026-09-12)
+
+
+### ⚠ BREAKING CHANGES
+
+* raise MSRV to Rust 1.94.1
+
+### Build System
+
+* raise MSRV to Rust 1.94.1 ([d5df235](https://github.com/metaneutrons/snapcast-rs/commit/d5df235758fc0825a8fd1a9065ccd6428fb36f08))
+
+### Code Refactoring
+
+* modernize fixed-size audio buffer handling and sender flushing without changing codec behavior ([ee009cc](https://github.com/metaneutrons/snapcast-rs/commit/ee009cc983a551452d9b125b7f9869954eda1a5c))
+
 ## [0.17.2](https://github.com/metaneutrons/snapcast-rs/compare/v0.17.1...v0.17.2) (2026-07-02)
 
 

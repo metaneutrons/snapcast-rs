@@ -151,6 +151,7 @@ jobs:
         run: |
           gh release upload "${{ needs.resolve-tag.outputs.tag_name }}" \
             snapcast-rs-*/* \
+            --repo "${{ github.repository }}" \
             --clobber
 
   crates-io:

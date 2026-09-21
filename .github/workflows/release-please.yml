@@ -78,6 +78,7 @@ jobs:
   build:
     name: Build (${{ matrix.target }})
     needs: resolve-tag
+    if: always() && needs.resolve-tag.result == 'success'
     runs-on: ${{ matrix.os }}
     strategy:
       matrix:
@@ -133,6 +134,7 @@ jobs:
     name: Upload Release Artifacts
     runs-on: ubuntu-latest
     needs: [resolve-tag, build]
+    if: always() && needs.resolve-tag.result == 'success' && needs.build.result == 'success'
     permissions:
       contents: write
     steps:

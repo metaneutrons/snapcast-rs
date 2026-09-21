@@ -146,11 +146,12 @@ jobs:
           private-key: ${{ secrets.RELEASE_PLEASE_APP_PRIVATE_KEY }}
       - uses: actions/download-artifact@v8
       - name: Upload to GitHub Release
-        uses: softprops/action-gh-release@v2
-        with:
-          token: ${{ steps.app-token.outputs.token }}
-          tag_name: ${{ needs.resolve-tag.outputs.tag_name }}
-          files: snapcast-rs-*/*
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+        run: |
+          gh release upload "${{ needs.resolve-tag.outputs.tag_name }}" \
+            snapcast-rs-*/* \
+            --clobber
 
   crates-io:
     name: Publish to crates.io

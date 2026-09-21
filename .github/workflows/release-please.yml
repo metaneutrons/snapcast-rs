@@ -113,7 +113,9 @@ jobs:
           set -euo pipefail
           mkdir -p dist
           ext=""
-          if [[ "${{ matrix.target }}" == *windows* ]]; then ext=".exe"; fi
+          case "${{ matrix.target }}" in
+            *windows*) ext=".exe" ;;
+          esac
           cp "target/${{ matrix.target }}/release/snapclient-rs${ext}" "dist/snapclient-rs-${{ matrix.target }}${ext}"
           cp "target/${{ matrix.target }}/release/snapserver-rs${ext}" "dist/snapserver-rs-${{ matrix.target }}${ext}"
       - name: Upload artifacts
@@ -144,12 +146,60 @@ jobs:
     steps:
       - uses: actions/checkout@v6
       - uses: dtolnay/rust-toolchain@stable
-      - name: Publish (order matters — proto first)
+      - name: Publish libraries
+        shell: bash
         env:
           CARGO_REGISTRY_TOKEN: ${{ secrets.CRATES_IO_TOKEN }}
         run: |
-          cargo publish -p snapcast-proto || true
-          sleep 30
-          cargo publish -p snapcast-client || true
-          sleep 30
-          cargo publish -p snapcast-server || true
+          set -euo pipefail
+
+          metadata="$(cargo metadata --locked --no-deps --format-version 1)"
+
+          package_version() {
+            jq -er --arg name "$1" \
+              '.packages[] | select(.name == $name) | .version' <<<"$metadata"
+          }
+
+          crate_is_available() {
+            curl --fail --silent --output /dev/null \
+              --retry 3 --retry-delay 2 \
+              "https://crates.io/api/v1/crates/$1/$2"
+          }
+
+          wait_for_crate() {
+            local package_name="$1"
+            local version="$2"
+
+            for attempt in {1..20}; do
+              if crate_is_available "$package_name" "$version"; then
+                echo "$package_name $version is available on crates.io."
+                return 0
+              fi
+
+              if (( attempt == 20 )); then
+                echo "::error::$package_name $version was uploaded but did not become available on crates.io."
+                return 1
+              fi
+
+              echo "Waiting for $package_name $version to become available (attempt $attempt/20)..."
+              sleep 15
+            done
+          }
+
+          publish_crate() {
+            local package_name="$1"
+            local version
+            version="$(package_version "$package_name")"
+
+            if crate_is_available "$package_name" "$version"; then
+              echo "::notice::$package_name $version is already published; skipping."
+              return 0
+            fi
+
+            cargo publish --locked -p "$package_name"
+            wait_for_crate "$package_name" "$version"
+          }
+
+          publish_crate snapcast-proto
+          publish_crate snapcast-client
+          publish_crate snapcast-server

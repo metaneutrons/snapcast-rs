@@ -298,7 +298,9 @@ where
         _ => anyhow::bail!("expected Hello, got {:?}", hello_msg.base.msg_type),
     };
 
-    let client_id = hello.id.clone();
+    // Like the C++ server: id plus `#<instance>`, so that several clients on one
+    // host (same MAC or host id) don't collide.
+    let client_id = hello.unique_id();
     tracing::info!(id = %client_id, name = %hello.host_name, mac = %hello.mac, "Client hello");
 
     // Client filter — reject before auth if not accepted

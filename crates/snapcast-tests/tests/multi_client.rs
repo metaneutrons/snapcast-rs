@@ -380,3 +380,34 @@ async fn unassigned_stream_audio_is_not_delivered() {
         "the stream_b client receives no stream_a audio: {received:?}"
     );
 }
+
+#[tokio::test]
+async fn clients_on_the_same_host_keep_distinct_instances() {
+    let mut server = start_two_stream_server().await;
+    let mut tasks = Vec::new();
+    for instance in [1, 2] {
+        let config = snapcast_client::ClientConfig {
+            host: "127.0.0.1".into(),
+            port: server.port,
+            host_id: "shared-host".into(),
+            instance,
+            ..Default::default()
+        };
+        let (mut client, events, audio) = snapcast_client::SnapClient::new(config);
+        tasks.push(tokio::spawn(async move {
+            let (_events, _audio) = (events, audio);
+            client.run().await.unwrap();
+        }));
+    }
+
+    let mut ids = wait_for_n_connects(&mut server.events, 2).await;
+    ids.sort();
+    assert_eq!(ids, ["shared-host", "shared-host#2"]);
+    assert_ne!(
+        client_group(&server.cmd, &ids[0]).await.0,
+        client_group(&server.cmd, &ids[1]).await.0,
+    );
+    for task in tasks {
+        task.abort();
+    }
+}

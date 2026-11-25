@@ -64,6 +64,18 @@ impl Hello {
     pub fn write_to<W: Write>(&self, w: &mut W) -> Result<(), ProtoError> {
         wire::write_json(w, self)
     }
+
+    /// The id that identifies this client on a server: [`id`](Self::id), with
+    /// `#<instance>` appended for instances other than 1, like the C++ server's
+    /// `Hello::getUniqueId()`. Several clients on one host (same MAC/host id) are
+    /// told apart by their instance numbers.
+    pub fn unique_id(&self) -> String {
+        if self.instance == 1 {
+            self.id.clone()
+        } else {
+            format!("{}#{}", self.id, self.instance)
+        }
+    }
 }
 
 #[cfg(test)]
@@ -83,6 +95,14 @@ mod tests {
             snap_stream_protocol_version: 2,
             auth: None,
         }
+    }
+
+    #[test]
+    fn unique_id_appends_the_instance_like_cpp() {
+        let mut h = sample_hello();
+        assert_eq!(h.unique_id(), "00:11:22:33:44:55");
+        h.instance = 2;
+        assert_eq!(h.unique_id(), "00:11:22:33:44:55#2");
     }
 
     #[test]

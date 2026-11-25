@@ -535,11 +535,18 @@ fn spawn_stream_encoder(
                     *tick += chunk_dur;
                     tokio::time::sleep_until(*tick).await;
                 }
+                // Block encoders (FLAC) emit older, buffered samples first: stamp the
+                // chunk with the time of its first sample, not of the newest input.
+                let pending = enc.pending_frames();
                 match enc.encode(&frame.data) {
                     Ok(encoded) if !encoded.data.is_empty() => {
                         let _ = chunk_tx.send(WireChunkData {
                             stream_id: stream_id.clone(),
-                            timestamp_usec: frame.timestamp_usec,
+                            timestamp_usec: encoder::first_sample_timestamp_usec(
+                                frame.timestamp_usec,
+                                pending,
+                                sample_rate,
+                            ),
                             data: encoded.data,
                         });
                     }
@@ -760,5 +767,42 @@ impl SnapServer {
                 }
             }
         }
+    }
+}
+
+#[cfg(all(test, feature = "flac"))]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn buffered_flac_chunk_uses_its_first_input_timestamp() {
+        let (audio_tx, audio_rx) = mpsc::channel(2);
+        let (wire_tx, mut wire_rx) = broadcast::channel(2);
+        let format = SampleFormat::new(48_000, 16, 2);
+        let encoder = encoder::create(&encoder::EncoderConfig {
+            codec: snapcast_proto::CODEC_FLAC.into(),
+            format,
+            options: String::new(),
+            #[cfg(feature = "encryption")]
+            encryption_psk: None,
+        })
+        .unwrap();
+        spawn_stream_encoder("test".into(), audio_rx, encoder, wire_tx, 48_000, 2);
+
+        for timestamp_usec in [1_000_000, 1_020_000] {
+            audio_tx
+                .send(AudioFrame {
+                    data: AudioData::Pcm(vec![0; 960 * 2 * 2]),
+                    timestamp_usec,
+                })
+                .await
+                .unwrap();
+        }
+        let chunk = tokio::time::timeout(std::time::Duration::from_secs(2), wire_rx.recv())
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(chunk.timestamp_usec, 1_000_000);
+        assert!(!chunk.data.is_empty());
     }
 }

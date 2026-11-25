@@ -243,6 +243,10 @@ impl Encoder for FlacEncoder {
 
         Ok(EncodedChunk { data: out })
     }
+
+    fn pending_frames(&self) -> usize {
+        self.pending.len() / (self.format.channels() as usize).max(1)
+    }
 }
 
 #[cfg(test)]
@@ -377,5 +381,19 @@ mod tests {
             }
         }
         assert_eq!(frames, 4, "1152-frame chunks should map 1:1 to frames");
+    }
+
+    #[test]
+    fn pending_frames_counts_what_the_next_frame_starts_with() {
+        let fmt = SampleFormat::new(48000, 16, 2);
+        let mut enc = FlacEncoder::new(fmt, "").unwrap();
+        assert_eq!(enc.pending_frames(), 0);
+        let chunk = || AudioData::Pcm(vec![7u8; 1024 * 2 /*ch*/ * 2 /*bytes*/]);
+        // 1024 frames: buffered, nothing emitted.
+        assert!(enc.encode(&chunk()).unwrap().data.is_empty());
+        assert_eq!(enc.pending_frames(), 1024);
+        // 2048 frames in total: one 1152-frame block out, 896 left.
+        assert!(!enc.encode(&chunk()).unwrap().data.is_empty());
+        assert_eq!(enc.pending_frames(), 2048 - BLOCK_SIZE);
     }
 }

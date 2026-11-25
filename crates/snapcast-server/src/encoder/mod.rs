@@ -34,6 +34,31 @@ pub(crate) trait Encoder: Send {
 
     /// Encode an audio chunk. Accepts F32 or Pcm input.
     fn encode(&mut self, input: &AudioData) -> Result<EncodedChunk>;
+
+    /// Inter-channel frames held back from earlier [`encode`](Self::encode) calls.
+    ///
+    /// The next non-empty output starts with them, so its first sample is older
+    /// than the input that completes it (see [`first_sample_timestamp_usec`]).
+    /// Encoders that emit whatever they get return 0 (the default); encoders
+    /// that emit fixed-size blocks, like FLAC, return what they buffer.
+    fn pending_frames(&self) -> usize {
+        0
+    }
+}
+
+/// Timestamp of the first sample of an encoder's output.
+///
+/// `input_timestamp_usec` belongs to the input chunk handed to `encode`;
+/// `pending_frames` is [`Encoder::pending_frames`] *before* that call. Those
+/// pending frames come first in the output and precede the input by their
+/// duration, assuming the input stream is continuous.
+pub(crate) fn first_sample_timestamp_usec(
+    input_timestamp_usec: i64,
+    pending_frames: usize,
+    sample_rate: u32,
+) -> i64 {
+    input_timestamp_usec
+        .saturating_sub((pending_frames as i64 * 1_000_000) / i64::from(sample_rate.max(1)))
 }
 
 /// Configuration for creating an encoder.
@@ -147,6 +172,17 @@ pub(crate) fn pcm_to_f32(pcm: &[u8], bits: u16) -> Vec<f32> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn first_sample_timestamp_moves_back_by_the_pending_frames() {
+        // Nothing pending: the input's own timestamp.
+        assert_eq!(first_sample_timestamp_usec(1_000_000, 0, 48_000), 1_000_000);
+        // 1024 frames at 48 kHz pending = 21 333 µs earlier.
+        assert_eq!(
+            first_sample_timestamp_usec(1_000_000, 1024, 48_000),
+            978_667
+        );
+    }
 
     #[test]
     fn f32_to_24_bit_pcm_uses_padded_samples() {

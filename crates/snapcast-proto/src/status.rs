@@ -233,48 +233,120 @@ pub struct StreamUri {
 }
 
 /// Stream properties (MPRIS-style metadata and capabilities).
+///
+/// Field names are camelCase on the wire (`playbackStatus`, `canControl`, …), as in
+/// the C++ snapserver's control API; unset fields are omitted, not `null`.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct StreamProperties {
     /// Playback status (Playing, Paused, Stopped).
-    #[serde(default)]
+    #[serde(
+        default,
+        alias = "playback_status",
+        skip_serializing_if = "Option::is_none"
+    )]
     pub playback_status: Option<String>,
     /// Loop status (None, Track, Playlist).
-    #[serde(default)]
+    #[serde(
+        default,
+        alias = "loop_status",
+        skip_serializing_if = "Option::is_none"
+    )]
     pub loop_status: Option<String>,
     /// Shuffle mode.
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub shuffle: Option<bool>,
     /// Volume (0–100).
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub volume: Option<u16>,
     /// Mute state.
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub mute: Option<bool>,
     /// Playback rate.
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub rate: Option<f64>,
     /// Position in seconds.
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub position: Option<f64>,
     /// Can skip to next track.
-    #[serde(default)]
+    #[serde(default, alias = "can_go_next")]
     pub can_go_next: bool,
     /// Can skip to previous track.
-    #[serde(default)]
+    #[serde(default, alias = "can_go_previous")]
     pub can_go_previous: bool,
     /// Can start playback.
-    #[serde(default)]
+    #[serde(default, alias = "can_play")]
     pub can_play: bool,
     /// Can pause playback.
-    #[serde(default)]
+    #[serde(default, alias = "can_pause")]
     pub can_pause: bool,
     /// Can seek within track.
-    #[serde(default)]
+    #[serde(default, alias = "can_seek")]
     pub can_seek: bool,
     /// Can control playback at all.
-    #[serde(default)]
+    #[serde(default, alias = "can_control")]
     pub can_control: bool,
     /// Track metadata (artist, title, album, etc.).
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub metadata: Option<serde_json::Value>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn stream_properties_use_the_cpp_field_names() {
+        let props = StreamProperties {
+            playback_status: Some("playing".into()),
+            can_control: true,
+            can_go_next: true,
+            metadata: Some(serde_json::json!({"title": "Song"})),
+            ..StreamProperties::default()
+        };
+        let json = serde_json::to_value(&props).unwrap();
+        assert_eq!(json["playbackStatus"], "playing");
+        assert_eq!(json["canControl"], true);
+        assert_eq!(json["canGoNext"], true);
+        assert_eq!(json["metadata"]["title"], "Song");
+        assert!(json.get("playback_status").is_none());
+    }
+
+    #[test]
+    fn unset_stream_properties_are_omitted() {
+        // Snapweb treats a present `metadata` key as an object; `null` breaks it.
+        let json = serde_json::to_value(StreamProperties::default()).unwrap();
+        for key in [
+            "metadata",
+            "playbackStatus",
+            "loopStatus",
+            "volume",
+            "position",
+        ] {
+            assert!(json.get(key).is_none(), "{key} must be omitted: {json}");
+        }
+    }
+
+    #[test]
+    fn stream_properties_still_parse_legacy_snake_case() {
+        let props: StreamProperties = serde_json::from_value(serde_json::json!({
+            "playback_status": "playing", "can_go_next": true
+        }))
+        .unwrap();
+        assert_eq!(props.playback_status.as_deref(), Some("playing"));
+        assert!(props.can_go_next);
+    }
+
+    #[test]
+    fn stream_properties_parse_cpp_json() {
+        let props: StreamProperties = serde_json::from_value(serde_json::json!({
+            "playbackStatus": "paused", "canPause": true, "loopStatus": "none",
+            "metadata": {"artist": ["A", "B"]}
+        }))
+        .unwrap();
+        assert_eq!(props.playback_status.as_deref(), Some("paused"));
+        assert!(props.can_pause);
+        assert_eq!(props.loop_status.as_deref(), Some("none"));
+        assert_eq!(props.metadata.unwrap()["artist"][1], "B");
+    }
 }

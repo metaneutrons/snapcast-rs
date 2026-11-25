@@ -258,12 +258,12 @@ impl ServerState {
             .iter()
             .map(|s| status::Stream {
                 id: s.id.clone(),
+                properties: stream_properties(&s.id, &s.properties),
                 status: status::StreamStatus::from(s.status.as_str()),
                 uri: status::StreamUri {
                     raw: s.uri.clone(),
                     ..Default::default()
                 },
-                ..Default::default()
             })
             .collect();
         status::ServerStatus {
@@ -278,6 +278,26 @@ impl ServerState {
 
 fn generate_id() -> String {
     uuid::Uuid::new_v4().to_string()
+}
+
+/// The typed status form of a stream's properties (`None` if it has none).
+/// Properties that don't fit the model (wrong types) are dropped with a warning.
+fn stream_properties(
+    stream_id: &str,
+    properties: &HashMap<String, serde_json::Value>,
+) -> Option<crate::status::StreamProperties> {
+    if properties.is_empty() {
+        return None;
+    }
+    let object = properties
+        .iter()
+        .map(|(k, v)| (k.clone(), v.clone()))
+        .collect::<serde_json::Map<_, _>>();
+    serde_json::from_value(serde_json::Value::Object(object))
+        .inspect_err(
+            |e| tracing::warn!(stream_id, error = %e, "Ignoring invalid stream properties"),
+        )
+        .ok()
 }
 
 #[cfg(test)]
@@ -351,6 +371,35 @@ mod tests {
         let status = state.to_status();
         assert_eq!(status.server.groups.len(), 1);
         assert_eq!(status.server.groups[0].clients.len(), 1);
+    }
+
+    #[test]
+    fn status_reports_stream_properties() {
+        let mut state = ServerState::default();
+        let mut properties = HashMap::new();
+        properties.insert("canControl".to_string(), serde_json::json!(true));
+        properties.insert(
+            "metadata".to_string(),
+            serde_json::json!({"title": "Song", "artist": ["Band"]}),
+        );
+        state.streams.push(StreamInfo {
+            id: "default".into(),
+            status: "playing".into(),
+            uri: String::new(),
+            properties,
+        });
+        state.streams.push(StreamInfo {
+            id: "bare".into(),
+            status: "idle".into(),
+            uri: String::new(),
+            properties: Default::default(),
+        });
+
+        let json = serde_json::to_value(state.to_status()).unwrap();
+        let streams = &json["server"]["streams"];
+        assert_eq!(streams[0]["properties"]["canControl"], true);
+        assert_eq!(streams[0]["properties"]["metadata"]["title"], "Song");
+        assert!(streams[1].get("properties").is_none(), "{}", streams[1]);
     }
 
     #[test]

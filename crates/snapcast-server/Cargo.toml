@@ -47,6 +47,7 @@ encryption = ["f32lz4", "dep:chacha20poly1305", "dep:hkdf", "dep:sha2"]
 custom-protocol = ["snapcast-proto/custom-protocol"]
 
 [dev-dependencies]
+tracing-subscriber = { workspace = true }
 
 [package.metadata.docs.rs]
 all-features = false

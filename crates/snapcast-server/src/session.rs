@@ -2,6 +2,7 @@
 
 use std::collections::HashMap;
 use std::sync::Arc;
+use tracing::{Instrument, instrument::WithSubscriber};
 
 use anyhow::{Context, Result};
 use snapcast_proto::MessageType;
@@ -258,12 +259,16 @@ impl SessionServer {
             let ctx = Arc::clone(&self.ctx);
             let event_tx = event_tx.clone();
 
-            tokio::spawn(async move {
-                let result = handle_client(stream, chunk_sub, &ctx, event_tx).await;
-                if let Err(e) = result {
-                    tracing::debug!(%peer, error = %e, "Client session ended");
+            tokio::spawn(
+                async move {
+                    let result = handle_client(stream, chunk_sub, &ctx, event_tx).await;
+                    if let Err(e) = result {
+                        tracing::debug!(%peer, error = %e, "Client session ended");
+                    }
                 }
-            });
+                .in_current_span()
+                .with_current_subscriber(),
+            );
         }
     }
 

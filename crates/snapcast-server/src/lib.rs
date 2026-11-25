@@ -47,6 +47,7 @@
 use std::sync::Arc;
 
 use tokio::sync::{broadcast, mpsc};
+use tracing::{Instrument, instrument::WithSubscriber};
 
 // Re-export proto types that embedders need
 #[cfg(feature = "custom-protocol")]
@@ -509,7 +510,12 @@ fn spawn_stream_encoder(
     sample_rate: u32,
     channels: u16,
 ) {
+    let dispatch = tracing::dispatcher::get_default(Clone::clone);
+    let span = tracing::Span::current();
     std::thread::spawn(move || {
+        let _subscriber = tracing::dispatcher::set_default(&dispatch);
+        let _span = span.enter();
+        tracing::debug!(stream = %stream_id, codec = enc.name(), "Stream encoder started");
         let rt = tokio::runtime::Builder::new_current_thread()
             .enable_time()
             .build()
@@ -736,14 +742,18 @@ impl SnapServer {
         let session_for_run = Arc::clone(&session_srv);
         let session_event_tx = event_tx.clone();
         let session_chunk_tx = self.chunk_tx.clone();
-        let session_handle = tokio::spawn(async move {
-            if let Err(e) = session_for_run
-                .run(listener, session_chunk_tx, session_event_tx)
-                .await
-            {
-                tracing::error!(error = %e, "Session server error");
+        let session_handle = tokio::spawn(
+            async move {
+                if let Err(e) = session_for_run
+                    .run(listener, session_chunk_tx, session_event_tx)
+                    .await
+                {
+                    tracing::error!(error = %e, "Session server error");
+                }
             }
-        });
+            .in_current_span()
+            .with_current_subscriber(),
+        );
 
         let dispatcher = command::Dispatcher {
             shared_state: Arc::clone(&shared_state),

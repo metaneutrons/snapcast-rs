@@ -382,7 +382,7 @@ pub enum ServerCommand {
     /// Request dynamic stream addition from an application shell.
     ///
     /// The embeddable library does not own stream readers. Binaries or embedders
-    /// must create streams before [`SnapServer::run`] or implement their own
+    /// must create streams before [`SnapServer::serve`] or implement their own
     /// orchestration around this command.
     AddStream {
         /// Stream source URI (e.g. `pipe:///tmp/snapfifo?name=default`).

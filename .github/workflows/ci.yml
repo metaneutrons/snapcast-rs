@@ -65,13 +65,13 @@ jobs:
       - run: cargo fmt --all -- --check
 
   msrv:
-    name: MSRV (Rust 1.94.1)
+    name: MSRV (Rust 1.96.0)
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v6
       - uses: dtolnay/rust-toolchain@02cb101ec7c40f2c49e1d9714d64511d8e1b74de
         with:
-          toolchain: 1.94.1
+          toolchain: 1.96.0
       - run: sudo apt-get update && sudo apt-get install -y libasound2-dev libavahi-compat-libdnssd-dev pkg-config
       - run: cargo check --workspace --all-targets --locked
 

@@ -5,7 +5,7 @@ members = ["crates/snapcast-proto", "crates/snapcast-client", "crates/snapcast-s
 [workspace.package]
 version = "0.18.1"
 edition = "2024"
-rust-version = "1.94.1"
+rust-version = "1.96.0"
 license = "GPL-3.0-only"
 repository = "https://github.com/metaneutrons/snapcast-rs"
 authors = ["Fabian Schmieder"]

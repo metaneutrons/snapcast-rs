@@ -1,5 +1,15 @@
 # Changelog
 
+## [0.18.1](https://github.com/metaneutrons/snapcast-rs/compare/v0.18.0...v0.18.1) (2026-11-26)
+
+
+### Bug Fixes
+
+* **server:** distinguish client instances on the same host ([9378874](https://github.com/metaneutrons/snapcast-rs/commit/9378874a7cdec766704fe7cba9e3cb459d75e8fc))
+* **server:** include compatible stream properties in status ([4ecd180](https://github.com/metaneutrons/snapcast-rs/commit/4ecd1801641880308ed992dba8a875adca0892f8))
+* **server:** retain the embedder tracing context in workers ([a57c4fa](https://github.com/metaneutrons/snapcast-rs/commit/a57c4fa06cd31c98ce46317b530de56f88d322d1))
+* **server:** timestamp FLAC chunks from their first sample ([424ff83](https://github.com/metaneutrons/snapcast-rs/commit/424ff83715b4b709c320b407aff0efc861c220d2))
+
 ## [0.18.0](https://github.com/metaneutrons/snapcast-rs/compare/v0.17.2...v0.18.0) (2026-09-12)
 
 

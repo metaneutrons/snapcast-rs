@@ -20,7 +20,12 @@ use snapcast_proto::message::factory::{self, MessagePayload, TypedMessage};
 use snapcast_proto::types::Timeval;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpStream;
-use tokio::sync::oneshot;
+use tokio::net::tcp::OwnedWriteHalf;
+use tokio::sync::{mpsc, oneshot};
+use tokio::task::JoinHandle;
+
+/// Frames buffered between the socket reader task and [`TcpConnection::recv`].
+const RECEIVED_FRAME_QUEUE: usize = 64;
 
 /// Read a complete frame (header + payload) from an async reader.
 async fn read_frame<R: AsyncReadExt + Unpin>(reader: &mut R) -> Result<TypedMessage> {
@@ -77,7 +82,11 @@ struct PendingRequest {
 
 /// TCP connection to a snapserver.
 pub struct TcpConnection {
-    stream: Option<TcpStream>,
+    writer: Option<OwnedWriteHalf>,
+    // Frames are read by a dedicated task so `recv` stays cancel-safe:
+    // dropping a `recv` future (e.g. in `select!`) never loses partial frames.
+    frames: Option<mpsc::Receiver<Result<TypedMessage>>>,
+    reader: Option<JoinHandle<()>>,
     host: String,
     port: u16,
     pending: HashMap<u16, PendingRequest>,
@@ -157,7 +166,9 @@ impl TcpConnection {
     /// Create a new connection to the given host and port.
     pub fn new(host: &str, port: u16) -> Self {
         Self {
-            stream: None,
+            writer: None,
+            frames: None,
+            reader: None,
             host: host.to_string(),
             port,
             pending: HashMap::new(),
@@ -171,7 +182,20 @@ impl TcpConnection {
         let stream = TcpStream::connect(&addr)
             .await
             .with_context(|| format!("connecting to {addr}"))?;
-        self.stream = Some(stream);
+        self.disconnect();
+        let (mut read_half, write_half) = stream.into_split();
+        let (frame_tx, frame_rx) = mpsc::channel(RECEIVED_FRAME_QUEUE);
+        self.reader = Some(tokio::spawn(async move {
+            loop {
+                let frame = read_frame(&mut read_half).await;
+                let failed = frame.is_err();
+                if frame_tx.send(frame).await.is_err() || failed {
+                    break;
+                }
+            }
+        }));
+        self.writer = Some(write_half);
+        self.frames = Some(frame_rx);
         self.pending.clear();
         self.next_id = 1;
         Ok(())
@@ -179,17 +203,21 @@ impl TcpConnection {
 
     /// Close the connection.
     pub fn disconnect(&mut self) {
-        self.stream = None;
+        if let Some(reader) = self.reader.take() {
+            reader.abort();
+        }
+        self.writer = None;
+        self.frames = None;
         self.pending.clear();
     }
 
-    fn stream_mut(&mut self) -> Result<&mut TcpStream> {
-        self.stream.as_mut().context("not connected")
+    fn writer_mut(&mut self) -> Result<&mut OwnedWriteHalf> {
+        self.writer.as_mut().context("not connected")
     }
 
     /// Send a message without waiting for a response.
     pub async fn send(&mut self, msg_type: MessageType, payload: &MessagePayload) -> Result<()> {
-        let stream = self.stream_mut()?;
+        let stream = self.writer_mut()?;
         let mut base = BaseMessage {
             msg_type,
             id: 0,
@@ -215,7 +243,7 @@ impl TcpConnection {
         let (tx, rx) = oneshot::channel();
         self.pending.insert(id, PendingRequest { tx });
 
-        let stream = self.stream_mut()?;
+        let stream = self.writer_mut()?;
         let mut base = BaseMessage {
             msg_type,
             id,
@@ -237,8 +265,8 @@ impl TcpConnection {
     /// deliver it to the waiting caller and receive again.
     pub async fn recv(&mut self) -> Result<TypedMessage> {
         loop {
-            let stream = self.stream_mut()?;
-            let msg = read_frame(stream).await?;
+            let frames = self.frames.as_mut().context("not connected")?;
+            let msg = frames.recv().await.context("connection closed")??;
 
             if msg.base.refers_to != 0
                 && let Some(pending) = self.pending.remove(&msg.base.refers_to)
@@ -248,6 +276,12 @@ impl TcpConnection {
             }
             return Ok(msg);
         }
+    }
+}
+
+impl Drop for TcpConnection {
+    fn drop(&mut self) {
+        self.disconnect();
     }
 }
 
@@ -278,6 +312,58 @@ pub fn now_usec() -> i64 {
 mod tests {
     use super::*;
     use snapcast_proto::message::time::Time;
+
+    /// A `recv` cancelled mid-frame (as in `select!`) must not lose bytes.
+    #[tokio::test]
+    async fn recv_is_cancel_safe_across_split_frames() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+
+        let mut base = BaseMessage {
+            msg_type: MessageType::Time,
+            id: 7,
+            refers_to: 0,
+            sent: Timeval::default(),
+            received: Timeval::default(),
+            size: 0,
+        };
+        let payload = MessagePayload::Time(Time {
+            latency: Timeval { sec: 0, usec: 99 },
+        });
+        let frame = factory::serialize(&mut base, &payload).unwrap();
+        let (first_half, second_half) = frame.split_at(frame.len() / 2);
+        let (first_half, second_half) = (first_half.to_vec(), second_half.to_vec());
+
+        let (release_tx, release_rx) = oneshot::channel::<()>();
+        let server = tokio::spawn(async move {
+            let (mut socket, _) = listener.accept().await.unwrap();
+            socket.write_all(&first_half).await.unwrap();
+            release_rx.await.unwrap();
+            socket.write_all(&second_half).await.unwrap();
+            socket
+        });
+
+        let mut connection = TcpConnection::new("127.0.0.1", port);
+        connection.connect().await.unwrap();
+
+        let cancelled = tokio::time::timeout(Duration::from_millis(100), connection.recv()).await;
+        assert!(
+            cancelled.is_err(),
+            "recv should still be waiting for the frame"
+        );
+
+        release_tx.send(()).unwrap();
+        let msg = tokio::time::timeout(Duration::from_secs(1), connection.recv())
+            .await
+            .expect("recv lost the partially read frame")
+            .unwrap();
+        assert_eq!(msg.base.id, 7);
+        match msg.payload {
+            MessagePayload::Time(t) => assert_eq!(t.latency.usec, 99),
+            _ => panic!("expected Time"),
+        }
+        drop(server.await.unwrap());
+    }
 
     /// Test frame read/write with in-memory buffers (no network needed).
     #[tokio::test]
@@ -382,7 +468,7 @@ mod tests {
     #[test]
     fn tcp_connection_new() {
         let conn = TcpConnection::new("localhost", 1704);
-        assert!(conn.stream.is_none());
+        assert!(conn.writer.is_none());
         assert_eq!(conn.host, "localhost");
         assert_eq!(conn.port, 1704);
     }
@@ -482,7 +568,7 @@ mod tests {
         conn.pending.insert(5, PendingRequest { tx });
         assert_eq!(conn.pending.len(), 1);
         conn.disconnect();
-        assert!(conn.stream.is_none());
+        assert!(conn.writer.is_none());
         assert!(conn.pending.is_empty());
     }
 
